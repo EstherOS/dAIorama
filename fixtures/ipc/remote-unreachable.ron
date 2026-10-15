@@ -1,0 +1,35 @@
+// remote-unreachable — with `--remote`, an unreachable manager is an error and there is
+// never a local fallback (04).
+//
+// The address points at the harness socket path with nothing listening on it, and no start
+// block: the harness asserts that the lazy-start stub was NOT invoked. The hot command is
+// included on purpose — `new` is the one command that may start a manager locally, and it must
+// not do so when `--remote` was given.
+(
+  name: "remote-unreachable",
+  description: "All three shapes (read, read --json, hot command) answer `manager unreachable at {addr}` and never fall back locally.",
+  runs: [
+    (
+      argv: ["status"],
+      expect_exit: 1,
+      expect_stderr_contains: ["manager unreachable at $socket"],
+      expect_stdout_not_contains: ["no manager running", "started manager"],
+    ),
+    (
+      argv: ["status", "--json"],
+      expect_exit: 1,
+      expect_stderr_contains: [
+        "\"code\":\"manager_unreachable\"",
+        "manager unreachable at $socket",
+      ],
+      expect_stdout_not_contains: ["no_manager_running"],
+    ),
+    (
+      argv: ["new"],
+      expect_exit: 1,
+      expect_stderr_contains: ["manager unreachable at $socket (manager_unreachable)"],
+      expect_stdout_not_contains: ["started manager"],
+      expect_stderr_not_contains: ["started manager"],
+    ),
+  ],
+)

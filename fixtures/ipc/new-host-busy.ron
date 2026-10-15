@@ -1,0 +1,32 @@
+// new-host-busy — `host` backend exclusivity (06 B6): the loser of the DRM flock fails with
+// `backend_busy` naming the incumbent session.
+//
+// Message = the 04 string verbatim, with `{id}` filled in.
+(
+  name: "new-host-busy",
+  description: "A second host-backend create fails with `backend_busy`, naming the incumbent session (04 string verbatim).",
+  steps: [
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      expect: (method: "create_session", params: (backend: "host")),
+      respond: (error: (
+        code: "backend_busy",
+        message: "backend 'host' is exclusive; in use by session s-9. Close it or use --backend=headless.",
+        hint: "use --backend=headless",
+      )),
+    ),
+  ],
+  runs: [
+    (
+      argv: ["new", "--backend", "host"],
+      expect_exit: 1,
+      expect_stderr_contains: [
+        "backend 'host' is exclusive; in use by session s-9. Close it or use --backend=headless. (backend_busy)",
+        "hint: use --backend=headless",
+      ],
+    ),
+  ],
+)

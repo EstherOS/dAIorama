@@ -1,0 +1,117 @@
+// compositor-death-no-restart — a compositor dying mid-session is treated exactly like a
+// failed health check (06 §Crashes): mark dead, kill the tree, never auto-restart.
+//
+// Masking crash loops is prohibited by design, so the CLI must not promise or imply a restart:
+// the dead entry stays listable and inspectable until something closes it, the history record
+// carries the cause, and "a fresh explicit `new` creates a clean session" is the recovery path
+// — not something this command invents.
+(
+  name: "compositor-death-no-restart",
+  description: "A dead session stays listable and inspectable, its history records cause=dead, and nothing promises an auto-restart.",
+  steps: [
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      expect: (method: "session_status", params: (session_id: "s-9")),
+      respond: (result: (
+        id: "s-9", label: "", state: "dead", backend: "headless",
+        resolution: "1920x1080", scale: 1.0, scope: "operator", origin: "shell",
+        idle_since: "2026-10-15T17:00:00Z", view: (),
+        instance_id: "11111111-1111-4111-8111-111111111111", renderer: "verified",
+      )),
+    ),
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      expect: (method: "list_sessions"),
+      respond: (result: (
+        sessions: [
+          (
+            id: "s-9", label: "", state: "dead", backend: "headless",
+            resolution: "1920x1080", scale: 1.0, scope: "operator", origin: "shell",
+            idle_since: "2026-10-15T17:00:00Z", view: (),
+            instance_id: "11111111-1111-4111-8111-111111111111", renderer: "verified",
+          ),
+        ],
+        next_cursor: (),
+      )),
+    ),
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      // History records carry scope, origin, timestamps and the cause where relevant (06 B8).
+      expect: (method: "list_history"),
+      respond: (result: (
+        records: [
+          (
+            at: "2026-10-15T17:00:00Z",
+            event: "session_create",
+            session_id: "s-9",
+            scope: "operator",
+            origin: "shell",
+          ),
+          (
+            at: "2026-10-15T17:12:30Z",
+            event: "session_end",
+            session_id: "s-9",
+            scope: "operator",
+            origin: "shell",
+            cause: "dead",
+          ),
+        ],
+        next_cursor: (),
+      )),
+    ),
+  ],
+  runs: [
+    (
+      argv: ["status", "s-9", "--json"],
+      expect_exit: 0,
+      expect_stdout_json: (
+        id: "s-9", label: "", state: "dead", backend: "headless",
+        resolution: "1920x1080", scale: 1.0, scope: "operator", origin: "shell",
+        idle_since: "2026-10-15T17:00:00Z", view: (),
+        instance_id: "11111111-1111-4111-8111-111111111111", renderer: "verified",
+      ),
+      expect_stdout_not_contains: ["restart"],
+      expect_stderr_not_contains: ["restart"],
+    ),
+    (
+      argv: ["list"],
+      expect_exit: 0,
+      expect_stdout_contains: ["s-9  dead"],
+      expect_stdout_not_contains: ["restart"],
+      expect_stderr_not_contains: ["restart"],
+    ),
+    (
+      argv: ["history", "--json"],
+      expect_exit: 0,
+      expect_stdout_json: (
+        records: [
+          (
+            at: "2026-10-15T17:00:00Z",
+            event: "session_create",
+            session_id: "s-9",
+            scope: "operator",
+            origin: "shell",
+          ),
+          (
+            at: "2026-10-15T17:12:30Z",
+            event: "session_end",
+            session_id: "s-9",
+            scope: "operator",
+            origin: "shell",
+            cause: "dead",
+          ),
+        ],
+        next_cursor: (),
+      ),
+    ),
+  ],
+)

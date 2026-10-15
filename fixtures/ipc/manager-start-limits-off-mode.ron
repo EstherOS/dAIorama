@@ -1,0 +1,45 @@
+// manager-start-limits-off-mode — the explicit containment downgrade (06 C6).
+//
+// `limits.mode = off` is the recorded downgrade: no per-session cgroups, no crash-time cleanup,
+// and **no startup sweep** (the sweep operates on the instance's session-cgroup subtree, which
+// only exists while cgroups are in use). The start therefore proceeds; it is not refused for
+// missing delegation, which is the difference this scenario pins against its sibling
+// manager-start-limits-unavailable.
+//
+// Asserted at two levels, because phase 1 cannot spawn a real manager:
+//   1. here — the start is attempted (the harness records the stub) and the CLI does not
+//      answer `limits_unavailable` / "containment unavailable";
+//   2. in `src/manager/mod.rs` — `startup_gate_matches_the_containment_classes` pins the plan
+//      itself: off-mode proceeds with limits disabled and `sweep: false`.
+//
+// Containment classes and their raw evidence: `fixtures/README.md` §Containment classes and
+// `p2/cgroup-matrix/` (PR #7).
+(
+  name: "manager-start-limits-off-mode",
+  description: "With limits.mode = off the start proceeds (no containment refusal); limits disabled and no sweep are pinned by the startup unit test.",
+  remote: None,
+  files: {
+    "config.ron": "(version: 1, limits: (mode: off))",
+  },
+  start: Some((
+    exit_code: 1,
+    // Standing in for the manager this phase cannot spawn yet: what `daiorama serve` answers
+    // today (the phase-1 stub envelope). The point is what is *absent* from the output below.
+    stderr: "{\"error\":{\"code\":\"internal\",\"message\":\"not implemented yet (P2 phase 1: contract layer)\",\"hint\":\"the runtime side lands in p2/session-*\"}}",
+  )),
+  runs: [
+    (
+      argv: ["new"],
+      expect_exit: 1,
+      expect_stderr_contains: ["not implemented yet (P2 phase 1: contract layer)"],
+      expect_stderr_not_contains: ["limits_unavailable", "containment unavailable"],
+      expect_stdout_not_contains: ["started manager"],
+    ),
+    (
+      argv: ["new", "--json"],
+      expect_exit: 1,
+      expect_stderr_contains: ["\"code\":\"internal\""],
+      expect_stderr_not_contains: ["limits_unavailable", "containment unavailable"],
+    ),
+  ],
+)

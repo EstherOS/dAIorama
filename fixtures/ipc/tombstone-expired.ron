@@ -1,0 +1,51 @@
+// tombstone-expired — outside the 24 h tombstone window the same id is simply unknown (06).
+//
+// Tombstones are bounded: closed/reaped ids are remembered for 24 h and cleared on manager
+// restart. Past the window, a call that answered `session_closed` on close-closed's fixture
+// answers `session_not_found` here — same CLI path, same id. The two files are the pair that
+// pins the transition; the assertion below refuses the closed code from being smuggled back.
+(
+  name: "tombstone-expired",
+  description: "Past the tombstone window the same id answers `session_not_found`, not `session_closed`, exit 1.",
+  steps: [
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      expect: (method: "close_session", params: (session_id: "s-1")),
+      respond: (error: (
+        code: "session_not_found",
+        message: "session not found",
+        hint: "list sessions to find one",
+      )),
+    ),
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      // The status read agrees: the entry is not inspectable either, because it is not
+      // remembered at all.
+      expect: (method: "session_status", params: (session_id: "s-1")),
+      respond: (error: (
+        code: "session_not_found",
+        message: "session not found",
+        hint: "list sessions to find one",
+      )),
+    ),
+  ],
+  runs: [
+    (
+      argv: ["close", "s-1"],
+      expect_exit: 1,
+      expect_stderr_contains: ["session not found (session_not_found)"],
+      expect_stderr_not_contains: ["session_closed", "session_reaped"],
+    ),
+    (
+      argv: ["status", "s-1", "--json"],
+      expect_exit: 1,
+      expect_stderr_contains: ["\"code\":\"session_not_found\""],
+    ),
+  ],
+)

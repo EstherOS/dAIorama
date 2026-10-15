@@ -1,0 +1,44 @@
+// session-dead-call — calls on a dead session answer `session_dead`; close is still allowed
+// (06: "a dead session ... an operator or agent may close one immediately").
+//
+// The two runs are the pair: the control call is refused with the dead code, and the explicit
+// close is accepted and removes the entry.
+(
+  name: "session-dead-call",
+  description: "Control calls on a dead session answer `session_dead`; closing a dead session succeeds.",
+  steps: [
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      // Control methods mirror the MCP tool name; the session travels in params.
+      expect: (method: "pointer_move", params: (session_id: "s-dead", x: 100, y: 200)),
+      respond: (error: (
+        code: "session_dead",
+        message: "session is dead",
+        hint: "create a new session",
+      )),
+    ),
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      expect: (method: "close_session", params: (session_id: "s-dead")),
+      respond: (result: (id: "s-dead", state: "closed")),
+    ),
+  ],
+  runs: [
+    (
+      argv: ["control", "s-dead", "pointer_move", "x=100", "y=200"],
+      expect_exit: 1,
+      expect_stderr_contains: ["session is dead (session_dead)"],
+    ),
+    (
+      argv: ["close", "s-dead"],
+      expect_exit: 0,
+      expect_stdout_contains: ["closed session s-dead"],
+    ),
+  ],
+)

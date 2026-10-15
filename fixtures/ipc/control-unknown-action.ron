@@ -1,0 +1,37 @@
+// control-unknown-action — an unknown action is `bad_request` and the message lists the valid
+// names (04).
+//
+// There are **no steps**: the refusal is validated before dialing, so the CLI must not open a
+// connection at all. (If it did, the fake manager would be absent and the run would end in
+// `manager unreachable` — which is exactly the failure this scenario is designed to catch.)
+(
+  name: "control-unknown-action",
+  description: "An unknown control action fails client-side with `bad_request` listing the valid names; no manager contact.",
+  runs: [
+    (
+      argv: ["control", "s-1", "warp_pointer"],
+      expect_exit: 1,
+      expect_stderr_contains: [
+        "unknown control action \"warp_pointer\"",
+        "pointer_move",
+        "pointer_click",
+        "key_tap",
+        "type_text",
+        "(bad_request)",
+      ],
+      expect_stdout_not_contains: ["manager unreachable"],
+    ),
+    (
+      argv: ["control", "s-1", "warp_pointer", "--json"],
+      expect_exit: 1,
+      expect_stderr_contains: ["\"code\":\"bad_request\"", "pointer_scroll"],
+      expect_stdout_not_contains: ["manager unreachable"],
+    ),
+    (
+      // key=value pairs are typed per the tool's inputSchema: pointer coordinates are integers.
+      argv: ["control", "s-1", "pointer_move", "x=left", "y=2"],
+      expect_exit: 1,
+      expect_stderr_contains: ["argument x=left is not an integer"],
+    ),
+  ],
+)

@@ -1,0 +1,146 @@
+// dead-sessions-separate — alive/dead are shown separately, and dead sessions do not count
+// against quotas (06 §Quota accounting).
+//
+// The CLI-level assertion is the shape: `sessions: {running, dead}` (05) and the human line
+// `sessions: N running, M dead`. The quota half of the rule — a dead session holds no live
+// resources and is excluded from `max_sessions` and the global ceiling — is pinned by the
+// manager unit test `dead_sessions_do_not_count_against_quotas`, which drives the same
+// registry the runtime side fills.
+//
+// Four runs = four connections, so the step list carries four handshakes, in run order:
+// status (human), status (json), list (human), list (json).
+(
+  name: "dead-sessions-separate",
+  description: "Instance status reports running and dead separately; a dead entry stays listable and inspectable.",
+  steps: [
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      expect: (method: "status"),
+      respond: (result: (
+        state: "running",
+        mode: "background",
+        pid: "$manager_pid",
+        socket: "$socket",
+        versions: (binary: "0.1.0", protocol: "0.1.0", min_supported: "0.1.0"),
+        sessions: (running: 1, dead: 2),
+        drain: (active: false, remaining: 0),
+        instance_id: "11111111-1111-4111-8111-111111111111",
+      )),
+    ),
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      expect: (method: "status"),
+      respond: (result: (
+        state: "running",
+        mode: "background",
+        pid: "$manager_pid",
+        socket: "$socket",
+        versions: (binary: "0.1.0", protocol: "0.1.0", min_supported: "0.1.0"),
+        sessions: (running: 1, dead: 2),
+        drain: (active: false, remaining: 0),
+        instance_id: "11111111-1111-4111-8111-111111111111",
+      )),
+    ),
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      expect: (method: "list_sessions"),
+      respond: (result: (
+        sessions: [
+          (
+            id: "s-1", label: "", state: "running", backend: "headless",
+            resolution: "1920x1080", scale: 1.0, scope: "operator", origin: "shell",
+            idle_since: "2026-10-15T17:00:00Z", view: (),
+            instance_id: "11111111-1111-4111-8111-111111111111", renderer: "verified",
+          ),
+          (
+            id: "s-2", label: "", state: "dead", backend: "headless",
+            resolution: "1920x1080", scale: 1.0, scope: "operator", origin: "shell",
+            idle_since: "2026-10-15T17:01:00Z", view: (),
+            instance_id: "11111111-1111-4111-8111-111111111111", renderer: "verified",
+          ),
+        ],
+        next_cursor: (),
+      )),
+    ),
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      expect: (method: "list_sessions"),
+      respond: (result: (
+        sessions: [
+          (
+            id: "s-1", label: "", state: "running", backend: "headless",
+            resolution: "1920x1080", scale: 1.0, scope: "operator", origin: "shell",
+            idle_since: "2026-10-15T17:00:00Z", view: (),
+            instance_id: "11111111-1111-4111-8111-111111111111", renderer: "verified",
+          ),
+          (
+            id: "s-2", label: "", state: "dead", backend: "headless",
+            resolution: "1920x1080", scale: 1.0, scope: "operator", origin: "shell",
+            idle_since: "2026-10-15T17:01:00Z", view: (),
+            instance_id: "11111111-1111-4111-8111-111111111111", renderer: "verified",
+          ),
+        ],
+        next_cursor: (),
+      )),
+    ),
+  ],
+  runs: [
+    (
+      argv: ["status"],
+      expect_exit: 0,
+      expect_stdout_contains: ["sessions: 1 running, 2 dead"],
+    ),
+    (
+      argv: ["status", "--json"],
+      expect_exit: 0,
+      expect_stdout_json: (
+        state: "running",
+        mode: "background",
+        pid: "$manager_pid",
+        socket: "$socket",
+        versions: (binary: "0.1.0", protocol: "0.1.0", min_supported: "0.1.0"),
+        sessions: (running: 1, dead: 2),
+        drain: (active: false, remaining: 0),
+        instance_id: "11111111-1111-4111-8111-111111111111",
+      ),
+    ),
+    (
+      argv: ["list"],
+      expect_exit: 0,
+      expect_stdout_contains: ["s-2  dead  headless", "s-1  running  headless"],
+    ),
+    (
+      argv: ["list", "--json"],
+      expect_exit: 0,
+      expect_stdout_json: (
+        sessions: [
+          (
+            id: "s-1", label: "", state: "running", backend: "headless",
+            resolution: "1920x1080", scale: 1.0, scope: "operator", origin: "shell",
+            idle_since: "2026-10-15T17:00:00Z", view: (),
+            instance_id: "11111111-1111-4111-8111-111111111111", renderer: "verified",
+          ),
+          (
+            id: "s-2", label: "", state: "dead", backend: "headless",
+            resolution: "1920x1080", scale: 1.0, scope: "operator", origin: "shell",
+            idle_since: "2026-10-15T17:01:00Z", view: (),
+            instance_id: "11111111-1111-4111-8111-111111111111", renderer: "verified",
+          ),
+        ],
+        next_cursor: (),
+      ),
+    ),
+  ],
+)

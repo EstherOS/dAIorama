@@ -1,0 +1,170 @@
+// status-session-json — the session object shape from 05, including `view: null` and a
+// non-null view (with its generation).
+//
+// 06: the view registry entry is `{state, address, front_port, vnc_port, generation}` and the
+// generation increments on every view start, so a cached address is detectable as stale.
+// Four runs = four connections, so the step list hands out four handshakes.
+(
+  name: "status-session-json",
+  description: "Session detail carries the pinned session object, with `view` null and with a live view carrying its generation.",
+  steps: [
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      expect: (method: "session_status", params: (session_id: "s-1")),
+      respond: (result: (
+        id: "s-1",
+        label: "demo",
+        state: "running",
+        backend: "headless",
+        resolution: "1920x1080",
+        scale: 1.0,
+        scope: "operator",
+        origin: "shell",
+        idle_since: "2026-10-15T17:00:00Z",
+        view: (),
+        instance_id: "11111111-1111-4111-8111-111111111111",
+        renderer: "verified",
+      )),
+    ),
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      expect: (method: "session_status", params: (session_id: "s-1")),
+      respond: (result: (
+        id: "s-1",
+        label: "demo",
+        state: "running",
+        backend: "headless",
+        resolution: "1920x1080",
+        scale: 1.0,
+        scope: "operator",
+        origin: "shell",
+        idle_since: "2026-10-15T17:00:00Z",
+        view: (),
+        instance_id: "11111111-1111-4111-8111-111111111111",
+        renderer: "verified",
+      )),
+    ),
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      expect: (method: "session_status", params: (session_id: "s-1")),
+      respond: (result: (
+        id: "s-1",
+        label: "demo",
+        state: "running",
+        backend: "headless",
+        resolution: "1920x1080",
+        scale: 1.0,
+        scope: "operator",
+        origin: "shell",
+        idle_since: "2026-10-15T17:00:00Z",
+        view: (
+          state: "running",
+          address: "http://127.0.0.1:6080/?credential=9f2c",
+          front_port: 6080,
+          vnc_port: 5901,
+          generation: 2,
+        ),
+        instance_id: "11111111-1111-4111-8111-111111111111",
+        renderer: "verified",
+      )),
+    ),
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      expect: (method: "session_status", params: (session_id: "s-1")),
+      respond: (result: (
+        id: "s-1",
+        label: "demo",
+        state: "running",
+        backend: "headless",
+        resolution: "1920x1080",
+        scale: 1.0,
+        scope: "operator",
+        origin: "shell",
+        idle_since: "2026-10-15T17:00:00Z",
+        view: (
+          state: "running",
+          address: "http://127.0.0.1:6080/?credential=9f2c",
+          front_port: 6080,
+          vnc_port: 5901,
+          generation: 2,
+        ),
+        instance_id: "11111111-1111-4111-8111-111111111111",
+        renderer: "verified",
+      )),
+    ),
+  ],
+  runs: [
+    (
+      argv: ["status", "s-1", "--json"],
+      expect_exit: 0,
+      expect_stdout_json: (
+        id: "s-1",
+        label: "demo",
+        state: "running",
+        backend: "headless",
+        resolution: "1920x1080",
+        scale: 1.0,
+        scope: "operator",
+        origin: "shell",
+        idle_since: "2026-10-15T17:00:00Z",
+        view: (),
+        instance_id: "11111111-1111-4111-8111-111111111111",
+        renderer: "verified",
+      ),
+    ),
+    (
+      argv: ["status", "s-1"],
+      expect_exit: 0,
+      expect_stdout_contains: [
+        "id: s-1",
+        "state: running",
+        "view: none",
+        "renderer: verified",
+      ],
+    ),
+    (
+      argv: ["status", "s-1", "--json"],
+      expect_exit: 0,
+      expect_stdout_json: (
+        id: "s-1",
+        label: "demo",
+        state: "running",
+        backend: "headless",
+        resolution: "1920x1080",
+        scale: 1.0,
+        scope: "operator",
+        origin: "shell",
+        idle_since: "2026-10-15T17:00:00Z",
+        view: (
+          state: "running",
+          address: "http://127.0.0.1:6080/?credential=9f2c",
+          front_port: 6080,
+          vnc_port: 5901,
+          generation: 2,
+        ),
+        instance_id: "11111111-1111-4111-8111-111111111111",
+        renderer: "verified",
+      ),
+    ),
+    (
+      argv: ["status", "s-1"],
+      expect_exit: 0,
+      expect_stdout_contains: [
+        "state: running",
+        "view: running http://127.0.0.1:6080/?credential=9f2c (generation 2)",
+      ],
+    ),
+  ],
+)

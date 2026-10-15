@@ -1,0 +1,47 @@
+// handshake-version-mismatch — disjoint ranges are `version_incompatible` (05 A7).
+//
+// The comparison rule is `max(client.min, manager.min) <= min(client.version, manager.version)`;
+// the refusal message carries both pairs (04 string, verbatim) and the client exits 1.
+// Note the step list: there is no `list_sessions` step, because a refused handshake must not
+// be followed by anything — if it were, the fake manager would report the extra request.
+(
+  name: "handshake-version-mismatch",
+  description: "A disjoint protocol range refuses the connection with both pairs in the message; exit 1.",
+  steps: [
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (
+        protocol_version: "0.2.0",
+        min_supported: "0.2.0",
+        instance_id: "11111111-1111-4111-8111-111111111111",
+      )),
+    ),
+    (
+      // The second run opens its own connection and handshakes again.
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (
+        protocol_version: "0.2.0",
+        min_supported: "0.2.0",
+        instance_id: "11111111-1111-4111-8111-111111111111",
+      )),
+    ),
+  ],
+  runs: [
+    (
+      argv: ["list"],
+      expect_exit: 1,
+      expect_stderr_contains: [
+        "protocol mismatch: this client speaks 0.1.0 (min 0.1.0); manager speaks 0.2.0 (min 0.2.0).",
+      ],
+      expect_stdout_not_contains: ["no sessions"],
+    ),
+    (
+      argv: ["list", "--json"],
+      expect_exit: 1,
+      expect_stderr_contains: [
+        "\"code\":\"version_incompatible\"",
+        "protocol mismatch: this client speaks 0.1.0 (min 0.1.0); manager speaks 0.2.0 (min 0.2.0).",
+      ],
+    ),
+  ],
+)

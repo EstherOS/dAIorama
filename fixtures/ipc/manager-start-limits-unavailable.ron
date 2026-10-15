@@ -1,0 +1,38 @@
+// manager-start-limits-unavailable — the lazy start surfaces the containment refusal (06 C6).
+//
+// The cgroup v2 delegation check runs at manager startup, after the runtime lock and before
+// anything binds; a failure fails the start with `limits_unavailable` (04 string, verbatim) and
+// every lazy-start racing the winner surfaces the same error. The started process reports that
+// failure as one line of the frame's error form on stderr, and the launcher surfaces that
+// envelope verbatim — so the operator sees the refusal and its fix, not a bare timeout.
+//
+// The start block is the expectation: the harness records whether the stub ran, and this
+// scenario requires that it did (a start was attempted).
+(
+  name: "manager-start-limits-unavailable",
+  description: "The lazy start surfaces the startup `limits_unavailable` refusal with the pinned 04 containment message, exit 1.",
+  remote: None,
+  start: Some((
+    exit_code: 1,
+    stderr: "{\"error\":{\"code\":\"limits_unavailable\",\"message\":\"containment unavailable: cgroup v2 delegation is not available here (cgroupfs is mounted read-only). Fix: run with a writable/delegated cgroupfs (see the compose notes), or set limits.mode = off and accept losing per-session limits and crash-time cleanup.\",\"hint\":\"set limits.mode = off to accept the documented downgrade\"}}",
+  )),
+  runs: [
+    (
+      argv: ["new"],
+      expect_exit: 1,
+      expect_stderr_contains: [
+        "containment unavailable: cgroup v2 delegation is not available here (cgroupfs is mounted read-only). Fix: run with a writable/delegated cgroupfs (see the compose notes), or set limits.mode = off and accept losing per-session limits and crash-time cleanup. (limits_unavailable)",
+        "hint: set limits.mode = off to accept the documented downgrade",
+      ],
+      expect_stdout_not_contains: ["started manager"],
+    ),
+    (
+      argv: ["new", "--json"],
+      expect_exit: 1,
+      expect_stderr_contains: [
+        "\"code\":\"limits_unavailable\"",
+        "containment unavailable: cgroup v2 delegation is not available here",
+      ],
+    ),
+  ],
+)

@@ -1,0 +1,36 @@
+// cold-no-manager — a cold command against no manager is an ANSWER, not an error (04).
+//
+// No `--remote` (the local instance is what is being asked about), no manager bound, and no
+// start block: the harness's stub would be recorded if anything tried to lazily start a
+// manager, and this scenario fails if it is. Exit 0, `no manager running` on stdout, and the
+// `--json` form is the two-field envelope with no hint.
+(
+  name: "cold-no-manager",
+  description: "Cold commands answer `no manager running` with exit 0 when nothing is running; nothing starts locally.",
+  remote: None,
+  runs: [
+    (
+      argv: ["status", "--json"],
+      expect_exit: 0,
+      expect_stdout_json: (code: "no_manager_running", message: "no manager running"),
+    ),
+    (
+      argv: ["status"],
+      expect_exit: 0,
+      expect_stdout_contains: ["no manager running"],
+      expect_stderr_not_contains: ["error"],
+    ),
+    (
+      argv: ["list"],
+      expect_exit: 0,
+      expect_stdout_contains: ["no manager running"],
+    ),
+    (
+      // 04: `config reload` targets a running manager and never starts one; with none it is
+      // the same cold answer, because the file applies at next start anyway.
+      argv: ["config", "reload"],
+      expect_exit: 0,
+      expect_stdout_contains: ["no manager running"],
+    ),
+  ],
+)

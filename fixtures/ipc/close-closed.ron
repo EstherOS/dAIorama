@@ -1,0 +1,33 @@
+// close-closed — close of an already-closed id is `session_closed`, never a silent success (06).
+//
+// "closed" is final: the registry entry is gone and the id is remembered for 24 h, so the
+// distinct code is what a caller sees inside that window.
+(
+  name: "close-closed",
+  description: "Closing a session that is already closed answers `session_closed` (distinct from not-found), exit 1.",
+  steps: [
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      expect: (method: "close_session", params: (session_id: "s-1")),
+      respond: (error: (
+        code: "session_closed",
+        message: "session is closed",
+        hint: "create a new session",
+      )),
+    ),
+  ],
+  runs: [
+    (
+      argv: ["close", "s-1"],
+      expect_exit: 1,
+      expect_stderr_contains: [
+        "session is closed (session_closed)",
+        "hint: create a new session",
+      ],
+      expect_stderr_not_contains: ["session_not_found"],
+    ),
+  ],
+)

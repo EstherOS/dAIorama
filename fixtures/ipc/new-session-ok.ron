@@ -1,0 +1,98 @@
+// new-session-ok — `new` prints the session id; the create result carries the manager's
+// instance_id (06: a cached id from a previous manager run is visible, never silent).
+//
+// The creation parameters are the pinned defaults (04): headless, 1920x1080, scale 1.0,
+// no view, no label. The manager answers with the full session object (05).
+(
+  name: "new-session-ok",
+  description: "`new` sends the pinned defaults, prints the created session id, and --json prints the create result unmodified.",
+  steps: [
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (
+        protocol_version: "0.1.0",
+        min_supported: "0.1.0",
+        instance_id: "11111111-1111-4111-8111-111111111111",
+      )),
+    ),
+    (
+      expect: (method: "create_session", params: (
+        backend: "headless",
+        resolution: "1920x1080",
+        scale: 1.0,
+        view: false,
+      )),
+      respond: (result: (
+        id: "2f7a4c1e-9b3d-4a6f-8e21-77aa11bb22cc",
+        label: "",
+        state: "running",
+        backend: "headless",
+        resolution: "1920x1080",
+        scale: 1.0,
+        scope: "operator",
+        origin: "shell",
+        idle_since: "2026-10-15T17:00:00Z",
+        view: (),
+        instance_id: "11111111-1111-4111-8111-111111111111",
+        renderer: "verified",
+      )),
+    ),
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (
+        protocol_version: "0.1.0",
+        min_supported: "0.1.0",
+        instance_id: "11111111-1111-4111-8111-111111111111",
+      )),
+    ),
+    (
+      // The manager's own idempotency dedup means the second create may legitimately repeat
+      // the first session; the contract pinned here is the carriage, not the dedup.
+      expect: (method: "create_session", params: (
+        backend: "headless",
+        resolution: "1920x1080",
+        scale: 1.0,
+        view: false,
+      )),
+      respond: (result: (
+        id: "2f7a4c1e-9b3d-4a6f-8e21-77aa11bb22cc",
+        label: "",
+        state: "running",
+        backend: "headless",
+        resolution: "1920x1080",
+        scale: 1.0,
+        scope: "operator",
+        origin: "shell",
+        idle_since: "2026-10-15T17:00:00Z",
+        view: (),
+        instance_id: "11111111-1111-4111-8111-111111111111",
+        renderer: "verified",
+      )),
+    ),
+  ],
+  runs: [
+    (
+      argv: ["new"],
+      expect_exit: 0,
+      expect_stdout_contains: ["2f7a4c1e-9b3d-4a6f-8e21-77aa11bb22cc"],
+    ),
+    (
+      argv: ["new", "--json"],
+      expect_exit: 0,
+      expect_stdout_json: (
+        id: "2f7a4c1e-9b3d-4a6f-8e21-77aa11bb22cc",
+        label: "",
+        state: "running",
+        backend: "headless",
+        resolution: "1920x1080",
+        scale: 1.0,
+        scope: "operator",
+        origin: "shell",
+        idle_since: "2026-10-15T17:00:00Z",
+        view: (),
+        instance_id: "11111111-1111-4111-8111-111111111111",
+        renderer: "verified",
+      ),
+    ),
+  ],
+)

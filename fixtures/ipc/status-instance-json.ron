@@ -1,0 +1,77 @@
+// status-instance-json — the full pinned instance-status shape (05):
+// `{state, mode, pid, socket, versions: {binary, protocol, min_supported, dashboard_module?},
+//   sessions: {running, dead}, drain: {active, remaining}, instance_id}`.
+//
+// `$manager_pid` and `$socket` are harness tokens: the fake manager answers with the values
+// that are true for this scenario run, and the expectation asserts them back.
+(
+  name: "status-instance-json",
+  description: "Instance status carries the full pinned shape; the human form shows state, mode, pid, sessions and drain.",
+  steps: [
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      expect: (method: "status"),
+      respond: (result: (
+        state: "running",
+        mode: "attached",
+        pid: "$manager_pid",
+        socket: "$socket",
+        versions: (binary: "0.1.0", protocol: "0.1.0", min_supported: "0.1.0"),
+        sessions: (running: 2, dead: 1),
+        drain: (active: false, remaining: 0),
+        instance_id: "11111111-1111-4111-8111-111111111111",
+      )),
+    ),
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      expect: (method: "status"),
+      respond: (result: (
+        state: "running",
+        mode: "attached",
+        pid: "$manager_pid",
+        socket: "$socket",
+        versions: (binary: "0.1.0", protocol: "0.1.0", min_supported: "0.1.0"),
+        sessions: (running: 2, dead: 1),
+        drain: (active: false, remaining: 0),
+        instance_id: "11111111-1111-4111-8111-111111111111",
+      )),
+    ),
+  ],
+  runs: [
+    (
+      argv: ["status", "--json"],
+      expect_exit: 0,
+      expect_stdout_json: (
+        state: "running",
+        mode: "attached",
+        pid: "$manager_pid",
+        socket: "$socket",
+        versions: (binary: "0.1.0", protocol: "0.1.0", min_supported: "0.1.0"),
+        sessions: (running: 2, dead: 1),
+        drain: (active: false, remaining: 0),
+        instance_id: "11111111-1111-4111-8111-111111111111",
+      ),
+    ),
+    (
+      argv: ["status"],
+      expect_exit: 0,
+      expect_stdout_contains: [
+        "state: running",
+        "mode: attached",
+        "pid: $manager_pid",
+        "socket: $socket",
+        "protocol: 0.1.0",
+        "min_supported: 0.1.0",
+        "sessions: 2 running, 1 dead",
+        "drain: inactive",
+        "instance_id: 11111111-1111-4111-8111-111111111111",
+      ],
+    ),
+  ],
+)

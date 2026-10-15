@@ -1,0 +1,44 @@
+// handshake-ok — the first call on every connection is `handshake` (05 A7).
+//
+// The handshake is tokenless, authorizes nothing, and carries both halves of the range:
+// `protocol_version` and `min_supported`. A matching range proceeds to the requested read.
+(
+  name: "handshake-ok",
+  description: "Every connection opens with `handshake`; a matching range proceeds to the requested read.",
+  steps: [
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (
+        protocol_version: "0.1.0",
+        min_supported: "0.1.0",
+        instance_id: "11111111-1111-4111-8111-111111111111",
+      )),
+    ),
+    (
+      // `list` with no options sends no params at all.
+      expect: (method: "list_sessions"),
+      respond: (result: (sessions: [], next_cursor: ())),
+    ),
+    (
+      // Every connection handshakes first: the second run is a second process.
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (
+        protocol_version: "0.1.0",
+        min_supported: "0.1.0",
+        instance_id: "11111111-1111-4111-8111-111111111111",
+      )),
+    ),
+    (
+      expect: (method: "list_sessions"),
+      respond: (result: (sessions: [], next_cursor: ())),
+    ),
+  ],
+  runs: [
+    (argv: ["list"], expect_exit: 0, expect_stdout_contains: ["no sessions"]),
+    (
+      argv: ["list", "--json"],
+      expect_exit: 0,
+      expect_stdout_json: (sessions: [], next_cursor: ()),
+    ),
+  ],
+)

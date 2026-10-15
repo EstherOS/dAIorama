@@ -1,0 +1,55 @@
+// new-refused-software-renderer — creation refuses on a detected software renderer (06 D6).
+//
+// The failure is `renderer_refused` and the message is the 04 string verbatim, including
+// `{renderer}`. 06: quiet degradation into a fingerprinted session is the one failure that
+// must never happen, so the refusal is loud and names the diagnostic.
+(
+  name: "new-refused-software-renderer",
+  description: "A software renderer refuses creation with the pinned 04 message (renderer_refused); exit 1.",
+  steps: [
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      expect: (method: "create_session", params: (backend: "headless")),
+      respond: (error: (
+        code: "renderer_refused",
+        message: "session refused: active renderer is llvmpipe (software). This session would carry a known automation fingerprint. Run 'daiorama doctor'.",
+        hint: "run 'daiorama doctor'",
+      )),
+    ),
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      expect: (method: "create_session", params: (backend: "headless")),
+      respond: (error: (
+        code: "renderer_refused",
+        message: "session refused: active renderer is llvmpipe (software). This session would carry a known automation fingerprint. Run 'daiorama doctor'.",
+        hint: "run 'daiorama doctor'",
+      )),
+    ),
+  ],
+  runs: [
+    (
+      argv: ["new"],
+      expect_exit: 1,
+      expect_stdout_not_contains: ["2f7a4c1e"],
+      expect_stderr_contains: [
+        "session refused: active renderer is llvmpipe (software). This session would carry a known automation fingerprint. Run 'daiorama doctor'. (renderer_refused)",
+        "hint: run 'daiorama doctor'",
+      ],
+    ),
+    (
+      argv: ["new", "--json"],
+      expect_exit: 1,
+      expect_stderr_contains: [
+        "\"code\":\"renderer_refused\"",
+        "\"message\":\"session refused: active renderer is llvmpipe (software). This session would carry a known automation fingerprint. Run 'daiorama doctor'.\"",
+      ],
+      expect_stdout_not_contains: ["renderer_refused"],
+    ),
+  ],
+)
