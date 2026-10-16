@@ -1,0 +1,84 @@
+// config-getset-ok — `config get/set` against a running manager (08 A2).
+//
+// Manager-side keys are read/written over RPC: `config_get` carries `{key}` and answers the
+// same `{key, value, authority}` fields the local cold path answers with; `config_set`
+// carries `{key, value}` and answers `{key, value}`. Set writes the manager's file while the
+// running snapshot keeps its value until `config reload` — the human form states that (08:
+// "config set output states which of the two applies"). Client-local keys do not exist on a
+// remote: the CLI refuses them before any connection, so those runs have no steps to serve.
+(
+  name: "config-getset-ok",
+  description: "`config get/set --remote` reads/writes through the manager; client-local keys are refused client-side.",
+  steps: [
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      expect: (method: "config_get", params: (key: "sessions.max_global")),
+      respond: (result: (key: "sessions.max_global", value: "25", authority: "manager_side")),
+    ),
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      expect: (method: "config_set", params: (key: "sessions.max_global", value: "25")),
+      respond: (result: (key: "sessions.max_global", value: "25")),
+    ),
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      expect: (method: "config_get", params: (key: "manager.bind")),
+      respond: (result: (key: "manager.bind", value: "(unset)", authority: "manager_side")),
+    ),
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      expect: (method: "config_set", params: (key: "manager.bind", value: "127.0.0.1:8756")),
+      respond: (result: (key: "manager.bind", value: "127.0.0.1:8756")),
+    ),
+  ],
+  runs: [
+    (
+      argv: ["config", "get", "sessions.max_global"],
+      expect_exit: 0,
+      expect_stdout_contains: ["25"],
+    ),
+    (
+      argv: ["config", "set", "sessions.max_global", "25"],
+      expect_exit: 0,
+      expect_stdout_contains: [
+        "set sessions.max_global = 25; a running manager keeps the old value until 'daiorama config reload' (or restart)",
+      ],
+    ),
+    (
+      argv: ["config", "get", "manager.bind", "--json"],
+      expect_exit: 0,
+      expect_stdout_json: (key: "manager.bind", value: "(unset)", authority: "manager_side"),
+    ),
+    (
+      argv: ["config", "set", "manager.bind", "127.0.0.1:8756", "--json"],
+      expect_exit: 0,
+      expect_stdout_json: (key: "manager.bind", value: "127.0.0.1:8756"),
+    ),
+    (
+      argv: ["config", "get", "remote.default"],
+      expect_exit: 1,
+      expect_stderr_contains: [
+        "key \"remote.default\" is client-local; it does not exist on a remote manager (bad_request)",
+      ],
+    ),
+    (
+      argv: ["config", "set", "manager.start_mode", "attached"],
+      expect_exit: 1,
+      expect_stderr_contains: [
+        "key \"manager.start_mode\" is client-local; it does not exist on a remote manager (bad_request)",
+      ],
+    ),
+  ],
+)

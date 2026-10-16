@@ -184,6 +184,7 @@ written, and scenario sockets live under `/tmp` so unix path-length limits are n
 | `view-down-session-running` | 06 view down ≠ session dead; generation moves on restart |
 | `compositor-death-no-restart` | 06 crash policy: dead, listable, `cause=dead` in history, no auto-restart |
 | `cold-no-manager` | 04 cold class: an answer, exit 0, and nothing starts |
+| `config-getset-ok` | 08 A2: manager-side keys read/written over RPC; client-local keys refused on a remote |
 | `remote-unreachable` | 04 shared string; `--remote` never falls back locally |
 | `manager-start-limits-unavailable` | 06 C6 startup refusal, 04 containment string |
 | `manager-start-limits-off-mode` | 06 C6 explicit downgrade: the start proceeds |

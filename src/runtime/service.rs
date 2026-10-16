@@ -3,9 +3,9 @@
 //! This is the seam where the runtime side replaces the contract layer's `SkeletonHandler`:
 //! it owns the session registry and speaks the pinned wire shapes for the lifecycle verbs —
 //! `create_session`, `list_sessions`, `session_status`, `close_session` — plus the live
-//! `status`/`readiness` reads and `config_reload` (08 reload semantics). Methods later
-//! phases own (views, history, the `config` read/write RPCs, drain) answer the phase-1 stub
-//! envelope until their slices land.
+//! `status`/`readiness` reads, `config_reload` (08 reload semantics) and the `config get/set`
+//! RPCs (08 A2 authority). Methods later phases own (views, history, drain) answer the
+//! phase-1 stub envelope until their slices land.
 //!
 //! Slice scope (serve wiring, first piece):
 //! - Sessions run through the injected [`SessionSpawner`]; the service never spawns directly.
@@ -25,7 +25,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value, json};
 
-use crate::config::{Authority, CoreConfig, Paths, RESTART_ONLY_KEYS, ScopeFile, read_token};
+use crate::config::{
+    Authority, CoreConfig, Paths, RESTART_ONLY_KEYS, ScopeFile, key_spec, parse_value, read_token,
+};
 use crate::ipc::{
     ErrorCode, ErrorEnvelope, HandshakeResult, MIN_SUPPORTED, PROTOCOL_VERSION, Response, methods,
 };
@@ -326,6 +328,54 @@ impl RuntimeService {
         Ok(json!({ "reloaded": reloaded, "restart_only": restart_only }))
     }
 
+    /// `config get` (08 A2): reads this instance's core config file — the same source the
+    /// local cold path reads, so `--remote` and on-box answers agree. The live snapshot is
+    /// not the read source; moving it is `config reload`'s job. Client-local keys do not
+    /// exist on a manager: refused, never answered.
+    fn config_get(&self, params: Option<&Value>) -> Result<Value, ErrorEnvelope> {
+        let map = params_object(params)?;
+        unknown_params(&map, &["key"])?;
+        let key = string_field(&map, "key")?
+            .ok_or_else(|| ErrorEnvelope::bad_request("key is required"))?;
+        let spec = key_spec(&key)?;
+        if spec.authority != Authority::ManagerSide {
+            return Err(ErrorEnvelope::bad_request(format!(
+                "key {key:?} is client-local; it does not exist on a remote manager"
+            )));
+        }
+        let config = CoreConfig::load_or_default(&self.paths.core_config())?;
+        let value = config.get(&key)?;
+        Ok(json!({
+            "key": key,
+            "value": value.to_grammar(),
+            "authority": "manager_side",
+        }))
+    }
+
+    /// `config set` (08 A2): writes this instance's core config file — the file the local
+    /// path writes and the next `config reload`/restart reads. The live snapshot is
+    /// deliberately untouched: a running manager keeps its value until then (08), so the
+    /// caller's output states that instead of pretending the change is live.
+    fn config_set(&self, params: Option<&Value>) -> Result<Value, ErrorEnvelope> {
+        let map = params_object(params)?;
+        unknown_params(&map, &["key", "value"])?;
+        let key = string_field(&map, "key")?
+            .ok_or_else(|| ErrorEnvelope::bad_request("key is required"))?;
+        let raw = string_field(&map, "value")?
+            .ok_or_else(|| ErrorEnvelope::bad_request("value is required"))?;
+        let spec = key_spec(&key)?;
+        if spec.authority != Authority::ManagerSide {
+            return Err(ErrorEnvelope::bad_request(format!(
+                "key {key:?} is client-local; it does not exist on a remote manager"
+            )));
+        }
+        let value = parse_value(&key, &raw)?;
+        let mut config = CoreConfig::load_or_default(&self.paths.core_config())?;
+        config.set(&key, value.clone())?;
+        config.save(&self.paths.core_config())?;
+        Ok(json!({ "key": key, "value": value.to_grammar() }))
+    }
+
     // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
@@ -359,6 +409,8 @@ impl Handler for RuntimeService {
             methods::SESSION_STATUS => self.session_status(params),
             methods::CLOSE_SESSION => self.close_session(params),
             methods::CONFIG_RELOAD => self.config_reload(),
+            methods::CONFIG_GET => self.config_get(params),
+            methods::CONFIG_SET => self.config_set(params),
             _ => Err(ErrorEnvelope::not_implemented()),
         };
         match outcome {
@@ -1111,6 +1163,172 @@ mod tests {
         let out = result(&service, methods::CONFIG_RELOAD, None).expect("reload");
         assert_eq!(out["reloaded"], json!([]));
         assert_eq!(out["restart_only"], json!([]));
+    }
+
+    #[test]
+    fn config_get_reads_the_file_and_refuses_client_local_keys() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (service, paths) = service_with_config_file(dir.path(), 25);
+        let cfg_path = paths.core_config();
+
+        // The file is the read source (same as the local cold path): an un-reloaded edit
+        // shows up in `get` while the running snapshot still holds the old value.
+        let mut edited = CoreConfig::load(&cfg_path).expect("load for edit");
+        edited
+            .set("sessions.max_global", ConfigValue::Int(40))
+            .expect("set");
+        edited.save(&cfg_path).expect("save edit");
+
+        let out = result(
+            &service,
+            methods::CONFIG_GET,
+            Some(json!({ "key": "sessions.max_global" })),
+        )
+        .expect("get");
+        assert_eq!(out["key"], json!("sessions.max_global"));
+        assert_eq!(out["value"], json!("40"));
+        assert_eq!(out["authority"], json!("manager_side"));
+        assert_eq!(
+            service.active_config().sessions.max_global,
+            25,
+            "the snapshot is not the read source"
+        );
+
+        // Unset optionals answer in the grammar's unset form.
+        let out = result(
+            &service,
+            methods::CONFIG_GET,
+            Some(json!({ "key": "manager.bind" })),
+        )
+        .expect("get bind");
+        assert_eq!(out["value"], json!("(unset)"));
+
+        // Client-local keys do not exist on a manager (08 A2) — refused, not answered.
+        let err = result(
+            &service,
+            methods::CONFIG_GET,
+            Some(json!({ "key": "remote.default" })),
+        )
+        .expect_err("client-local refuses");
+        assert!(
+            err.message.contains("does not exist on a remote manager"),
+            "got: {err:?}"
+        );
+
+        // Unknown keys name the valid set; `key` is required.
+        let err = result(
+            &service,
+            methods::CONFIG_GET,
+            Some(json!({ "key": "nope.key" })),
+        )
+        .expect_err("unknown refuses");
+        assert!(err.message.contains("unknown config key"), "got: {err:?}");
+        let err = result(&service, methods::CONFIG_GET, None).expect_err("missing key refuses");
+        assert!(err.message.contains("key is required"), "got: {err:?}");
+
+        // A hand-broken file refuses rather than answering defaults.
+        std::fs::write(
+            &cfg_path,
+            "(version: 1, sessions: (max_global: 40), nope: 1)",
+        )
+        .expect("break file");
+        let err = result(
+            &service,
+            methods::CONFIG_GET,
+            Some(json!({ "key": "sessions.max_global" })),
+        )
+        .expect_err("broken file refuses");
+        assert!(err.message.contains("config load error"), "got: {err:?}");
+    }
+
+    #[test]
+    fn config_set_writes_the_file_and_leaves_the_snapshot_until_reload() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (service, paths) = service_with_config_file(dir.path(), 10);
+        let cfg_path = paths.core_config();
+
+        let out = result(
+            &service,
+            methods::CONFIG_SET,
+            Some(json!({ "key": "sessions.max_global", "value": "25" })),
+        )
+        .expect("set");
+        assert_eq!(out["key"], json!("sessions.max_global"));
+        assert_eq!(out["value"], json!("25"));
+
+        // The file moved; the running snapshot did not (until reload, 08).
+        let on_disk = CoreConfig::load(&cfg_path).expect("load after set");
+        assert_eq!(
+            on_disk
+                .get("sessions.max_global")
+                .expect("get")
+                .to_grammar(),
+            "25"
+        );
+        assert_eq!(service.active_config().sessions.max_global, 10);
+        let out = result(&service, methods::CONFIG_RELOAD, None).expect("reload");
+        assert_eq!(out["reloaded"], json!(["sessions.max_global"]));
+        assert_eq!(service.active_config().sessions.max_global, 25);
+
+        // Restart-only keys are ordinary file writes: reload reports the drift, never applies.
+        let out = result(
+            &service,
+            methods::CONFIG_SET,
+            Some(json!({ "key": "manager.bind", "value": "127.0.0.1:8756" })),
+        )
+        .expect("set bind");
+        assert_eq!(out["value"], json!("127.0.0.1:8756"));
+        let out = result(&service, methods::CONFIG_RELOAD, None).expect("reload");
+        assert_eq!(out["reloaded"], json!([]));
+        assert_eq!(out["restart_only"], json!(["manager.bind"]));
+    }
+
+    #[test]
+    fn config_set_refuses_invalid_values_client_local_and_unknown_keys() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (service, paths) = service_with_config_file(dir.path(), 10);
+
+        let err = result(
+            &service,
+            methods::CONFIG_SET,
+            Some(json!({ "key": "sessions.max_global", "value": "abc" })),
+        )
+        .expect_err("bad int refuses");
+        assert!(err.message.contains("invalid integer"), "got: {err:?}");
+        let err = result(
+            &service,
+            methods::CONFIG_SET,
+            Some(json!({ "key": "remote.default", "value": "box:8756" })),
+        )
+        .expect_err("client-local refuses");
+        assert!(
+            err.message.contains("does not exist on a remote manager"),
+            "got: {err:?}"
+        );
+        let err = result(
+            &service,
+            methods::CONFIG_SET,
+            Some(json!({ "key": "nope.key", "value": "1" })),
+        )
+        .expect_err("unknown refuses");
+        assert!(err.message.contains("unknown config key"), "got: {err:?}");
+        let err = result(
+            &service,
+            methods::CONFIG_SET,
+            Some(json!({ "key": "sessions.max_global" })),
+        )
+        .expect_err("missing value refuses");
+        assert!(err.message.contains("value is required"), "got: {err:?}");
+
+        // Every refusal left the file exactly where it was.
+        let on_disk = CoreConfig::load(&paths.core_config()).expect("load");
+        assert_eq!(
+            on_disk
+                .get("sessions.max_global")
+                .expect("get")
+                .to_grammar(),
+            "10"
+        );
     }
 
     /// The P2 exit run: the lifecycle verbs against the **real** chain (mutter `--headless` →

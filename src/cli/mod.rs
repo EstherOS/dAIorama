@@ -872,7 +872,10 @@ impl App {
             {
                 Some(result) => Ok(Answer::new(
                     result,
-                    vec![format!("set {key} = {}", value.to_grammar())],
+                    vec![format!(
+                        "set {key} = {}; a running manager keeps the old value until 'daiorama config reload' (or restart)",
+                        value.to_grammar()
+                    )],
                 )),
                 None => Ok(Answer::cold_no_manager()),
             };

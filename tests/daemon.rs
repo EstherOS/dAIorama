@@ -157,3 +157,114 @@ fn two_racers_report_the_winner() {
     let out = run_binary(&conf, &data, &run, &["daemon", "end", "--instance", "race"]);
     assert!(out.status.success(), "cleanup end: {out:?}");
 }
+
+/// `config get/set` against the real manager over its socket: the RPC writes the instance's
+/// own file (the file the local path writes), both read routes agree, and `config reload`
+/// adopts the change (08 A2 authority + reload semantics).
+#[test]
+fn config_getset_round_trip() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let conf = tmp.path().join("conf");
+    let data = tmp.path().join("data");
+    let run = tmp.path().join("run");
+    let instance_config = conf.join("daiorama").join("cg");
+    std::fs::create_dir_all(&instance_config).unwrap();
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::create_dir_all(&run).unwrap();
+    std::fs::write(
+        instance_config.join("config.ron"),
+        "(version: 1, limits: (mode: off))\n",
+    )
+    .unwrap();
+
+    let out = run_binary(&conf, &data, &run, &["daemon", "start", "--instance", "cg"]);
+    assert!(
+        out.status.success(),
+        "daemon start: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let socket = run
+        .join("daiorama")
+        .join("cg")
+        .join("manager.sock")
+        .display()
+        .to_string();
+
+    // Write through the manager (RPC), not the local file path.
+    let out = run_binary(
+        &conf,
+        &data,
+        &run,
+        &[
+            "--instance",
+            "cg",
+            "--remote",
+            socket.as_str(),
+            "config",
+            "set",
+            "sessions.max_global",
+            "25",
+        ],
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(out.status.success(), "config set: {out:?}");
+    assert!(
+        stdout.contains(
+            "set sessions.max_global = 25; a running manager keeps the old value until \
+             'daiorama config reload' (or restart)"
+        ),
+        "{stdout}"
+    );
+
+    // Read it back over the socket, and via the cold local read — one file, one answer.
+    let out = run_binary(
+        &conf,
+        &data,
+        &run,
+        &[
+            "--instance",
+            "cg",
+            "--remote",
+            socket.as_str(),
+            "config",
+            "get",
+            "sessions.max_global",
+        ],
+    );
+    assert!(out.status.success(), "config get: {out:?}");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("25"));
+    let out = run_binary(
+        &conf,
+        &data,
+        &run,
+        &["config", "get", "sessions.max_global", "--instance", "cg"],
+    );
+    assert!(out.status.success(), "local get: {out:?}");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("25"));
+
+    // The reload adopts what the set wrote.
+    let out = run_binary(
+        &conf,
+        &data,
+        &run,
+        &[
+            "--instance",
+            "cg",
+            "--remote",
+            socket.as_str(),
+            "config",
+            "reload",
+            "--json",
+        ],
+    );
+    assert!(out.status.success(), "config reload: {out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        stdout.contains("\"reloaded\":[\"sessions.max_global\"]"),
+        "{stdout}"
+    );
+
+    let out = run_binary(&conf, &data, &run, &["daemon", "end", "--instance", "cg"]);
+    assert!(out.status.success(), "cleanup end: {out:?}");
+}

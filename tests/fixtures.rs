@@ -28,6 +28,7 @@ const SCENARIOS: &[&str] = &[
     "control-unknown-action",
     // Config surface.
     "config-reload-ok",
+    "config-getset-ok",
     // The registry and its tombstone transitions (06).
     "close-closed",
     "close-unknown",
@@ -100,6 +101,11 @@ async fn control_unknown_action() {
 #[tokio::test]
 async fn config_reload_ok() {
     run_scenario_file("config-reload-ok").await;
+}
+
+#[tokio::test]
+async fn config_getset_ok() {
+    run_scenario_file("config-getset-ok").await;
 }
 
 #[tokio::test]
