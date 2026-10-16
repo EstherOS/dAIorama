@@ -835,11 +835,12 @@ impl Listener {
 }
 
 /// One connection's lifecycle. `handshake` first, always: anything else is a malformed
-/// request (`bad_request`), and the connection ends. A *refused* handshake ends the
-/// connection the same way (05 A7: out-of-range ranges are rejected at connect — nothing
-/// follows a refusal). An *over-cap* frame ([`MAX_FRAME_BYTES`]) is refused the same way —
-/// draining an oversized line to resync would cost exactly the unbounded read the cap
-/// exists to prevent (P2 hardening).
+/// request (`bad_request`), and the connection ends; a second `handshake` on the same
+/// connection is refused the same way. A *refused* handshake ends the connection the same
+/// way (05 A7: out-of-range ranges are rejected at connect — nothing follows a refusal).
+/// An *over-cap* frame ([`MAX_FRAME_BYTES`]) is refused the same way — draining an
+/// oversized line to resync would cost exactly the unbounded read the cap exists to
+/// prevent (P2 hardening) — as is a line that is not valid UTF-8, which cannot be a frame.
 async fn serve_connection(stream: UnixStream, handler: Arc<dyn Handler>) -> std::io::Result<()> {
     let mut reader = BufReader::new(stream);
     let mut handshake_done = false;
@@ -855,11 +856,16 @@ async fn serve_connection(stream: UnixStream, handler: Arc<dyn Handler>) -> std:
                 return Ok(());
             }
         };
-        let Ok(raw_line) = std::str::from_utf8(&bytes) else {
-            // A line that cannot be a frame is not answered; the connection ends.
-            return Ok(());
+        let line = match std::str::from_utf8(&bytes) {
+            Ok(raw) => raw.trim(),
+            Err(_) => {
+                // A line that is not valid UTF-8 cannot be a frame: refused like an
+                // over-cap frame, and the connection ends. (P2 hardening)
+                let response = Response::Error(ErrorEnvelope::bad_request(strings::LINE_NOT_UTF8));
+                write_response(&mut reader, &response).await?;
+                return Ok(());
+            }
         };
-        let line = raw_line.trim();
         if line.is_empty() {
             continue;
         }
@@ -898,6 +904,15 @@ async fn serve_connection(stream: UnixStream, handler: Arc<dyn Handler>) -> std:
             }
             handshake_done = true;
             continue;
+        }
+        if request.method == methods::HANDSHAKE {
+            // A second handshake on one connection: the gate allows exactly one, first
+            // (05 A7). Refused, and the refusal ends the connection — the same shape as
+            // the wrong-first-call case above. (P2 hardening)
+            let response =
+                Response::Error(ErrorEnvelope::bad_request(strings::DUPLICATE_HANDSHAKE));
+            write_response(&mut reader, &response).await?;
+            return Ok(());
         }
         let response = handler.dispatch(&request.method, request.params.as_ref());
         write_response(&mut reader, &response).await?;
@@ -1526,6 +1541,156 @@ mod tests {
         );
 
         serving.abort();
+    }
+
+    /// Scaffold for the connection-gate tests: a live listener + skeleton handler over a
+    /// fresh socket in `dir`. Returns the socket path and the serving task to abort.
+    async fn serving_listener(dir: &Path) -> (PathBuf, tokio::task::JoinHandle<()>) {
+        let socket = dir.join("manager.sock");
+        let listener = Listener::bind(&socket).await.unwrap();
+        let handler = Arc::new(SkeletonHandler {
+            status: InstanceStatus {
+                state: InstanceState::Running,
+                mode: InstanceMode::Attached,
+                pid: 4242,
+                socket: socket.display().to_string(),
+                versions: VersionInfo::current(),
+                sessions: SessionCounts {
+                    running: 0,
+                    dead: 0,
+                },
+                drain: DrainState::default(),
+                instance_id: "11111111-1111-4111-8111-111111111111".to_string(),
+            },
+            dashboard_module: None,
+        });
+        (socket, tokio::spawn(listener.serve(handler)))
+    }
+
+    /// Connect a raw stream and complete the handshake; returns the reader (positioned
+    /// after the handshake answer) and the write half.
+    async fn connect_handshaked(
+        socket: &Path,
+    ) -> (
+        BufReader<tokio::net::unix::OwnedReadHalf>,
+        tokio::net::unix::OwnedWriteHalf,
+    ) {
+        let stream = UnixStream::connect(socket).await.unwrap();
+        let (read_half, mut write_half) = stream.into_split();
+        let mut reader = BufReader::new(read_half);
+        let handshake = Request::new(
+            methods::HANDSHAKE,
+            Some(json!({
+                "protocol_version": PROTOCOL_VERSION,
+                "min_supported": MIN_SUPPORTED,
+            })),
+        );
+        let mut line = serde_json::to_string(&handshake).unwrap();
+        line.push('\n');
+        write_half.write_all(line.as_bytes()).await.unwrap();
+        assert!(matches!(
+            crate::ipc::read_frame(&mut reader)
+                .await
+                .expect("handshake answer"),
+            Response::Result(_)
+        ));
+        (reader, write_half)
+    }
+
+    /// P2 hardening (third pass): a line that is not valid UTF-8 cannot be a frame — it is
+    /// refused with `bad_request` (the frame-contract string) and the connection ends;
+    /// nothing follows, the same shape as the over-cap refusal.
+    #[tokio::test]
+    async fn a_non_utf8_line_is_refused_then_the_connection_ends() {
+        let dir = tempfile::tempdir().unwrap();
+        let (socket, serving) = serving_listener(dir.path()).await;
+        let (mut reader, mut write_half) = connect_handshaked(&socket).await;
+
+        write_half
+            .write_all(b"\xff\xfe{\"method\":\"status\"}\n")
+            .await
+            .unwrap();
+        match crate::ipc::read_frame(&mut reader)
+            .await
+            .expect("refusal frame")
+        {
+            Response::Error(envelope) => {
+                assert_eq!(envelope.code, crate::ipc::ErrorCode::BadRequest);
+                assert_eq!(envelope.message, strings::LINE_NOT_UTF8);
+            }
+            other => panic!("expected the non-UTF-8 refusal, got {other:?}"),
+        }
+        assert_eq!(
+            crate::ipc::read_frame(&mut reader)
+                .await
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::UnexpectedEof,
+            "nothing follows the refusal"
+        );
+
+        serving.abort();
+    }
+
+    /// P2 hardening (third pass): a second `handshake` on one connection is refused with
+    /// `bad_request` (the gate allows exactly one, first) and the connection ends — the
+    /// same shape as the wrong-first-call case.
+    #[tokio::test]
+    async fn a_duplicate_handshake_is_refused_then_the_connection_ends() {
+        let dir = tempfile::tempdir().unwrap();
+        let (socket, serving) = serving_listener(dir.path()).await;
+        let (mut reader, mut write_half) = connect_handshaked(&socket).await;
+
+        let handshake = Request::new(
+            methods::HANDSHAKE,
+            Some(json!({
+                "protocol_version": PROTOCOL_VERSION,
+                "min_supported": MIN_SUPPORTED,
+            })),
+        );
+        let mut line = serde_json::to_string(&handshake).unwrap();
+        line.push('\n');
+        write_half.write_all(line.as_bytes()).await.unwrap();
+        match crate::ipc::read_frame(&mut reader)
+            .await
+            .expect("refusal frame")
+        {
+            Response::Error(envelope) => {
+                assert_eq!(envelope.code, crate::ipc::ErrorCode::BadRequest);
+                assert_eq!(envelope.message, strings::DUPLICATE_HANDSHAKE);
+            }
+            other => panic!("expected the duplicate-handshake refusal, got {other:?}"),
+        }
+        assert_eq!(
+            crate::ipc::read_frame(&mut reader)
+                .await
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::UnexpectedEof,
+            "nothing follows the refusal"
+        );
+
+        serving.abort();
+    }
+
+    /// The fixture README's frame contract is normative: every refusal string it pins must
+    /// be the string the manager sends, byte for byte — or spec drift fails the build.
+    #[test]
+    fn frame_contract_refusals_match_the_fixture_readme() {
+        const README: &str = include_str!("../../fixtures/README.md");
+        // The README wraps prose; compare on whitespace-flattened text so the pin tracks
+        // wording, not line width.
+        let flat = README.split_whitespace().collect::<Vec<_>>().join(" ");
+        for pinned in [
+            strings::frame_too_large(MAX_FRAME_BYTES),
+            strings::LINE_NOT_UTF8.to_string(),
+            strings::DUPLICATE_HANDSHAKE.to_string(),
+        ] {
+            assert!(
+                flat.contains(&pinned),
+                "fixtures/README.md must pin {pinned:?} (modulo line wrapping)"
+            );
+        }
     }
 
     #[tokio::test]

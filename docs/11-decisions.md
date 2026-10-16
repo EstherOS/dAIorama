@@ -391,3 +391,19 @@ of magnitude above any legitimate frame (largest today: control args, config val
 below process-killing sizes; ending the connection is the only resync that does not cost an
 unbounded drain of the oversized line.
 *Rejected:* drain-and-continue (unbounded work to resync); no cap (a killable daemon).
+
+### Hardening — gate refusals: unanswerable lines · repeated handshakes · adopted · home: fixtures/README
+
+A line that is not valid UTF-8 cannot be a frame: refused with `bad_request` (`request line
+is not valid UTF-8`) and the connection ends. A second `handshake` on one connection is a gate
+violation (05 A7: the handshake is the first call, once per connection): refused with
+`bad_request` (`handshake may only be the first call on a connection`) and the connection
+ends. Nothing follows either refusal, like a refused handshake.
+
+*Rationale:* found by the third live stress pass (raw-socket battery). The non-UTF-8 line
+ended the connection silently while every sibling malformed class answers — a client encoding
+bug surfaced as a dead manager ("manager unreachable"), not as a refused frame. The duplicate
+handshake answered the phase-1 stub envelope (`internal` + placeholder) for a call the gate
+owns, not the dispatcher — the wrong class, on strings the frozen tests deliberately exclude.
+*Rejected:* silence for invalid UTF-8 (no diagnostic); answering-and-continuing after a
+repeated handshake (gate violations end the connection, refused handshake is the precedent).

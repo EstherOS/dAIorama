@@ -127,6 +127,14 @@ pub fn frame_too_large(max: usize) -> String {
     format!("request frame must be at most {max} bytes")
 }
 
+/// P2 hardening: a line that is not valid UTF-8 cannot be a frame (fixtures/README frame
+/// contract). Refused like an over-cap frame; the refusal ends the connection.
+pub const LINE_NOT_UTF8: &str = "request line is not valid UTF-8";
+
+/// P2 hardening: a second `handshake` on one connection is a gate violation (05 A7: the
+/// handshake is the first call, once per connection). Refused; ends the connection.
+pub const DUPLICATE_HANDSHAKE: &str = "handshake may only be the first call on a connection";
+
 /// 04: protocol ranges do not overlap (05 §Version handshake; 05 `version_incompatible`).
 pub fn protocol_mismatch(
     client_version: &str,

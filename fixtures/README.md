@@ -102,6 +102,10 @@ and every run**.
   (`MAX_FRAME_BYTES`). A longer line is refused with `bad_request` (`request frame must be at
   most 8388608 bytes`) and the connection ends — nothing follows the refusal, like a refused
   handshake. The cap is exact: a frame at the limit is read normally.
+- **Lines that cannot be frames are refused, and the connection ends.** A line whose bytes are
+  not valid UTF-8 is refused with `bad_request` (`request line is not valid UTF-8`); a second
+  `handshake` on one connection is refused with `bad_request` (`handshake may only be the
+  first call on a connection`). Nothing follows either refusal, like a refused handshake.
 - `expect.method` must match exactly. Methods mirror MCP tool names where they exist
   (`create_session`, `close_session`, `list_sessions`, `session_status`, `get_view`,
   `stop_view`, `list_history`, and the control tools by their own names) and are RPC-only
