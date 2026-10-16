@@ -12,8 +12,9 @@
 //!   `{code,message,hint?}` envelope verbatim on stderr.
 //!
 //! Commands whose behaviour needs the runtime: `serve` and `daemon start|end` are live (W3) —
-//! the real manager behind the pinned surface; `mcp`, `doctor` and `dashboard *` still answer
-//! the phase-1 stub envelope until their slices land.
+//! the real manager behind the pinned surface; `doctor` is live (W3, `doctor` module: the
+//! host-runnable environment check, 04); `mcp` and `dashboard *` still answer the phase-1
+//! stub envelope until their slices land.
 
 use std::path::PathBuf;
 use std::process::{ExitCode, Stdio};
@@ -30,6 +31,7 @@ use crate::ipc::{
 use crate::strings;
 
 mod daemon;
+mod doctor;
 mod serve;
 
 // ---------------------------------------------------------------------------
@@ -589,9 +591,8 @@ impl App {
                 DaemonAction::Start => daemon::start(self).await,
                 DaemonAction::End { force } => daemon::end(self, force).await,
             },
-            Command::Mcp(_) | Command::Doctor | Command::Dashboard(_) => {
-                Err(ErrorEnvelope::not_implemented())
-            }
+            Command::Doctor => Ok(doctor::report()),
+            Command::Mcp(_) | Command::Dashboard(_) => Err(ErrorEnvelope::not_implemented()),
         }
     }
 

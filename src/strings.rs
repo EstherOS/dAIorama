@@ -46,6 +46,25 @@ pub fn hyprland_unsupported(found: &str, min: &str, max: &str) -> String {
     format!("Hyprland {found} is outside the supported range {min}-{max}.")
 }
 
+/// 09/04: `daiorama doctor`'s supported Hyprland range — the spike-verified series; re-pin
+/// per re-verified release (one line, deliberately cheap to flip).
+pub const HYPRLAND_MIN_VERSION: &str = "0.56.0";
+pub const HYPRLAND_MAX_VERSION: &str = "0.56.9";
+
+// ---------------------------------------------------------------------------
+// 04 — doctor presentation (W3; section labels are provisional — the specs pin no label —
+// kept here so the tests catch drift like every other operator-visible string)
+// ---------------------------------------------------------------------------
+
+/// The report's first line.
+pub const DOCTOR_HEADER: &str = "daiorama doctor — environment check";
+/// Section label: tool presence + versions.
+pub const DOCTOR_TOOLS_LABEL: &str = "tools:";
+/// Section label: Wayland environment facts.
+pub const DOCTOR_WAYLAND_LABEL: &str = "wayland:";
+/// Section label: the delegation check (06 C6).
+pub const DOCTOR_CONTAINMENT_LABEL: &str = "containment:";
+
 /// 04: software renderer detected at session creation (06 renderer policy).
 pub fn renderer_refused(renderer: &str) -> String {
     format!(

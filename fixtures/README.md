@@ -225,5 +225,5 @@ container shapes lives in `p2/cgroup-matrix/`:
    startup sweep runs over the instance's session-cgroup subtree to kill session trees left by a
    previous manager run (03 ownership seams).
 
-`daiorama doctor` performs the same check and prints the exact wiring command for the shape it
-finds (the runtime side owns that output; `doctor` answers the phase-1 stub envelope today).
+`daiorama doctor` runs the same check via the in-tree probe and reports the class it finds;
+the exact wiring command for that class stays the runtime side's output (W4).
