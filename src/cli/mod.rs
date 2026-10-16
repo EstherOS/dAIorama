@@ -11,8 +11,9 @@
 //!   `--json` prints the RPC response payload unmodified on stdout, with errors as the
 //!   `{code,message,hint?}` envelope verbatim on stderr.
 //!
-//! Commands whose behaviour needs the runtime (`serve`, `daemon start|end`, `mcp`, `doctor`,
-//! `dashboard *`) exist in the surface and answer the phase-1 stub envelope.
+//! Commands whose behaviour needs the runtime: `serve` is live (W3) — the real manager behind
+//! the pinned surface; `daemon start|end`, `mcp`, `doctor` and `dashboard *` still answer the
+//! phase-1 stub envelope until their slices land.
 
 use std::path::PathBuf;
 use std::process::{ExitCode, Stdio};
@@ -27,6 +28,8 @@ use crate::ipc::{
     PROTOCOL_VERSION, json_str, methods, params_object,
 };
 use crate::strings;
+
+mod serve;
 
 // ---------------------------------------------------------------------------
 // clap surface (04, complete)
@@ -496,6 +499,9 @@ impl App {
             .arg("serve")
             .arg("--instance")
             .arg(&self.instance)
+            // Hand the chosen mode down: the child has no terminal to infer it from (04/10).
+            // Provisional env channel, additive.
+            .env("DAIORAMA_MODE", mode)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -574,11 +580,13 @@ impl App {
             Command::Config(args) => self.cmd_config(args).await,
             Command::Token(args) => self.cmd_token(args).await,
             Command::Version => Ok(Self::cmd_version()),
-            Command::Serve
-            | Command::Daemon(_)
-            | Command::Mcp(_)
-            | Command::Doctor
-            | Command::Dashboard(_) => Err(ErrorEnvelope::not_implemented()),
+            Command::Serve => {
+                serve::serve_instance(&self.instance).await?;
+                Ok(Answer::from_lines(Vec::new()))
+            }
+            Command::Daemon(_) | Command::Mcp(_) | Command::Doctor | Command::Dashboard(_) => {
+                Err(ErrorEnvelope::not_implemented())
+            }
         }
     }
 

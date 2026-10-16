@@ -130,6 +130,7 @@ name = "daiorama"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "libc",
  "ron",
  "serde",
  "serde_json",
