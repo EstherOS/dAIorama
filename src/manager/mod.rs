@@ -711,14 +711,29 @@ pub mod startup {
 // Trait stubs for the runtime half (no implementation in this layer)
 // ---------------------------------------------------------------------------
 
+/// What a successful spawn reports back (06 D6): the new session's id and the renderer mark
+/// detected at creation — `verified` for a detected GPU renderer, `software` when a software
+/// renderer was detected and the caller allowed it, `unverified` when the active renderer
+/// could not be detected. Never silently `verified`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpawnOutcome {
+    pub id: String,
+    pub renderer: RendererMark,
+}
+
 /// Session spawning, containment, and teardown. **Trait stub only** — the runtime side (W2)
 /// implements this against a real compositor and real cgroups; this layer must never spawn a
 /// compositor, touch cgroups or hold a wayvnc socket.
 pub trait SessionSpawner: Send + Sync {
     /// Start a session from its creation parameters. The renderer policy (06 D6) is enforced
-    /// here: a detected software renderer refuses with `renderer_refused`, unless
-    /// `renderer.allow_software = on`.
-    fn spawn(&self, spec: &SessionSpec) -> Result<String, ErrorEnvelope>;
+    /// here: a detected software renderer refuses with `renderer_refused` unless
+    /// `allow_software` is set — the caller's live `renderer.allow_software` (08: reloadable,
+    /// re-read per call). Returns the id and the creation-time renderer mark for the record.
+    fn spawn(
+        &self,
+        spec: &SessionSpec,
+        allow_software: bool,
+    ) -> Result<SpawnOutcome, ErrorEnvelope>;
 
     /// Kill the session's process tree through its cgroup (the completion guarantee).
     fn kill_tree(&self, session_id: &str) -> Result<(), ErrorEnvelope>;

@@ -1,0 +1,13 @@
+{
+  "name": "dai-renderer-real",
+  "image": "localhost/blingus/dai-l1:dev",
+  "restart_policy": "no",
+  "privileged": true,
+  "devices": [
+    {"path": "/dev/dri/renderD128", "type": "c", "major": 226, "minor": 128, "fileMode": 438, "permissions": "rwm"}
+  ],
+  "mounts": [
+    {"type": "bind", "source": "<replace: artifacts dir holding daiorama-tests + run output>", "destination": "/out", "options": ["rbind", "rw", "z"]}
+  ],
+  "command": ["bash", "-c", "exec > /out/renderer-real.txt 2>&1; cd /out; echo '== [1] containment chain first in a fresh container (its probe owns the keeper prep) =='; dbus-run-session -- ./daiorama-tests real_containment_chain --ignored --nocapture --test-threads=1; echo chain_exit=$?; echo; echo '== [2] renderer gate =='; dbus-run-session -- ./daiorama-tests real_renderer_gate --ignored --nocapture --test-threads=1; echo gate_exit=$?; echo; echo '== [3] lifecycle verbs on the real chain =='; dbus-run-session -- ./daiorama-tests real_chain_lifecycle_verbs --ignored --nocapture --test-threads=1; echo lifecycle_exit=$?; echo; echo '== post: leftover dr- dirs =='; ls -d /tmp/dr-* 2>&1 | head; echo '== post: nsroot controllers =='; cat /sys/fs/cgroup/cgroup.subtree_control 2>&1; echo '== post: instance session subtree =='; ls -la /sys/fs/cgroup/daiorama-sessions 2>&1 | head -6; echo RUN-DONE"]
+}

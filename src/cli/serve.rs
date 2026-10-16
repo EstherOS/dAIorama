@@ -422,8 +422,8 @@ mod tests {
     use super::*;
     use crate::config::Toggle;
     use crate::ipc::methods;
-    use crate::manager::SessionSpec;
     use crate::manager::startup::{DelegatedProbe, Delegation};
+    use crate::manager::{RendererMark, SessionSpec, SpawnOutcome};
     use std::sync::Mutex as StdMutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -449,10 +449,17 @@ mod tests {
     struct StubSpawner(StdMutex<Vec<String>>);
 
     impl SessionSpawner for StubSpawner {
-        fn spawn(&self, _spec: &SessionSpec) -> Result<String, ErrorEnvelope> {
+        fn spawn(
+            &self,
+            _spec: &SessionSpec,
+            _allow_software: bool,
+        ) -> Result<SpawnOutcome, ErrorEnvelope> {
             let id = uuid::Uuid::new_v4().to_string();
             self.0.lock().unwrap().push(id.clone());
-            Ok(id)
+            Ok(SpawnOutcome {
+                id,
+                renderer: RendererMark::Unverified,
+            })
         }
 
         fn kill_tree(&self, _session_id: &str) -> Result<(), ErrorEnvelope> {

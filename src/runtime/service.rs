@@ -14,8 +14,10 @@
 //!   global ceiling from `sessions.max_global` (08).
 //! - `view: true` on create is refused with `view_unavailable`: this build has no view
 //!   provider yet (views land with P4). Nothing is spawned when it refuses.
-//! - Renderer marks are `unverified` until the spawner's renderer gate lands (its own W2
-//!   line); nothing is silently `verified`.
+//! - Renderer marks come from the spawner's creation gate (06 D6): the detected renderer
+//!   rides back on the spawn outcome — `verified` for a detected GPU renderer, `software`
+//!   when the live `renderer.allow_software` allowed a software one, `unverified` when
+//!   detection was not possible. Nothing is ever silently `verified`.
 //! - `list_sessions` caps a page at [`DEFAULT_LIST_LIMIT`] when `limit` is absent (04 leaves
 //!   the default open; provisional and additive to change).
 
@@ -34,8 +36,7 @@ use crate::ipc::{
 };
 use crate::manager::{
     Backend, DrainState, Handler, InstanceMode, InstanceState, InstanceStatus, Origin, Registry,
-    RendererMark, Resolution, SessionRecord, SessionSpawner, SessionSpec, SessionState,
-    VersionInfo,
+    Resolution, SessionRecord, SessionSpawner, SessionSpec, SessionState, VersionInfo,
 };
 
 /// `list_sessions` page size when the caller sends no `limit` (provisional; additive).
@@ -211,9 +212,18 @@ impl RuntimeService {
             instance_id = registry.instance_id.clone();
         }
 
-        let id = self.spawner.spawn(&spec)?;
+        // The renderer policy value is read live (08: everything but `manager.bind`
+        // re-reads on `config reload`), then the spawner detects and enforces (06 D6).
+        let allow_software = self
+            .config
+            .read()
+            .expect("config lock")
+            .renderer
+            .allow_software
+            .is_on();
+        let outcome = self.spawner.spawn(&spec, allow_software)?;
         let record = SessionRecord {
-            id,
+            id: outcome.id,
             label: label.unwrap_or_default(),
             state: SessionState::Running,
             backend,
@@ -224,9 +234,9 @@ impl RuntimeService {
             idle_since: utc_now_rfc3339(),
             view: None,
             instance_id,
-            // Flips to `verified` / refuses at spawn once the spawner's renderer gate lands
-            // (its own W2 line); nothing is silently verified before then.
-            renderer: RendererMark::Unverified,
+            // The creation-time mark the spawner detected (06 D6): `verified` / `software`
+            // (override on) / `unverified` (not detectable — never guessed).
+            renderer: outcome.renderer,
             cause: None,
         };
         let value = record.to_json();
@@ -561,29 +571,57 @@ fn rfc3339_from_unix_secs(secs: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{ConfigValue, Paths, StartMode};
+    use crate::config::{ConfigValue, Paths, StartMode, Toggle};
     use crate::ipc::{Address, Client};
-    use crate::manager::Listener;
+    use crate::manager::{Listener, RendererMark, SpawnOutcome};
     use crate::runtime::spawner::{LinuxSpawner, SpawnerConfig};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration as StdDuration;
 
-    #[derive(Default)]
     struct TestSpawner {
         spawned: Mutex<Vec<SessionSpec>>,
         killed: Mutex<Vec<String>>,
         next_id: AtomicU64,
         fail_next: Mutex<Option<ErrorEnvelope>>,
+        /// The creation-time mark every spawn reports (06 D6); `Unverified` by default —
+        /// nothing is ever silently `verified`.
+        renderer: RendererMark,
+        /// What each spawn was told about the live `renderer.allow_software`.
+        allow_software_seen: Mutex<Vec<bool>>,
+    }
+
+    impl Default for TestSpawner {
+        fn default() -> Self {
+            Self {
+                spawned: Mutex::new(Vec::new()),
+                killed: Mutex::new(Vec::new()),
+                next_id: AtomicU64::new(0),
+                fail_next: Mutex::new(None),
+                renderer: RendererMark::Unverified,
+                allow_software_seen: Mutex::new(Vec::new()),
+            }
+        }
     }
 
     impl SessionSpawner for TestSpawner {
-        fn spawn(&self, spec: &SessionSpec) -> Result<String, ErrorEnvelope> {
+        fn spawn(
+            &self,
+            spec: &SessionSpec,
+            allow_software: bool,
+        ) -> Result<SpawnOutcome, ErrorEnvelope> {
             if let Some(err) = self.fail_next.lock().expect("fail slot").take() {
                 return Err(err);
             }
             self.spawned.lock().expect("spawned").push(spec.clone());
+            self.allow_software_seen
+                .lock()
+                .expect("allow_software_seen")
+                .push(allow_software);
             let n = self.next_id.fetch_add(1, Ordering::SeqCst);
-            Ok(format!("2f7a4c1e-9b3d-4a6f-8e21-{:012}", n + 1))
+            Ok(SpawnOutcome {
+                id: format!("2f7a4c1e-9b3d-4a6f-8e21-{:012}", n + 1),
+                renderer: self.renderer,
+            })
         }
 
         fn kill_tree(&self, id: &str) -> Result<(), ErrorEnvelope> {
@@ -621,6 +659,17 @@ mod tests {
 
     fn make_service(dir: &std::path::Path, spawner: Arc<TestSpawner>) -> RuntimeService {
         make_service_with(dir, spawner)
+    }
+
+    /// `make_service_with_config` for tests that keep a typed handle on the spawner for
+    /// assertions after construction — the coercion happens here, where the parameter type is
+    /// concrete (`Arc<TestSpawner>` → `Arc<dyn SessionSpawner>`).
+    fn make_typed_service_with_config(
+        dir: &std::path::Path,
+        spawner: Arc<TestSpawner>,
+        config: CoreConfig,
+    ) -> RuntimeService {
+        make_service_with_config(dir, spawner, config, None)
     }
 
     fn result(
@@ -785,6 +834,69 @@ mod tests {
                 .unwrap()
                 .is_empty(),
             "a refused spawn must not leave a dead record"
+        );
+    }
+
+    #[test]
+    fn create_records_the_creation_renderer_mark_the_spawner_reports() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        // The default test spawner reports `unverified` (no detection) — never silently
+        // `verified`.
+        let service = make_service(tmp.path(), Arc::new(TestSpawner::default()));
+        assert_eq!(create_ok(&service, None)["renderer"], "unverified");
+
+        // A detecting spawner's mark reaches the record untouched: `software` (the override
+        // was on) and `verified` (a GPU) alike.
+        for mark in [RendererMark::Software, RendererMark::Verified] {
+            let spawner = Arc::new(TestSpawner {
+                renderer: mark,
+                ..TestSpawner::default()
+            });
+            let service = make_service(tmp.path(), Arc::clone(&spawner));
+            let value = create_ok(&service, Some(json!({ "label": "marked" })));
+            assert_eq!(value["renderer"], mark.as_str(), "{value}");
+        }
+    }
+
+    #[test]
+    fn create_passes_the_live_allow_software_flag_to_the_spawner() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::for_env(
+            Some(dir.path()),
+            Some(dir.path()),
+            Some(dir.path()),
+            "default",
+        );
+        let cfg_path = paths.core_config();
+        std::fs::create_dir_all(cfg_path.parent().expect("config dir")).expect("config dir");
+        CoreConfig::default().save(&cfg_path).expect("seed config");
+
+        let spawner = Arc::new(TestSpawner::default());
+        let service = make_typed_service_with_config(
+            dir.path(),
+            Arc::clone(&spawner),
+            CoreConfig::load(&cfg_path).expect("load seed"),
+        );
+
+        // The spec default is off: the spawner sees `false`.
+        create_ok(&service, None);
+        assert_eq!(*spawner.allow_software_seen.lock().unwrap(), vec![false]);
+
+        // A reload adopts the edited key (08: non-restart-only) and the NEXT create sees the
+        // live value — the override is reachable only through the manager's config.
+        let mut edited = CoreConfig::load(&cfg_path).expect("reload for edit");
+        edited
+            .set("renderer.allow_software", ConfigValue::Toggle(Toggle::On))
+            .expect("set renderer.allow_software");
+        edited.save(&cfg_path).expect("write edit");
+        let out = result(&service, methods::CONFIG_RELOAD, None).expect("reload");
+        assert_eq!(out["reloaded"], json!(["renderer.allow_software"]));
+
+        create_ok(&service, None);
+        assert_eq!(
+            *spawner.allow_software_seen.lock().unwrap(),
+            vec![false, true]
         );
     }
 

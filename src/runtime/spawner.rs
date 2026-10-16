@@ -18,6 +18,12 @@
 //! fork children — with a `pre_exec` PEP (`PR_SET_PDEATHSIG`, a `getppid` re-check, and the
 //! session-scope self-join when containment is on). Transient clients (hyprctl, diagnostics)
 //! are not managed children and stay direct spawns.
+//!
+//! The renderer gate (06 D6) lives here too: at creation the active renderer is read from the
+//! child compositor's instance log (`Renderer: <string>`) — a detected software renderer
+//! refuses the session (the pinned 04 string) unless the caller's live
+//! `renderer.allow_software` allows it, and the detected mark (`verified` / `software` /
+//! `unverified`) rides back on [`crate::manager::SpawnOutcome`]. Never silently `verified`.
 
 use std::collections::HashMap;
 use std::ffi::CString;
@@ -33,7 +39,9 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use crate::ipc::ErrorEnvelope;
-use crate::manager::{Resolution, SessionSpawner, SessionSpec, SessionState};
+use crate::manager::{
+    RendererMark, Resolution, SessionSpawner, SessionSpec, SessionState, SpawnOutcome,
+};
 use crate::runtime::containment::{create_session_scope, kill_scope};
 
 /// The parent's wayland socket name inside each session's runtime dir.
@@ -98,6 +106,10 @@ pub struct SpawnerConfig {
     pub short_root: PathBuf,
     pub parent_ready_timeout: Duration,
     pub child_ready_timeout: Duration,
+    /// How long the renderer gate waits for the instance log's `Renderer: ` line before
+    /// giving up — an undetected renderer leaves the mark `unverified`, never guessed
+    /// (06 D6). A line that is already there returns immediately; zero means "read once".
+    pub renderer_detect_timeout: Duration,
     /// Containment wiring for session children; `Off` (the default) keeps today's behavior.
     pub containment: Containment,
 }
@@ -112,6 +124,7 @@ impl SpawnerConfig {
             short_root: std::env::temp_dir(),
             parent_ready_timeout: Duration::from_secs(15),
             child_ready_timeout: Duration::from_secs(30),
+            renderer_detect_timeout: Duration::from_secs(2),
             containment: Containment::Off,
         }
     }
@@ -261,6 +274,49 @@ pub struct LinuxSpawner {
     forker: Forker,
 }
 
+// ---------------------------------------------------------------------------
+// The renderer gate (06 D6) — detection from the instance log
+// ---------------------------------------------------------------------------
+
+/// The marker Hyprland's instance log uses for the active GL renderer — the exact shape the
+/// creation evidence carries (`p2/pre-w2/renderer/evidence/`): `DEBUG ]: Renderer: NV117` /
+/// `DEBUG ]: Renderer: llvmpipe (LLVM 22.1.8, 256 bits)`.
+const RENDERER_MARKER: &str = "Renderer: ";
+
+/// The software-renderer names the gate refuses ("`llvmpipe` or equivalent", 06): the Mesa
+/// CPU rasterizers, GL and Vulkan. Case-insensitive substring match — logs carry versioned
+/// strings (`llvmpipe (LLVM 22.1.8, 256 bits)`).
+const SOFTWARE_RENDERERS: &[&str] = &["llvmpipe", "softpipe", "swrast", "lavapipe"];
+
+/// The active renderer as the instance log reports it: the text after the most recent
+/// `Renderer: ` line. `None` when the log carries no such line — the gate then leaves the
+/// session's mark `unverified`; it never guesses.
+fn detect_renderer(log: &str) -> Option<String> {
+    log.lines()
+        .filter_map(|line| line.split_once(RENDERER_MARKER))
+        .map(|(_, rest)| rest.trim())
+        .rfind(|rest| !rest.is_empty())
+        .map(str::to_string)
+}
+
+/// Whether a detected renderer is software (06: "`llvmpipe` or equivalent").
+fn is_software_renderer(renderer: &str) -> bool {
+    let lower = renderer.to_ascii_lowercase();
+    SOFTWARE_RENDERERS.iter().any(|name| lower.contains(name))
+}
+
+/// The `{renderer}` the pinned 04 refusal string carries: the family name without the
+/// parenthesized version detail — `llvmpipe (LLVM 22.1.8, 256 bits)` refuses as the
+/// byte-pinned `llvmpipe` (04; `fixtures/ipc/new-refused-software-renderer.ron`).
+fn renderer_name(renderer: &str) -> &str {
+    let name = renderer.split('(').next().unwrap_or(renderer).trim();
+    if name.is_empty() {
+        renderer.trim()
+    } else {
+        name
+    }
+}
+
 impl LinuxSpawner {
     pub fn new(config: SpawnerConfig) -> Self {
         Self {
@@ -276,6 +332,34 @@ impl LinuxSpawner {
         let file = File::create(dir.join(format!("{name}.log")))?;
         let err = file.try_clone()?;
         Ok((Stdio::from(file), Stdio::from(err)))
+    }
+
+    /// The session's Hyprland instance log — what the renderer gate reads.
+    fn instance_log_path(rt_dir: &Path, signature: &str) -> PathBuf {
+        rt_dir.join("hypr").join(signature).join("hyprland.log")
+    }
+
+    /// Wait (bounded) for the instance log's `Renderer: ` line, then return the renderer it
+    /// names. Startup writes the line before the IPC socket appears (the observed order), so
+    /// this normally returns on the first read; the timeout covers slow writers only. A log
+    /// that cannot be read (or carries no line) is "not detectable", not an error.
+    fn wait_for_renderer(rt_dir: &Path, signature: &str, timeout: Duration) -> Option<String> {
+        let path = Self::instance_log_path(rt_dir, signature);
+        let mut found = None;
+        Self::wait_for(
+            || match fs::read_to_string(&path) {
+                Ok(text) => match detect_renderer(&text) {
+                    Some(renderer) => {
+                        found = Some(renderer);
+                        true
+                    }
+                    None => false,
+                },
+                Err(_) => false,
+            },
+            timeout,
+        );
+        found
     }
 
     fn wait_for(mut ready: impl FnMut() -> bool, timeout: Duration) -> bool {
@@ -492,7 +576,11 @@ impl LinuxSpawner {
 }
 
 impl SessionSpawner for LinuxSpawner {
-    fn spawn(&self, spec: &SessionSpec) -> Result<String, ErrorEnvelope> {
+    fn spawn(
+        &self,
+        spec: &SessionSpec,
+        allow_software: bool,
+    ) -> Result<SpawnOutcome, ErrorEnvelope> {
         // Physical mode: mode = logical × scale (P2 semantics; the constants live here).
         let logical = Resolution::parse(&spec.resolution).map_err(|_| {
             ErrorEnvelope::bad_request(format!("invalid resolution {:?}", spec.resolution))
@@ -653,6 +741,33 @@ impl SessionSpawner for LinuxSpawner {
             )));
         }
 
+        // The renderer gate (06 D6): the active renderer is detected from the child
+        // compositor's instance log. A detected software renderer refuses — the pinned 04
+        // string, chain killed, scope discarded — unless the caller allows it (the live
+        // `renderer.allow_software`); a detected GPU renderer marks the session `verified`;
+        // a log without the line stays `unverified` (never guessed).
+        let detected =
+            Self::wait_for_renderer(&rt_dir, &signature, self.config.renderer_detect_timeout);
+        let renderer = match detected.as_deref() {
+            Some(name) if is_software_renderer(name) => {
+                if !allow_software {
+                    Self::discard_scope(scope.as_deref());
+                    Self::kill_quietly(&mut child);
+                    Self::kill_quietly(&mut parent);
+                    Self::discard_dirs(&dir, &rt_dir);
+                    return Err(ErrorEnvelope::renderer_refused(renderer_name(name)));
+                }
+                RendererMark::Software
+            }
+            Some(_) => RendererMark::Verified,
+            None => {
+                eprintln!(
+                    "warning: renderer not detected for session {id}; marked unverified (06 D6)"
+                );
+                RendererMark::Unverified
+            }
+        };
+
         // The output at the requested mode and scale (P2 creation params).
         let scale = format!("{}", spec.scale);
         let monitor_rule = format!("{PRIMARY_OUTPUT},{mode_w}x{mode_h}@60,0x0,{scale}");
@@ -694,7 +809,7 @@ impl SessionSpawner for LinuxSpawner {
                 signature,
             },
         );
-        Ok(id)
+        Ok(SpawnOutcome { id, renderer })
     }
 
     fn kill_tree(&self, session_id: &str) -> Result<(), ErrorEnvelope> {
@@ -752,6 +867,10 @@ mod tests {
         config.hyprctl_bin = write_stub(stub_dir, "hyprctl", HYPRCTL_STUB);
         config.parent_ready_timeout = Duration::from_secs(3);
         config.child_ready_timeout = Duration::from_secs(3);
+        // The renderer gate's wait window: the stubs either write the line before the socket
+        // (instant) or never (the tiny window keeps the undetectable case cheap). The
+        // production default is exercised by `SpawnerConfig::new`'s own test.
+        config.renderer_detect_timeout = Duration::from_millis(50);
         // Never inherit an ambient TMPDIR here: the runtime-dir budget is a unit under test
         // (`runtime_dir_picker_*`), not something the box's environment may decide.
         config.short_root = PathBuf::from("/tmp");
@@ -794,7 +913,7 @@ mod tests {
             view: false,
             label: None,
         };
-        let id = spawner.spawn(&spec).expect("spawn succeeds");
+        let id = spawner.spawn(&spec, false).expect("spawn succeeds").id;
         let (parent_pid, child_pid) = spawner.child_pids(&id).expect("session tracked");
         assert!(proc_alive(parent_pid), "parent alive after spawn");
         assert!(proc_alive(child_pid), "child alive after spawn");
@@ -812,6 +931,158 @@ mod tests {
         assert!(!stub_processes_running(&mutter_path), "no stub left behind");
     }
 
+    // -----------------------------------------------------------------------
+    // The renderer gate (06 D6)
+    // -----------------------------------------------------------------------
+
+    /// A Hyprland stub that behaves like the real one where the gate reads: it writes the
+    /// instance log's `Renderer: ` line — the exact byte shape from the creation evidence —
+    /// before presenting the IPC socket.
+    fn hypr_stub_logging(renderer: &str) -> String {
+        format!(
+            "#!/bin/sh\nmkdir -p \"$XDG_RUNTIME_DIR/hypr/test-signature\"\nprintf '%s\\n' 'DEBUG ]: Renderer: {renderer}' > \"$XDG_RUNTIME_DIR/hypr/test-signature/hyprland.log\"\ntouch \"$XDG_RUNTIME_DIR/hypr/test-signature/.socket.sock\"\nwhile :; do sleep 1; done\n"
+        )
+    }
+
+    #[test]
+    fn renderer_detection_reads_the_evidence_log_shape() {
+        // The exact shapes from the creation evidence
+        // (`p2/pre-w2/renderer/evidence/*.instance.log`): a GPU renderer and llvmpipe.
+        let gpu = "DEBUG ]: Creating the Hypr OpenGL Renderer!\nDEBUG ]: Using: OpenGL ES 3.2 Mesa 26.2.4-1\nDEBUG ]: Vendor: Mesa\nDEBUG ]: Renderer: NV117\nDEBUG ]: Supported extensions: (154) ...\n";
+        assert_eq!(detect_renderer(gpu).as_deref(), Some("NV117"));
+        assert!(!is_software_renderer("NV117"));
+        assert_eq!(renderer_name("NV117"), "NV117");
+
+        let soft = "DEBUG ]: Renderer: llvmpipe (LLVM 22.1.8, 256 bits)\n";
+        assert_eq!(
+            detect_renderer(soft).as_deref(),
+            Some("llvmpipe (LLVM 22.1.8, 256 bits)")
+        );
+        assert!(is_software_renderer("llvmpipe (LLVM 22.1.8, 256 bits)"));
+        assert_eq!(
+            renderer_name("llvmpipe (LLVM 22.1.8, 256 bits)"),
+            "llvmpipe"
+        );
+
+        // The most recent line wins: a re-created renderer supersedes the first report.
+        let respun =
+            "DEBUG ]: Renderer: NV117\nDEBUG ]: Renderer: llvmpipe (LLVM 22.1.8, 256 bits)\n";
+        assert_eq!(
+            detect_renderer(respun).as_deref(),
+            Some("llvmpipe (LLVM 22.1.8, 256 bits)")
+        );
+
+        // No line, or an empty value: not detectable — the gate must not guess.
+        assert_eq!(detect_renderer("DEBUG ]: nothing of the sort\n"), None);
+        assert_eq!(detect_renderer("DEBUG ]: Renderer: \n"), None);
+
+        // The "or equivalent" set (06) — software families beyond llvmpipe, case-insensitive.
+        assert!(is_software_renderer("softpipe"));
+        assert!(is_software_renderer("swrast"));
+        assert!(is_software_renderer("lavapipe (Mesa 25.2.8)"));
+        assert!(is_software_renderer("LLVMPipe (LLVM 20.1.0, 512 bits)"));
+        // ...and real GPUs are not software.
+        assert!(!is_software_renderer(
+            "Mesa Intel(R) UHD Graphics 630 (CFL GT2)"
+        ));
+        assert!(!is_software_renderer(
+            "AMD Radeon RX 7900 XTX (radeonsi, navi31, LLVM 17.0.6, DRM 3.54, 6.8.0)"
+        ));
+    }
+
+    #[test]
+    fn renderer_gate_defaults_are_bounded() {
+        let config = SpawnerConfig::new("/run/daiorama");
+        assert_eq!(config.renderer_detect_timeout, Duration::from_secs(2));
+    }
+
+    #[test]
+    fn spawn_marks_a_detected_gpu_renderer_verified() {
+        let tmp = tempfile::tempdir().unwrap();
+        let stubs = tmp.path().join("stubs");
+        fs::create_dir_all(&stubs).unwrap();
+        let runtime = tmp.path().join("run");
+        let mut config = stub_config(&stubs, &runtime);
+        config.hyprland_bin = write_stub(&stubs, "Hyprland-gpu", &hypr_stub_logging("NV117"));
+        let spawner = LinuxSpawner::new(config);
+
+        let outcome = spawner
+            .spawn(&SessionSpec::default(), false)
+            .expect("spawn");
+        assert_eq!(outcome.renderer, RendererMark::Verified);
+        spawner.kill_tree(&outcome.id).expect("teardown");
+    }
+
+    #[test]
+    fn spawn_refuses_a_software_renderer_with_the_pinned_string_and_cleans_up() {
+        let tmp = tempfile::tempdir().unwrap();
+        let stubs = tmp.path().join("stubs");
+        fs::create_dir_all(&stubs).unwrap();
+        let runtime = tmp.path().join("run");
+        let mut config = stub_config(&stubs, &runtime);
+        let hypr = write_stub(
+            &stubs,
+            "Hyprland-soft",
+            &hypr_stub_logging("llvmpipe (LLVM 22.1.8, 256 bits)"),
+        );
+        let mutter = config.mutter_bin.clone();
+        config.hyprland_bin = hypr.clone();
+        let spawner = LinuxSpawner::new(config);
+
+        let error = spawner.spawn(&SessionSpec::default(), false).unwrap_err();
+        assert_eq!(error.code, crate::ipc::ErrorCode::RendererRefused);
+        assert_eq!(
+            error.message,
+            crate::strings::renderer_refused("llvmpipe"),
+            "the pinned 04 string, byte-exact, naming the renderer family"
+        );
+        assert_eq!(error.hint.as_deref(), Some(crate::strings::HINT_RUN_DOCTOR));
+
+        // The refusal killed the chain and left nothing behind (the shared discard path).
+        assert!(!stub_processes_running(&mutter), "mutter stub killed");
+        assert!(!stub_processes_running(&hypr), "Hyprland stub killed");
+        if let Ok(entries) = fs::read_dir(&runtime) {
+            assert_eq!(entries.count(), 0, "no session dir left behind");
+        }
+    }
+
+    #[test]
+    fn spawn_allows_a_software_renderer_when_the_override_is_on() {
+        let tmp = tempfile::tempdir().unwrap();
+        let stubs = tmp.path().join("stubs");
+        fs::create_dir_all(&stubs).unwrap();
+        let runtime = tmp.path().join("run");
+        let mut config = stub_config(&stubs, &runtime);
+        config.hyprland_bin = write_stub(
+            &stubs,
+            "Hyprland-soft-allowed",
+            &hypr_stub_logging("llvmpipe (LLVM 22.1.8, 256 bits)"),
+        );
+        let spawner = LinuxSpawner::new(config);
+
+        let outcome = spawner
+            .spawn(&SessionSpec::default(), true)
+            .expect("the override lets the spawn through");
+        assert_eq!(outcome.renderer, RendererMark::Software);
+        spawner.kill_tree(&outcome.id).expect("teardown");
+    }
+
+    #[test]
+    fn spawn_without_a_renderer_line_stays_unverified() {
+        let tmp = tempfile::tempdir().unwrap();
+        let stubs = tmp.path().join("stubs");
+        fs::create_dir_all(&stubs).unwrap();
+        let runtime = tmp.path().join("run");
+        // The plain stub writes no instance log at all; the gate reads, finds nothing within
+        // its window, and must leave the mark `unverified` — never guessed.
+        let spawner = LinuxSpawner::new(stub_config(&stubs, &runtime));
+        let outcome = spawner
+            .spawn(&SessionSpec::default(), false)
+            .expect("spawn");
+        assert_eq!(outcome.renderer, RendererMark::Unverified);
+        spawner.kill_tree(&outcome.id).expect("teardown");
+    }
+
     #[test]
     fn parent_timeout_is_an_error_and_leaves_nothing() {
         let tmp = tempfile::tempdir().unwrap();
@@ -824,7 +1095,7 @@ mod tests {
         let spawner = LinuxSpawner::new(config);
 
         let spec = SessionSpec::default();
-        let error = spawner.spawn(&spec).unwrap_err();
+        let error = spawner.spawn(&spec, false).unwrap_err();
         assert!(
             error.message.contains("did not present its wayland socket"),
             "got: {error:?}"
@@ -847,7 +1118,7 @@ mod tests {
         let spawner = LinuxSpawner::new(config);
 
         let spec = SessionSpec::default();
-        let error = spawner.spawn(&spec).unwrap_err();
+        let error = spawner.spawn(&spec, false).unwrap_err();
         assert!(
             error.message.contains("IPC socket in time"),
             "got: {error:?}"
@@ -891,7 +1162,10 @@ mod tests {
         let runtime = tmp.path().join("run");
         let spawner = LinuxSpawner::new(stub_config(&stubs, &runtime));
 
-        let id = spawner.spawn(&SessionSpec::default()).expect("spawn");
+        let id = spawner
+            .spawn(&SessionSpec::default(), false)
+            .expect("spawn")
+            .id;
         let report = spawner.health(&id).expect("session tracked");
         assert_eq!(report.state(), SessionState::Running, "{report:?}");
 
@@ -917,7 +1191,10 @@ mod tests {
         config.hyprctl_bin = write_stub(&stubs, "hyprctl-flap", HYPRCTL_FLAP_STUB);
         let spawner = LinuxSpawner::new(config);
 
-        let id = spawner.spawn(&SessionSpec::default()).expect("spawn");
+        let id = spawner
+            .spawn(&SessionSpec::default(), false)
+            .expect("spawn")
+            .id;
         let report = spawner.health(&id).expect("session tracked");
         assert!(report.parent_alive && report.child_alive, "{report:?}");
         assert!(!report.compositor_answers, "{report:?}");
@@ -963,8 +1240,9 @@ mod tests {
         let spawner = LinuxSpawner::new(config);
 
         let id = spawner
-            .spawn(&SessionSpec::default())
-            .expect("a deep configured base falls back instead of refusing");
+            .spawn(&SessionSpec::default(), false)
+            .expect("a deep configured base falls back instead of refusing")
+            .id;
         let rt_dir = PathBuf::from("/tmp").join(format!("dr-{}", &id[..8]));
         assert!(rt_dir.exists(), "fell back to /tmp: {}", rt_dir.display());
 
@@ -1045,7 +1323,7 @@ mod tests {
         };
         let spawner = LinuxSpawner::new(config);
 
-        let error = spawner.spawn(&SessionSpec::default()).unwrap_err();
+        let error = spawner.spawn(&SessionSpec::default(), false).unwrap_err();
         assert!(error.message.contains("session scope"), "got: {error:?}");
         if let Ok(entries) = fs::read_dir(&runtime) {
             assert_eq!(entries.count(), 0, "no session dir left behind");
@@ -1133,6 +1411,62 @@ mod tests {
         }
     }
 
+    /// The real renderer gate, inside the privileged L1 container: one real session spawns on
+    /// the real chain (mutter `--headless` → nested Hyprland on the render node), the gate
+    /// reads the actual `Renderer: ` line out of the child compositor's instance log, and the
+    /// spawn outcome reports the detected mark — `verified` on the reference box (NV117; a
+    /// real GPU renderer is not software). Ignored by default; run it in the L1 image (recipe
+    /// + raw evidence in `p2/renderer/`):
+    ///
+    /// ```text
+    /// dbus-run-session -- ./daiorama-tests real_renderer_gate --ignored --nocapture --test-threads=1
+    /// ```
+    #[test]
+    #[ignore = "real compositors: run in the privileged L1 container"]
+    fn real_renderer_gate() {
+        let runtime_root = PathBuf::from("/tmp/daiorama-renderer-gate");
+        let _ = fs::remove_dir_all(&runtime_root);
+        fs::create_dir_all(&runtime_root).expect("runtime root");
+        let spawner = LinuxSpawner::new(SpawnerConfig::new(&runtime_root));
+
+        let outcome = spawner
+            .spawn(&SessionSpec::default(), false)
+            .expect("the real session spawns");
+        let id = &outcome.id;
+
+        // The gate's read, re-done raw: locate the instance log and print the exact line the
+        // detection saw — the parse proves against reality, not a stub.
+        let dr = format!("dr-{}", &id[..8]);
+        let rt_dir = [std::env::temp_dir(), PathBuf::from("/tmp")]
+            .into_iter()
+            .map(|base| base.join(&dr))
+            .find(|path| path.exists())
+            .expect("compositor runtime dir");
+        let hypr = rt_dir.join("hypr");
+        let signature = fs::read_dir(&hypr)
+            .expect("instance dirs")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .max_by_key(String::len)
+            .expect("an instance dir");
+        let log = fs::read_to_string(hypr.join(&signature).join("hyprland.log"))
+            .expect("instance log readable");
+        let raw = log
+            .lines()
+            .find(|line| line.contains(RENDERER_MARKER))
+            .expect("the instance log carries the Renderer line");
+        println!("GATE-RAW-LINE: {raw}");
+        println!("GATE-MARK: {}", outcome.renderer.as_str());
+        assert_eq!(
+            outcome.renderer,
+            RendererMark::Verified,
+            "a real GPU renderer (NV117 on the reference box) is detected as hardware"
+        );
+
+        spawner.kill_tree(id).expect("teardown");
+        println!("GATE-DONE: real chain, renderer detected and marked verified");
+    }
+
     /// The real containment chain — the C6 attach end to end on a real cgroupfs with real
     /// compositors, inside the privileged L1 container:
     ///
@@ -1182,8 +1516,9 @@ mod tests {
         let spawner = LinuxSpawner::new(config);
 
         let id = spawner
-            .spawn(&SessionSpec::default())
-            .expect("real session");
+            .spawn(&SessionSpec::default(), false)
+            .expect("real session")
+            .id;
         let scope = subtree.join(scope_name(&id));
         assert!(scope.is_dir(), "scope exists at {}", scope.display());
         let (parent_pid, child_pid) = spawner.child_pids(&id).expect("session tracked");

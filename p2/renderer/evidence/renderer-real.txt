@@ -1,0 +1,59 @@
+== [1] containment chain first in a fresh container (its probe owns the keeper prep) ==
+
+running 1 test
+test runtime::spawner::tests::real_containment_chain ... CHAIN-PROBE: controllers enabled after keeper prep (cpu memory pids)
+CHAIN-SUBTREE: /sys/fs/cgroup/daiorama-sessions
+dbus-daemon[3]: [session uid=0 pid=3 pidfd=5] Activating service name='ca.desrt.dconf' requested by ':1.1' (uid=0 pid=16 comm="Hyprland --i-am-really-stupid" label="unconfined_u:unconfined_r:spc_t:s0")
+dbus-daemon[3]: [session uid=0 pid=3 pidfd=5] Successfully activated service 'ca.desrt.dconf'
+CHAIN-PIDS: mutter=7 hyprland=16 scope=[7, 16, 18, 36]
+CHAIN-SWEEP: swept=1 sleeper=44
+CHAIN-WITNESS: child=48 self-kill=ExitStatus(unix_wait_status(9))
+CHAIN-DONE: keeper prep, scope attach, kill_tree, sweep, pdeathsig all green
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 130 filtered out; finished in 1.11s
+
+chain_exit=0
+
+== [2] renderer gate ==
+
+running 1 test
+test runtime::spawner::tests::real_renderer_gate ... dbus-daemon[50]: [session uid=0 pid=50 pidfd=5] Activating service name='ca.desrt.dconf' requested by ':1.1' (uid=0 pid=63 comm="Hyprland --i-am-really-stupid" label="unconfined_u:unconfined_r:spc_t:s0")
+dbus-daemon[50]: [session uid=0 pid=50 pidfd=5] Successfully activated service 'ca.desrt.dconf'
+GATE-RAW-LINE: DEBUG ]: Renderer: NV117
+GATE-MARK: verified
+GATE-DONE: real chain, renderer detected and marked verified
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 130 filtered out; finished in 0.69s
+
+gate_exit=0
+
+== [3] lifecycle verbs on the real chain ==
+
+running 1 test
+test runtime::service::tests::real_chain_lifecycle_verbs ... dbus-daemon[93]: [session uid=0 pid=93 pidfd=5] Activating service name='ca.desrt.dconf' requested by ':1.1' (uid=0 pid=107 comm="Hyprland --i-am-really-stupid" label="unconfined_u:unconfined_r:spc_t:s0")
+dbus-daemon[93]: [session uid=0 pid=93 pidfd=5] Successfully activated service 'ca.desrt.dconf'
+CHAIN: created "a769083a-5a2f-4dae-a87c-57182de7adac" state="running" resolution="1920x1080"
+CHAIN: created "199bd5cd-d03f-4b74-a5b0-ebf408c11b99" state="running"
+CHAIN: closed a769083a-5a2f-4dae-a87c-57182de7adac
+CHAIN: closed 199bd5cd-d03f-4b74-a5b0-ebf408c11b99
+CHAIN: all lifecycle verbs green on the real chain
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 130 filtered out; finished in 1.42s
+
+lifecycle_exit=0
+
+== post: leftover dr- dirs ==
+ls: cannot access '/tmp/dr-*': No such file or directory
+== post: nsroot controllers ==
+cpu memory pids
+== post: instance session subtree ==
+total 0
+drwxr-xr-x. 2 root root 0 Oct 16 16:58 .
+drwxr-xr-x. 4 root root 0 Oct 16 16:58 ..
+-r--r--r--. 1 root root 0 Oct 16 16:58 cgroup.controllers
+-r--r--r--. 1 root root 0 Oct 16 16:58 cgroup.events
+-rw-r--r--. 1 root root 0 Oct 16 16:58 cgroup.freeze
+RUN-DONE
