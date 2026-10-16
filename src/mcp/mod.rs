@@ -1,10 +1,10 @@
-//! MCP bridge: **types only** in P2 phase 1.
+//! MCP bridge: **types only** until the bridge lands (P3).
 //!
 //! The bridge itself (`daiorama mcp`, stdio and `--listen`) is P3: this layer ships the
 //! contract shapes a bridge implementation needs — the MCP revision, JSON-RPC framing, the
 //! content-type rule for capture results, the tool registry the exposed manifests are written
 //! against, and the error mapping (05 §Errors, §Tool exposure model). `daiorama mcp` exists in
-//! the CLI surface and answers the phase-1 stub envelope.
+//! the CLI surface and answers the not-implemented envelope.
 //!
 //! No JSON-RPC behavior lives here on purpose: no socket, no transport, no call
 //! dispatch.

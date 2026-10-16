@@ -4,8 +4,9 @@
 //! it owns the session registry and speaks the pinned wire shapes for the lifecycle verbs —
 //! `create_session`, `list_sessions`, `session_status`, `close_session` — plus the live
 //! `status`/`readiness` reads, `config_reload` (08 reload semantics) and the `config get/set`
-//! RPCs (08 A2 authority). Methods later phases own (views, history, drain) answer the
-//! phase-1 stub envelope until their slices land.
+//! RPCs (08 A2 authority). Methods later phases own (views, history, the control tools) answer
+//! the not-implemented envelope until their slices land; a name outside the pinned surface is a
+//! `bad_request`.
 //!
 //! Slice scope (serve wiring, first piece):
 //! - Sessions run through the injected [`SessionSpawner`]; the service never spawns directly.
@@ -29,7 +30,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::{Map, Value, json};
 
 use crate::config::{
-    Authority, CoreConfig, Paths, RESTART_ONLY_KEYS, ScopeFile, key_spec, parse_value, read_token,
+    Authority, CoreConfig, Paths, RESTART_ONLY_KEYS, ScopeFile, is_known_tool_name, key_spec,
+    parse_value, read_token,
 };
 use crate::ipc::{
     ErrorCode, ErrorEnvelope, HandshakeResult, MIN_SUPPORTED, PROTOCOL_VERSION, Response, methods,
@@ -457,7 +459,16 @@ impl Handler for RuntimeService {
             methods::CONFIG_GET => self.config_get(params),
             methods::CONFIG_SET => self.config_set(params),
             methods::DRAIN => self.drain(),
-            _ => Err(ErrorEnvelope::not_implemented()),
+            // Pinned-surface names this build does not implement yet: the views/query methods
+            // and the control tools land later (PLAN.md) — a valid call, an absent build.
+            methods::GET_VIEW
+            | methods::STOP_VIEW
+            | methods::LIST_HISTORY
+            | methods::DAEMON_END => Err(ErrorEnvelope::not_implemented()),
+            name if is_known_tool_name(name) => Err(ErrorEnvelope::not_implemented()),
+            // Anything else is a name the protocol does not define: a client-side refusal.
+            // Dispatch-level — the connection continues (P2 hardening; fixtures/README).
+            _ => Err(ErrorEnvelope::unknown_method(method)),
         };
         match outcome {
             Ok(value) => Response::Result(value),
@@ -1093,15 +1104,39 @@ mod tests {
         }
     }
 
+    /// P2 hardening: the dispatch answers non-implemented names by class — a pinned-surface
+    /// name this build lacks is `internal` (`not implemented yet`); a name outside the pinned
+    /// surface refuses as `bad_request` (`unknown method …`).
     #[test]
-    fn unimplemented_methods_answer_the_stub_envelope_once() {
+    fn dispatch_refuses_unknown_and_unbuilt_names_by_class() {
         let tmp = tempfile::tempdir().unwrap();
         let service = make_service(tmp.path(), Arc::new(TestSpawner::default()));
-        for method in [methods::GET_VIEW, methods::LIST_HISTORY] {
+
+        // Unbuilt, but pinned: the views/query methods, daemon_end, and the control tools.
+        for method in [
+            methods::GET_VIEW,
+            methods::STOP_VIEW,
+            methods::LIST_HISTORY,
+            methods::DAEMON_END,
+            "pointer_move",
+            "list_capabilities",
+            "screenshot",
+        ] {
             let err = result(&service, method, None).unwrap_err();
-            assert_eq!(err.code, ErrorCode::Internal);
-            assert_eq!(err.message, crate::strings::NOT_IMPLEMENTED_MESSAGE);
+            assert_eq!(err.code, ErrorCode::Internal, "{method}");
+            assert_eq!(
+                err.message,
+                crate::strings::NOT_IMPLEMENTED_MESSAGE,
+                "{method}"
+            );
+            assert_eq!(err.hint, None, "{method}");
         }
+
+        // Outside the surface: a client-side refusal, naming the offending method.
+        let err = result(&service, "frobnicate", None).unwrap_err();
+        assert_eq!(err.code, ErrorCode::BadRequest);
+        assert_eq!(err.message, crate::strings::unknown_method("frobnicate"));
+        assert_eq!(err.hint, None);
     }
 
     #[tokio::test]
@@ -1155,6 +1190,25 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code, ErrorCode::SessionClosed);
+
+        // P2 hardening: dispatch refusals are classified and do not end the connection.
+        let err = client.request("frobnicate", None, None).await.unwrap_err();
+        assert_eq!(err.code, ErrorCode::BadRequest);
+        assert_eq!(err.message, crate::strings::unknown_method("frobnicate"));
+
+        let err = client
+            .request(methods::GET_VIEW, Some(json!({ "session_id": id })), None)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::Internal);
+        assert_eq!(err.message, crate::strings::NOT_IMPLEMENTED_MESSAGE);
+
+        // The same connection still answers after both refusals.
+        let value = client
+            .request(methods::STATUS, None, None)
+            .await
+            .expect("status after refusals");
+        assert_eq!(value["state"], "running");
 
         serving.abort();
     }

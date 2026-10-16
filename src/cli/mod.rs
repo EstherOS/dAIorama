@@ -13,8 +13,8 @@
 //!
 //! Commands whose behaviour needs the runtime: `serve` and `daemon start|end` are live (W3) —
 //! the real manager behind the pinned surface; `doctor` is live (W3, `doctor` module: the
-//! host-runnable environment check, 04); `mcp` and `dashboard *` still answer the phase-1
-//! stub envelope until their slices land.
+//! host-runnable environment check, 04); `mcp` and `dashboard *` still answer the
+//! not-implemented envelope until their slices land.
 
 use std::path::PathBuf;
 use std::process::{ExitCode, Stdio};

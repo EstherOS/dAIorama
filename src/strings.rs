@@ -228,14 +228,19 @@ pub fn hint_line(hint: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Placeholder strings (excluded from the frozen-string tests: they are scaffolding, not
-// contract)
+// Dispatch refusals (P2 hardening; pinned by the fixture README's frame contract)
 // ---------------------------------------------------------------------------
 
-/// Everything the runtime side implements in `p2/session-*` answers this envelope for now.
-pub const NOT_IMPLEMENTED_MESSAGE: &str = "not implemented yet (P2 phase 1: contract layer)";
-/// The stub envelope's hint.
-pub const NOT_IMPLEMENTED_HINT: &str = "the runtime side lands in p2/session-*";
+/// A method name outside the pinned surface: refused as `bad_request`, and the connection
+/// continues — dispatch-level, unlike the gate-level refusals above.
+pub fn unknown_method(method: &str) -> String {
+    format!("unknown method {method:?}")
+}
+
+/// A pinned-surface method this build does not implement yet (views/query methods, control
+/// tools). `internal`: the call is valid, the build is what is missing; no hint — there is no
+/// corrective step.
+pub const NOT_IMPLEMENTED_MESSAGE: &str = "not implemented yet";
 
 #[cfg(test)]
 mod tests {

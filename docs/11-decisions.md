@@ -407,3 +407,24 @@ handshake answered the phase-1 stub envelope (`internal` + placeholder) for a ca
 owns, not the dispatcher — the wrong class, on strings the frozen tests deliberately exclude.
 *Rejected:* silence for invalid UTF-8 (no diagnostic); answering-and-continuing after a
 repeated handshake (gate violations end the connection, refused handshake is the precedent).
+
+### Hardening — dispatch refusals: unknown vs not-yet-built methods · adopted · home: fixtures/README
+
+A method name outside the pinned surface is refused with `bad_request` (`unknown method "foo"`)
+— the request names something the protocol does not define — and the connection continues
+(dispatch-level, like an unknown parameter; not a gate violation). A pinned-surface method this
+build does not implement yet (`get_view`, `stop_view`, `list_history`, `daemon_end`, the
+control-tool names) answers `internal` (`not implemented yet`), no hint: the call is valid and
+what is missing is the build. Both strings are pinned in the fixture README's frame contract.
+
+*Rationale:* carried from the third stress pass — the default arm answered both classes with the
+phase-1 stub envelope (`internal`, "not implemented yet (P2 phase 1: contract layer)", hint "the
+runtime side lands in p2/session-*"): the wrong class for a typo or a newer client's call (both
+read as "this manager is a skeleton", which stopped being true when P2 closed), and stale
+wording for the unbuilt methods themselves. A live drill on the frozen tip showed all six name
+classes answering that envelope, CLI `view`/`history`/`mcp` included.
+*Rejected:* keeping the placeholder envelope for unknown calls (silence about the actual fault);
+a dedicated `method_not_found` code (permanent wire surface added for a transient build state —
+`bad_request` is the class that exists); listing valid names in the message (the pinned list
+lives in the fixture README; the offending name is the payload); a hint on either refusal (there
+is no corrective step to name).

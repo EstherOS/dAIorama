@@ -1213,6 +1213,13 @@ pub fn is_control_action(name: &str) -> bool {
         .any(|tool| !tool.always_on && tool.name == name)
 }
 
+/// Is this any pinned tool name (05)? The frame's method vocabulary mirrors MCP tool names
+/// where they exist, so a known name that is not built yet answers `not implemented yet`,
+/// never `unknown method` (P2 hardening; fixtures/README).
+pub fn is_known_tool_name(name: &str) -> bool {
+    KNOWN_TOOLS.iter().any(|tool| tool.name == name)
+}
+
 // ---------------------------------------------------------------------------
 // Starter files (config setup, D1)
 // ---------------------------------------------------------------------------
@@ -1670,6 +1677,12 @@ mod tests {
             );
         }
         assert!(control_actions_listing().contains("pointer_move"));
+
+        // The dispatch's known-name test covers the whole registry, always-on set included.
+        assert!(is_known_tool_name("create_session"));
+        assert!(is_known_tool_name("list_capabilities"));
+        assert!(is_known_tool_name("pointer_move"));
+        assert!(!is_known_tool_name("frobnicate"));
     }
 
     #[test]

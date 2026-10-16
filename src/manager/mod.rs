@@ -12,9 +12,11 @@
 //! - [`startup::ContainmentProbe`] — the cgroup v2 delegation precondition.
 //!
 //! Those traits have no production implementation in this layer, and none of this is wired
-//! into `daiorama serve`: the CLI's `serve`/`daemon` subcommands answer the phase-1 stub
-//! envelope until the runtime side lands. The listener here exists so the frame, the
-//! handshake gate and the read shapes can be exercised end to end in tests.
+//! into `daiorama serve` — that is the runtime side's dispatcher (`runtime::service`); the
+//! skeleton below remains the contract layer's testable handler, and the CLI's `mcp`/
+//! `dashboard` subcommands answer the not-implemented envelope until their slices land. The
+//! listener here exists so the frame, the handshake gate and the read shapes can be exercised
+//! end to end in tests.
 //!
 //! Note on lints: this crate is the P2 phase-1 **contract layer** — the registry transitions,
 //! the state enums, the instance-status builders and the trait stubs are driven by the runtime
@@ -762,8 +764,9 @@ pub trait Handler: Send + Sync {
 }
 
 /// The skeleton handler: serves the read shapes that need no runtime (`status`, `readiness`)
-/// and answers the phase-1 stub envelope for everything else. The runtime side replaces this
-/// with the real dispatcher.
+/// and answers the not-implemented envelope for everything else — for it, every non-read
+/// method genuinely is not implemented. The runtime side's dispatcher replaces this in
+/// `serve`.
 pub struct SkeletonHandler {
     pub status: InstanceStatus,
     /// `status`'s field set plus `dashboard_module` (05): the thing operators and the
@@ -1289,7 +1292,7 @@ mod tests {
     }
 
     /// End to end over a real unix socket: handshake first, then the read shapes, then the
-    /// phase-1 stub envelope for anything the runtime side owns.
+    /// not-implemented envelope for anything the runtime side owns.
     #[tokio::test]
     async fn listener_serves_handshake_then_dispatches() {
         let dir = tempfile::tempdir().unwrap();
@@ -1337,13 +1340,14 @@ mod tests {
         assert_eq!(value["sessions"]["running"], 2);
         assert_eq!(value["sessions"]["dead"], 1);
 
-        // Anything the runtime side owns answers the phase-1 stub envelope.
+        // Anything the runtime side owns answers the not-implemented envelope.
         let err = client
             .request(methods::CREATE_SESSION, Some(json!({})), None)
             .await
             .unwrap_err();
         assert_eq!(err.code, crate::ipc::ErrorCode::Internal);
         assert_eq!(err.message, strings::NOT_IMPLEMENTED_MESSAGE);
+        assert_eq!(err.hint, None);
 
         // A second connection must handshake first: anything else is bad_request.
         let mut rogue = Client::connect(&address, StdDuration::from_secs(2), None)
@@ -1685,6 +1689,8 @@ mod tests {
             strings::frame_too_large(MAX_FRAME_BYTES),
             strings::LINE_NOT_UTF8.to_string(),
             strings::DUPLICATE_HANDSHAKE.to_string(),
+            strings::NOT_IMPLEMENTED_MESSAGE.to_string(),
+            strings::unknown_method("foo"),
         ] {
             assert!(
                 flat.contains(&pinned),

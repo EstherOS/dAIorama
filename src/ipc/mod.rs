@@ -500,11 +500,16 @@ impl ErrorEnvelope {
         Self::new(ErrorCode::Internal, message)
     }
 
-    /// The phase-1 stub envelope. Placeholder strings, excluded from the
-    /// frozen-string tests — the runtime side replaces this entirely.
+    /// A pinned-surface method this build does not implement yet (P2 hardening): the call is
+    /// valid and the build is what is missing. Pinned in the fixture README's frame contract.
     pub fn not_implemented() -> Self {
         Self::new(ErrorCode::Internal, strings::NOT_IMPLEMENTED_MESSAGE)
-            .with_hint(strings::NOT_IMPLEMENTED_HINT)
+    }
+
+    /// A method name outside the pinned surface (P2 hardening): a client-side refusal —
+    /// dispatch-level, so the connection continues. Pinned in the frame contract.
+    pub fn unknown_method(method: &str) -> Self {
+        Self::new(ErrorCode::BadRequest, strings::unknown_method(method))
     }
 
     // -- Views / media ----------------------------------------------------

@@ -6,7 +6,7 @@
 // missing delegation, which is the difference this scenario pins against its sibling
 // manager-start-limits-unavailable.
 //
-// Asserted at two levels, because phase 1 cannot spawn a real manager:
+// Asserted at two levels, because the fixture harness cannot spawn a real manager:
 //   1. here — the start is attempted (the harness records the stub) and the CLI does not
 //      answer `limits_unavailable` / "containment unavailable";
 //   2. in `src/manager/mod.rs` — `startup_gate_matches_the_containment_classes` pins the plan
@@ -23,15 +23,16 @@
   },
   start: Some((
     exit_code: 1,
-    // Standing in for the manager this phase cannot spawn yet: what `daiorama serve` answers
-    // today (the phase-1 stub envelope). The point is what is *absent* from the output below.
-    stderr: "{\"error\":{\"code\":\"internal\",\"message\":\"not implemented yet (P2 phase 1: contract layer)\",\"hint\":\"the runtime side lands in p2/session-*\"}}",
+    // A scripted stand-in for a start that fails for a reason unrelated to containment (the
+    // harness cannot spawn a real manager here). The point is what is *absent* from the output
+    // below: no containment refusal.
+    stderr: "{\"error\":{\"code\":\"internal\",\"message\":\"manager start failed\"}}",
   )),
   runs: [
     (
       argv: ["new"],
       expect_exit: 1,
-      expect_stderr_contains: ["not implemented yet (P2 phase 1: contract layer)"],
+      expect_stderr_contains: ["manager start failed"],
       expect_stderr_not_contains: ["limits_unavailable", "containment unavailable"],
       expect_stdout_not_contains: ["started manager"],
     ),

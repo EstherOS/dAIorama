@@ -106,6 +106,11 @@ and every run**.
   not valid UTF-8 is refused with `bad_request` (`request line is not valid UTF-8`); a second
   `handshake` on one connection is refused with `bad_request` (`handshake may only be the
   first call on a connection`). Nothing follows either refusal, like a refused handshake.
+- **Dispatch refusals answer by class, and do not end the connection.** A method name outside
+  the pinned surface is refused with `bad_request` (`unknown method "foo"`); a pinned-surface
+  name this build does not implement yet — the views/query methods, `daemon_end`, the control
+  tools — answers `internal` (`not implemented yet`). Both are dispatch-level refusals: unlike
+  the frame- and gate-level refusals above, the connection continues.
 - `expect.method` must match exactly. Methods mirror MCP tool names where they exist
   (`create_session`, `close_session`, `list_sessions`, `session_status`, `get_view`,
   `stop_view`, `list_history`, and the control tools by their own names) and are RPC-only
