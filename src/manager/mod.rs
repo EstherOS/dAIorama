@@ -834,7 +834,9 @@ impl Listener {
 }
 
 /// One connection's lifecycle. `handshake` first, always: anything else is a malformed
-/// request (`bad_request`), and the connection ends.
+/// request (`bad_request`), and the connection ends. A *refused* handshake ends the
+/// connection the same way (05 A7: out-of-range ranges are rejected at connect — nothing
+/// follows a refusal).
 async fn serve_connection(stream: UnixStream, handler: Arc<dyn Handler>) -> std::io::Result<()> {
     let mut reader = BufReader::new(stream);
     let mut handshake_done = false;
@@ -867,9 +869,17 @@ async fn serve_connection(stream: UnixStream, handler: Arc<dyn Handler>) -> std:
                 write_response(&mut reader, &response).await?;
                 return Ok(());
             }
-            handshake_done = true;
             let response = handshake_response(&handler, request.params.as_ref());
+            let accepted = matches!(response, Response::Result(_));
             write_response(&mut reader, &response).await?;
+            if !accepted {
+                // The refusal is the whole exchange: an out-of-range (or malformed)
+                // handshake ends the connection — nothing is dispatched on it (05 A7,
+                // and the source fixture's note: a refused handshake must not be
+                // followed by anything).
+                return Ok(());
+            }
+            handshake_done = true;
             continue;
         }
         let response = handler.dispatch(&request.method, request.params.as_ref());
@@ -1358,6 +1368,61 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code, crate::ipc::ErrorCode::BadRequest);
+
+        serving.abort();
+    }
+
+    /// 05 A7: an out-of-range handshake is rejected *at connect* — the refusal ends the
+    /// connection, nothing may follow it (the conformance fixture's note: a refused
+    /// handshake must not be followed by anything).
+    #[tokio::test]
+    async fn a_refused_handshake_ends_the_connection() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("manager.sock");
+        let listener = Listener::bind(&socket).await.unwrap();
+        let handler = Arc::new(SkeletonHandler {
+            status: InstanceStatus {
+                state: InstanceState::Running,
+                mode: InstanceMode::Attached,
+                pid: 4242,
+                socket: socket.display().to_string(),
+                versions: VersionInfo::current(),
+                sessions: SessionCounts {
+                    running: 0,
+                    dead: 0,
+                },
+                drain: DrainState::default(),
+                instance_id: "11111111-1111-4111-8111-111111111111".to_string(),
+            },
+            dashboard_module: None,
+        });
+        let serving = tokio::spawn(listener.serve(handler));
+        let address = Address::Unix(socket.clone());
+
+        // A disjoint range, and a params-less handshake: both are refusals, and both end
+        // the connection — the next call on it cannot be dispatched.
+        for params in [
+            Some(json!({ "protocol_version": "9.9.9", "min_supported": "9.9.9" })),
+            None,
+        ] {
+            let mut client = Client::connect(&address, StdDuration::from_secs(2), None)
+                .await
+                .unwrap();
+            let refusal = client
+                .request(methods::HANDSHAKE, params, None)
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                refusal.code,
+                crate::ipc::ErrorCode::VersionIncompatible | crate::ipc::ErrorCode::BadRequest
+            ));
+
+            let after = client.request(methods::STATUS, None, None).await;
+            assert!(
+                after.is_err(),
+                "a call after a refused handshake must not be dispatched (got {after:?})"
+            );
+        }
 
         serving.abort();
     }
