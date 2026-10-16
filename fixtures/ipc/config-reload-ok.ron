@@ -1,0 +1,43 @@
+// config-reload-ok — `config reload` against a running manager.
+//
+// 08 reload semantics: the manager re-reads the core config file and reports what it adopted
+// (`reloaded`); restart-only items (listener binds, the token) can never be adopted live, so
+// they are named in `restart_only` instead. The command never starts a manager (04, cold
+// class), and the human form renders both facts.
+(
+  name: "config-reload-ok",
+  description: "config reload renders the re-read report and names restart-only keys; the JSON form is the pinned shape.",
+  steps: [
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      expect: (method: "config_reload"),
+      respond: (result: (reloaded: ["sessions.max_global"], restart_only: ["manager.bind"])),
+    ),
+    (
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      expect: (method: "config_reload"),
+      respond: (result: (reloaded: ["sessions.max_global"], restart_only: ["manager.bind"])),
+    ),
+  ],
+  runs: [
+    (
+      argv: ["config", "reload"],
+      expect_exit: 0,
+      expect_stdout_contains: [
+        "config reloaded",
+        "restart-only (takes effect at next manager start): manager.bind",
+      ],
+    ),
+    (
+      argv: ["config", "reload", "--json"],
+      expect_exit: 0,
+      expect_stdout_json: (reloaded: ["sessions.max_global"], restart_only: ["manager.bind"]),
+    ),
+  ],
+)

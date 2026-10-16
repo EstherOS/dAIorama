@@ -3,8 +3,9 @@
 //! This is the seam where the runtime side replaces the contract layer's `SkeletonHandler`:
 //! it owns the session registry and speaks the pinned wire shapes for the lifecycle verbs —
 //! `create_session`, `list_sessions`, `session_status`, `close_session` — plus the live
-//! `status`/`readiness` reads. Methods later phases own (views, history, config, drain) answer
-//! the phase-1 stub envelope until their slices land.
+//! `status`/`readiness` reads and `config_reload` (08 reload semantics). Methods later
+//! phases own (views, history, the `config` read/write RPCs, drain) answer the phase-1 stub
+//! envelope until their slices land.
 //!
 //! Slice scope (serve wiring, first piece):
 //! - Sessions run through the injected [`SessionSpawner`]; the service never spawns directly.
@@ -19,12 +20,12 @@
 //!   the default open; provisional and additive to change).
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value, json};
 
-use crate::config::{CoreConfig, Paths, ScopeFile};
+use crate::config::{Authority, CoreConfig, Paths, RESTART_ONLY_KEYS, ScopeFile, read_token};
 use crate::ipc::{
     ErrorCode, ErrorEnvelope, HandshakeResult, MIN_SUPPORTED, PROTOCOL_VERSION, Response, methods,
 };
@@ -48,16 +49,23 @@ pub struct ServiceOptions {
     pub mode: InstanceMode,
     pub config: CoreConfig,
     pub paths: Paths,
+    /// The instance-token value this manager start adopts (07). The token file is
+    /// restart-only, so `config reload` compares the file against this snapshot and
+    /// reports drift instead of applying it (08).
+    pub token_at_start: Option<String>,
 }
 
 /// The live dispatcher: registry + spawner + the wire shapes.
 pub struct RuntimeService {
     registry: Mutex<Registry>,
     spawner: Arc<dyn SessionSpawner>,
-    config: CoreConfig,
+    /// The live config snapshot: `config reload` re-reads the file into this (08).
+    config: RwLock<CoreConfig>,
     paths: Paths,
     socket_path: String,
     mode: InstanceMode,
+    /// The token value adopted at start — see [`ServiceOptions::token_at_start`].
+    token_at_start: Option<String>,
     /// Serializes creates end to end (quota → spawn → insert) so two racing creates can
     /// never both pass the quota check.
     create_lock: Mutex<()>,
@@ -68,10 +76,11 @@ impl RuntimeService {
         Self {
             registry: Mutex::new(Registry::new(options.instance_id)),
             spawner,
-            config: options.config,
+            config: RwLock::new(options.config),
             paths: options.paths,
             socket_path: options.socket_path.display().to_string(),
             mode: options.mode,
+            token_at_start: options.token_at_start,
             create_lock: Mutex::new(()),
         }
     }
@@ -149,7 +158,7 @@ impl RuntimeService {
 
         let _create_guard = self.create_lock.lock().expect("create lock");
         let scope_max = self.scope_max()?;
-        let global_max = self.config.sessions.max_global;
+        let global_max = self.config.read().expect("config lock").sessions.max_global;
         let instance_id;
         {
             let registry = self.registry();
@@ -269,6 +278,55 @@ impl RuntimeService {
     }
 
     // -----------------------------------------------------------------------
+    // Config (08 reload semantics)
+    // -----------------------------------------------------------------------
+
+    /// The config values this manager is using right now — the snapshot a reload replaces
+    /// (08: a local `config set` writes the file; a running manager keeps its value until
+    /// `config reload` or restart).
+    pub fn active_config(&self) -> CoreConfig {
+        self.config.read().expect("config lock").clone()
+    }
+
+    /// `config reload` (08): re-read the core config file into the live snapshot.
+    ///
+    /// - The file is re-read strictly: an unreadable or invalid file refuses the reload and
+    ///   nothing applies — a half-applied config is worse than a stale one.
+    /// - Non-restart-only keys re-read cleanly: changed values are applied to the running
+    ///   manager and named in `reloaded`.
+    /// - Restart-only items (listener bind addresses, the token — 08) are *not* applied
+    ///   while the manager runs: when the file has moved them, reload names them in
+    ///   `restart_only` and the running value stays in place.
+    fn config_reload(&self) -> Result<Value, ErrorEnvelope> {
+        let fresh = CoreConfig::load(&self.paths.core_config())?;
+        let mut running = self.config.write().expect("config lock");
+        let mut reloaded: Vec<&str> = Vec::new();
+        let mut restart_only: Vec<&str> = Vec::new();
+        for spec in crate::config::KEYS {
+            if spec.authority != Authority::ManagerSide {
+                continue;
+            }
+            let old = running.get(spec.path)?;
+            let new = fresh.get(spec.path)?;
+            if old == new {
+                continue;
+            }
+            if RESTART_ONLY_KEYS.contains(&spec.path) {
+                restart_only.push(spec.path);
+            } else {
+                running.set(spec.path, new)?;
+                reloaded.push(spec.path);
+            }
+        }
+        // The token is restart-only too (07) but not a config key: it is dirty when the
+        // file no longer holds the value this start adopted.
+        if read_token(&self.paths)? != self.token_at_start {
+            restart_only.push("token");
+        }
+        Ok(json!({ "reloaded": reloaded, "restart_only": restart_only }))
+    }
+
+    // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
 
@@ -300,6 +358,7 @@ impl Handler for RuntimeService {
             methods::LIST_SESSIONS => self.list_sessions(params),
             methods::SESSION_STATUS => self.session_status(params),
             methods::CLOSE_SESSION => self.close_session(params),
+            methods::CONFIG_RELOAD => self.config_reload(),
             _ => Err(ErrorEnvelope::not_implemented()),
         };
         match outcome {
@@ -414,7 +473,7 @@ fn rfc3339_from_unix_secs(secs: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Paths;
+    use crate::config::{ConfigValue, Paths, StartMode};
     use crate::ipc::{Address, Client};
     use crate::manager::Listener;
     use crate::runtime::spawner::{LinuxSpawner, SpawnerConfig};
@@ -449,14 +508,24 @@ mod tests {
         dir: &std::path::Path,
         spawner: Arc<dyn SessionSpawner>,
     ) -> RuntimeService {
+        make_service_with_config(dir, spawner, CoreConfig::default(), None)
+    }
+
+    fn make_service_with_config(
+        dir: &std::path::Path,
+        spawner: Arc<dyn SessionSpawner>,
+        config: CoreConfig,
+        token_at_start: Option<String>,
+    ) -> RuntimeService {
         let paths = Paths::for_env(Some(dir), Some(dir), Some(dir), "default");
         RuntimeService::new(
             ServiceOptions {
                 instance_id: "11111111-1111-4111-8111-111111111111".to_string(),
                 socket_path: dir.join("manager.sock"),
                 mode: InstanceMode::Attached,
-                config: CoreConfig::default(),
+                config,
                 paths,
+                token_at_start,
             },
             spawner,
         )
@@ -903,6 +972,145 @@ mod tests {
             rfc3339_from_unix_secs(1_709_209_496),
             "2024-02-29T12:24:56Z"
         );
+    }
+
+    /// Seed a config file and hand back (`service`, paths). The manager starts from
+    /// `start_max_global`; the caller edits the file afterwards.
+    fn service_with_config_file(
+        dir: &std::path::Path,
+        start_max_global: u32,
+    ) -> (RuntimeService, Paths) {
+        let paths = Paths::for_env(Some(dir), Some(dir), Some(dir), "default");
+        let cfg_path = paths.core_config();
+        std::fs::create_dir_all(cfg_path.parent().expect("config dir")).expect("config dir");
+        let mut start = CoreConfig::default();
+        start.sessions.max_global = start_max_global;
+        start.save(&cfg_path).expect("seed config");
+        let service = make_service_with_config(
+            dir,
+            Arc::new(TestSpawner::default()),
+            CoreConfig::load(&cfg_path).expect("load seed"),
+            None,
+        );
+        (service, paths)
+    }
+
+    #[test]
+    fn config_reload_applies_clean_keys_and_reports_restart_only_ones() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (service, paths) = service_with_config_file(dir.path(), 10);
+        let cfg_path = paths.core_config();
+
+        // The edit a running manager has not seen yet: one clean key, the bind
+        // (restart-only), and a client-local key (not the manager's to adopt, 08 A2).
+        let mut edited = CoreConfig::load(&cfg_path).expect("reload for edit");
+        edited
+            .set("sessions.max_global", ConfigValue::Int(25))
+            .expect("set clean key");
+        edited
+            .set(
+                "manager.bind",
+                ConfigValue::Text("127.0.0.1:8756".to_string()),
+            )
+            .expect("set bind");
+        edited
+            .set(
+                "manager.start_mode",
+                ConfigValue::Enum("attached".to_string()),
+            )
+            .expect("set client-local key");
+        edited.save(&cfg_path).expect("write edit");
+
+        let out = result(&service, methods::CONFIG_RELOAD, None).expect("reload");
+        assert_eq!(out["reloaded"], json!(["sessions.max_global"]));
+        assert_eq!(out["restart_only"], json!(["manager.bind"]));
+
+        // The clean key took effect; the restart-only one and the client-local one did not.
+        let active = service.active_config();
+        assert_eq!(active.sessions.max_global, 25);
+        assert_eq!(active.manager.bind, None);
+        assert_eq!(active.manager.start_mode, StartMode::Auto);
+
+        // A second reload: nothing new to adopt, but the bind drift persists —
+        // restart-only items stay reported until a restart adopts them.
+        let out = result(&service, methods::CONFIG_RELOAD, None).expect("reload again");
+        assert_eq!(out["reloaded"], json!([]));
+        assert_eq!(out["restart_only"], json!(["manager.bind"]));
+    }
+
+    #[test]
+    fn config_reload_refuses_an_invalid_or_missing_file_and_applies_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (service, paths) = service_with_config_file(dir.path(), 10);
+        let cfg_path = paths.core_config();
+
+        // A typo in the file refuses the reload, nothing half-applies.
+        std::fs::write(
+            &cfg_path,
+            "(version: 1, sessions: (max_global: 25), nope: 1)",
+        )
+        .expect("write invalid");
+        let err = result(&service, methods::CONFIG_RELOAD, None).expect_err("invalid refuses");
+        assert!(err.message.contains("config load error"), "got: {err:?}");
+        assert_eq!(
+            service.active_config().sessions.max_global,
+            10,
+            "nothing applied"
+        );
+
+        // A file deleted under the running manager refuses too — never a silent reset.
+        std::fs::remove_file(&cfg_path).expect("remove");
+        let err = result(&service, methods::CONFIG_RELOAD, None).expect_err("missing refuses");
+        assert!(err.message.contains("cannot read"), "got: {err:?}");
+        assert_eq!(
+            service.active_config().sessions.max_global,
+            10,
+            "nothing applied"
+        );
+    }
+
+    #[test]
+    fn config_reload_reports_token_drift_as_restart_only() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::for_env(
+            Some(dir.path()),
+            Some(dir.path()),
+            Some(dir.path()),
+            "default",
+        );
+        let cfg_path = paths.core_config();
+        std::fs::create_dir_all(cfg_path.parent().expect("config dir")).expect("config dir");
+        let mut start = CoreConfig::default();
+        start.sessions.max_global = 10;
+        start.save(&cfg_path).expect("seed config");
+        let token_path = paths.token_file();
+        std::fs::create_dir_all(token_path.parent().expect("data dir")).expect("data dir");
+        std::fs::write(&token_path, "old-token-value\n").expect("seed token");
+
+        // This manager start adopted the on-disk token.
+        let service = make_service_with_config(
+            dir.path(),
+            Arc::new(TestSpawner::default()),
+            CoreConfig::load(&cfg_path).expect("load seed"),
+            Some("old-token-value".to_string()),
+        );
+
+        // A rotation under the running manager is restart-only, not applied (07/08).
+        std::fs::write(&token_path, "new-token-value\n").expect("rotate token");
+        let out = result(&service, methods::CONFIG_RELOAD, None).expect("reload");
+        assert_eq!(out["reloaded"], json!([]));
+        assert_eq!(out["restart_only"], json!(["token"]));
+
+        // The running manager keeps the value it adopted: no drift reported.
+        let service = make_service_with_config(
+            dir.path(),
+            Arc::new(TestSpawner::default()),
+            CoreConfig::load(&cfg_path).expect("load seed"),
+            Some("new-token-value".to_string()),
+        );
+        let out = result(&service, methods::CONFIG_RELOAD, None).expect("reload");
+        assert_eq!(out["reloaded"], json!([]));
+        assert_eq!(out["restart_only"], json!([]));
     }
 
     /// The P2 exit run: the lifecycle verbs against the **real** chain (mutter `--headless` →

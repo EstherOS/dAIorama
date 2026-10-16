@@ -26,6 +26,8 @@ const SCENARIOS: &[&str] = &[
     "status-session-json",
     // Control surface.
     "control-unknown-action",
+    // Config surface.
+    "config-reload-ok",
     // The registry and its tombstone transitions (06).
     "close-closed",
     "close-unknown",
@@ -93,6 +95,11 @@ async fn status_session_json() {
 #[tokio::test]
 async fn control_unknown_action() {
     run_scenario_file("control-unknown-action").await;
+}
+
+#[tokio::test]
+async fn config_reload_ok() {
+    run_scenario_file("config-reload-ok").await;
 }
 
 #[tokio::test]

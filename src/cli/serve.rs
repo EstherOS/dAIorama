@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 
-use crate::config::{CoreConfig, Paths, StartMode};
+use crate::config::{CoreConfig, Paths, StartMode, read_token};
 use crate::ipc::{self, Address, Client, EnvView, ErrorEnvelope};
 use crate::manager::{
     self, Handler, InstanceMode, Listener, SessionSpawner,
@@ -117,6 +117,9 @@ pub fn prepare(deps: &ServeDeps) -> Result<Prepared, ErrorEnvelope> {
             mode,
             config: deps.config.clone(),
             paths: deps.paths.clone(),
+            // The token this start adopts (07): restart-only on reload — an unreadable
+            // token file fails the start rather than reloading blind.
+            token_at_start: read_token(&deps.paths)?,
         },
         Arc::clone(&deps.spawner),
     );

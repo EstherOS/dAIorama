@@ -662,6 +662,12 @@ pub const KEYS: &[KeySpec] = &[
     },
 ];
 
+/// Manager-side keys a running manager cannot adopt on `config reload`: listener bind
+/// addresses are restart-only (08) — reload reports them as dirty and leaves the running
+/// value in place. The token is the same class but is not a config key (07); the manager
+/// tracks it separately.
+pub const RESTART_ONLY_KEYS: &[&str] = &["manager.bind"];
+
 /// A parsed config value in its grammar form.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigValue {
