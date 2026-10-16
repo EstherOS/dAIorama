@@ -137,7 +137,9 @@ node only; an invisible parent → Hyprland nested → on-demand `HEADLESS-*`
 outputs; keyboard (`wtype`) and pointer (`wlrctl`) injection, capture,
 wayvnc → noVNC, and a real-GPU WebGL string (`ANGLE (Mesa, NV117)`) all
 verified; runs 2–4 clean (`exit=0`). The nested fallback proved real, not
-aspirational (niri remains untested); the resize/scale path stays open.
+aspirational (niri remains untested); the resize/scale path resolved in P2 —
+`p2/pre-w2/resize-scale/` (mode/scale matrix + live resize, captures verified)
+and the spawner's `(logical, scale) → mode`.
 
 The spike also proves, per 06/07: the `renderer.allow_software` override
 end-to-end and the launcher capture mechanism (browser GL string without any

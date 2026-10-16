@@ -97,7 +97,9 @@ scope (01).
   must advertise `xdg_wm_base >= 6` — weston/sway are rejected at bind)
   running Hyprland nested, with dedicated virtual outputs created on demand
   (`hyprctl output create headless <name>`) for resolution and scale. The
-  wayvnc capture path is verified; the resize/scale path stays open (09).
+  wayvnc capture path is verified; the resize/scale path resolved in P2
+  (`p2/pre-w2/resize-scale/`: mode/scale matrix + live resize, captures
+  verified; the spawner implements `(logical, scale) → mode`; 09).
 - **`nested`**: runs as an ordinary client window inside an already-running
   outer Wayland compositor (detected via `WAYLAND_DISPLAY`). Lets a human watch
   the bot's desktop as a window, no VNC involved.
