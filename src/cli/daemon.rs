@@ -78,13 +78,14 @@ pub async fn start(app: &App) -> Result<Answer, ErrorEnvelope> {
     let deadline = Instant::now() + START_DEADLINE;
     loop {
         if Client::probe(&address, Duration::from_millis(200)).await {
-            return Ok(Answer::from_lines(vec![strings::started_manager(
-                "background",
-                child.id(),
-                &app.instance_socket_display(&socket),
-            )]));
+            return report_serving(app, &socket, child.id()).await;
         }
         if let Ok(Some(status)) = child.try_wait() {
+            // A racing starter: this child may be the lock loser while the winner is still
+            // coming up. One last probe before declaring failure.
+            if Client::probe(&address, Duration::from_millis(200)).await {
+                return report_serving(app, &socket, child.id()).await;
+            }
             let log_text = std::fs::read_to_string(&log_path).unwrap_or_default();
             let tail: String = log_text
                 .lines()
@@ -112,6 +113,28 @@ pub async fn start(app: &App) -> Result<Answer, ErrorEnvelope> {
         }
         tokio::time::sleep(START_POLL).await;
     }
+}
+
+/// Report readiness with the pid of the manager that actually serves. A racing starter's
+/// child may be the lock loser (it exits); the serving pid comes from `status`, never from
+/// the process this command happened to spawn.
+async fn report_serving(
+    app: &App,
+    socket: &std::path::Path,
+    fallback: u32,
+) -> Result<Answer, ErrorEnvelope> {
+    let pid = match app.call(Class::Cold, methods::STATUS, None).await? {
+        Some(status) => status["pid"]
+            .as_u64()
+            .map(|pid| pid as u32)
+            .unwrap_or(fallback),
+        None => fallback,
+    };
+    Ok(Answer::from_lines(vec![strings::started_manager(
+        "background",
+        pid,
+        &app.instance_socket_display(socket),
+    )]))
 }
 
 /// Stop the manager (04: plain `end` refuses while sessions are live and lists them; `--force`

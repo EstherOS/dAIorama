@@ -99,3 +99,61 @@ fn daemon_start_then_end_round_trip() {
         std::thread::sleep(Duration::from_millis(100));
     }
 }
+
+/// Two starters racing: both must report the *serving* manager's pid (never the loser's
+/// child), and both must succeed once a manager is up.
+#[test]
+fn two_racers_report_the_winner() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let conf = tmp.path().join("conf");
+    let data = tmp.path().join("data");
+    let run = tmp.path().join("run");
+    let instance_config = conf.join("daiorama").join("race");
+    std::fs::create_dir_all(&instance_config).unwrap();
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::create_dir_all(&run).unwrap();
+    std::fs::write(
+        instance_config.join("config.ron"),
+        "(version: 1, limits: (mode: off))\n",
+    )
+    .unwrap();
+
+    let spawn_start = || {
+        let mut command = Command::new(binary());
+        env_on(&mut command, &conf, &data, &run);
+        command
+            .args(["daemon", "start", "--instance", "race"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn daemon start")
+    };
+    let first = spawn_start();
+    let second = spawn_start();
+    let out1 = first.wait_with_output().unwrap();
+    let out2 = second.wait_with_output().unwrap();
+    assert!(out1.status.success(), "racer 1: {out1:?}");
+    assert!(out2.status.success(), "racer 2: {out2:?}");
+
+    let pid_of = |out: &std::process::Output| -> u32 {
+        let text = String::from_utf8_lossy(&out.stdout).to_string();
+        text.split("pid=")
+            .nth(1)
+            .and_then(|rest| rest.split(')').next())
+            .and_then(|raw| raw.trim().parse::<u32>().ok())
+            .unwrap_or_else(|| panic!("no pid in: {text}"))
+    };
+    let pid1 = pid_of(&out1);
+    let pid2 = pid_of(&out2);
+    assert_eq!(pid1, pid2, "both racers report the same serving pid");
+
+    let out = run_binary(&conf, &data, &run, &["status", "--instance", "race"]);
+    let status = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        status.contains(&format!("pid: {pid1}")),
+        "status agrees the reported pid serves: {status}"
+    );
+
+    let out = run_binary(&conf, &data, &run, &["daemon", "end", "--instance", "race"]);
+    assert!(out.status.success(), "cleanup end: {out:?}");
+}
