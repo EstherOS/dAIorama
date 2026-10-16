@@ -1,5 +1,5 @@
 // frame-verbs — the remaining "implement against the frame" verbs: `drain`
-// (including `--wait`), `config reload`, and `view --stop`.
+// (including `--wait`, `--json` and the `--timeout` bound), `config reload`, and `view --stop`.
 //
 // All three are cold-class commands that RPC a running manager: they never start one, and with
 // no manager they answer `no manager running` (covered by cold-no-manager). Here they talk to
@@ -46,6 +46,24 @@
       expect: (method: "stop_view", params: (session_id: "s-1")),
       respond: (result: (stopped: true)),
     ),
+    (
+      // `--json` prints the drain state unmodified.
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      expect: (method: "drain"),
+      respond: (result: (active: true, remaining: 2)),
+    ),
+    (
+      // A bound that cannot be met: one request enters drain, then the bound fires.
+      expect: (method: "handshake", params: (protocol_version: "0.1.0", min_supported: "0.1.0")),
+      respond: (result: (protocol_version: "0.1.0", min_supported: "0.1.0", instance_id: "11111111-1111-4111-8111-111111111111")),
+    ),
+    (
+      expect: (method: "drain"),
+      respond: (result: (active: true, remaining: 2)),
+    ),
   ],
   runs: [
     (
@@ -70,6 +88,20 @@
       argv: ["view", "s-1", "--stop"],
       expect_exit: 0,
       expect_stdout_contains: ["view stopped"],
+    ),
+    (
+      // The JSON form is the pinned drain shape in 05's spelling: `drain: {active, remaining}`.
+      argv: ["drain", "--json"],
+      expect_exit: 0,
+      expect_stdout_json: (active: true, remaining: 2),
+    ),
+    (
+      // `--wait` that cannot reach zero inside its bound is an error naming what remains.
+      argv: ["drain", "--wait", "--timeout", "0"],
+      expect_exit: 1,
+      expect_stderr_contains: [
+        "drain did not reach zero running sessions within 0s (2 still running)",
+      ],
     ),
   ],
 )

@@ -1,9 +1,9 @@
 //! `daiorama daemon start|end` against the real binary, in an isolated environment.
 //!
 //! Portable by construction: the manager runs with `limits.mode = off` (no delegation
-//! required) and the test never creates a session, so no compositor is involved. What it
-//! proves is the detached lifecycle end to end: start → status answers → end → the cold
-//! answer again.
+//! required) and no test spawns a compositor — the drain test's refused create stops before
+//! any spawn. What it proves is the detached lifecycle end to end: start → status answers →
+//! end → the cold answer again.
 
 use std::path::Path;
 use std::process::Command;
@@ -266,5 +266,135 @@ fn config_getset_round_trip() {
     );
 
     let out = run_binary(&conf, &data, &run, &["daemon", "end", "--instance", "cg"]);
+    assert!(out.status.success(), "cleanup end: {out:?}");
+}
+
+/// `drain` against the real manager over its socket: the command enters the state, status
+/// carries it, new sessions are refused with the pinned 04 string, and `--wait` completes on
+/// an empty instance. Nothing spawns (the refusal precedes the spawner), so no compositor is
+/// involved.
+#[test]
+fn drain_round_trip() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let conf = tmp.path().join("conf");
+    let data = tmp.path().join("data");
+    let run = tmp.path().join("run");
+    let instance_config = conf.join("daiorama").join("dr");
+    std::fs::create_dir_all(&instance_config).unwrap();
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::create_dir_all(&run).unwrap();
+    std::fs::write(
+        instance_config.join("config.ron"),
+        "(version: 1, limits: (mode: off))\n",
+    )
+    .unwrap();
+
+    let out = run_binary(&conf, &data, &run, &["daemon", "start", "--instance", "dr"]);
+    assert!(
+        out.status.success(),
+        "daemon start: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let socket = run
+        .join("daiorama")
+        .join("dr")
+        .join("manager.sock")
+        .display()
+        .to_string();
+
+    // Before: status says not draining.
+    let out = run_binary(
+        &conf,
+        &data,
+        &run,
+        &["--instance", "dr", "--remote", socket.as_str(), "status"],
+    );
+    assert!(out.status.success(), "status before: {out:?}");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("drain: inactive"));
+
+    // Enter drain; nothing is running, so it is complete on the spot.
+    let out = run_binary(
+        &conf,
+        &data,
+        &run,
+        &["--instance", "dr", "--remote", socket.as_str(), "drain"],
+    );
+    assert!(out.status.success(), "drain: {out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("drain complete"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+
+    // Status carries the live state...
+    let out = run_binary(
+        &conf,
+        &data,
+        &run,
+        &["--instance", "dr", "--remote", socket.as_str(), "status"],
+    );
+    assert!(out.status.success(), "status: {out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        stdout.contains("drain: active, 0 still running"),
+        "{stdout}"
+    );
+
+    // ...new sessions are refused with the pinned string before any spawn...
+    let out = run_binary(
+        &conf,
+        &data,
+        &run,
+        &["--instance", "dr", "--remote", socket.as_str(), "new"],
+    );
+    assert_eq!(out.status.code(), Some(1), "new while draining: {out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains(
+            "manager is draining for upgrade; new sessions are refused (0 still running). \
+             (draining)"
+        ),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // ...`--wait` on zero running completes, and the JSON form is the pinned shape.
+    let out = run_binary(
+        &conf,
+        &data,
+        &run,
+        &[
+            "--instance",
+            "dr",
+            "--remote",
+            socket.as_str(),
+            "drain",
+            "--wait",
+            "--timeout",
+            "5",
+        ],
+    );
+    assert!(out.status.success(), "drain --wait: {out:?}");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("drain complete"));
+
+    let out = run_binary(
+        &conf,
+        &data,
+        &run,
+        &[
+            "--instance",
+            "dr",
+            "--remote",
+            socket.as_str(),
+            "drain",
+            "--json",
+        ],
+    );
+    assert!(out.status.success(), "drain --json: {out:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "{\"active\":true,\"remaining\":0}"
+    );
+
+    let out = run_binary(&conf, &data, &run, &["daemon", "end", "--instance", "dr"]);
     assert!(out.status.success(), "cleanup end: {out:?}");
 }

@@ -20,6 +20,7 @@
 //!   the default open; provisional and additive to change).
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -68,6 +69,9 @@ pub struct RuntimeService {
     mode: InstanceMode,
     /// The token value adopted at start — see [`ServiceOptions::token_at_start`].
     token_at_start: Option<String>,
+    /// Drain state (04/10): once entered, new sessions are refused until the manager stops.
+    /// `drain` calls poll it, so entering is idempotent.
+    draining: AtomicBool,
     /// Serializes creates end to end (quota → spawn → insert) so two racing creates can
     /// never both pass the quota check.
     create_lock: Mutex<()>,
@@ -83,6 +87,7 @@ impl RuntimeService {
             socket_path: options.socket_path.display().to_string(),
             mode: options.mode,
             token_at_start: options.token_at_start,
+            draining: AtomicBool::new(false),
             create_lock: Mutex::new(()),
         }
     }
@@ -101,10 +106,34 @@ impl RuntimeService {
             socket: self.socket_path.clone(),
             versions: VersionInfo::current(),
             sessions: registry.counts(),
-            drain: DrainState::default(),
+            drain: self.drain_state_locked(&registry),
             instance_id: registry.instance_id.clone(),
         };
         serde_json::to_value(&status).expect("instance status serializes")
+    }
+
+    /// The live drain state (04/10): `active` once drain has been entered, `remaining` the
+    /// live sessions that must still exit before it completes.
+    fn drain_state(&self) -> DrainState {
+        self.drain_state_locked(&self.registry())
+    }
+
+    /// [`Self::drain_state`] against an already-held registry guard (the caller must not
+    /// double-lock: `std::sync::Mutex` is not reentrant).
+    fn drain_state_locked(&self, registry: &Registry) -> DrainState {
+        let active = self.draining.load(Ordering::SeqCst);
+        DrainState {
+            active,
+            remaining: if active { registry.counts().running } else { 0 },
+        }
+    }
+
+    /// Enter drain (04/10). Idempotent — `--wait` polls this over one connection, and the
+    /// manager keeps refusing new sessions until it stops. Answers with the same
+    /// `{active, remaining}` shape the instance status carries (05).
+    fn drain(&self) -> Result<Value, ErrorEnvelope> {
+        self.draining.store(true, Ordering::SeqCst);
+        Ok(serde_json::to_value(self.drain_state()).expect("drain state serializes"))
     }
 
     // -----------------------------------------------------------------------
@@ -112,6 +141,12 @@ impl RuntimeService {
     // -----------------------------------------------------------------------
 
     fn create_session(&self, params: Option<&Value>) -> Result<Value, ErrorEnvelope> {
+        // 04/10: while draining, new sessions are refused before anything else — the manager
+        // is on its way down and no spawn may start.
+        let drain = self.drain_state();
+        if drain.active {
+            return Err(ErrorEnvelope::draining(drain.remaining));
+        }
         let map = params_object(params)?;
         unknown_params(&map, &["backend", "resolution", "scale", "view", "label"])?;
 
@@ -411,6 +446,7 @@ impl Handler for RuntimeService {
             methods::CONFIG_RELOAD => self.config_reload(),
             methods::CONFIG_GET => self.config_get(params),
             methods::CONFIG_SET => self.config_set(params),
+            methods::DRAIN => self.drain(),
             _ => Err(ErrorEnvelope::not_implemented()),
         };
         match outcome {
@@ -949,7 +985,7 @@ mod tests {
     fn unimplemented_methods_answer_the_stub_envelope_once() {
         let tmp = tempfile::tempdir().unwrap();
         let service = make_service(tmp.path(), Arc::new(TestSpawner::default()));
-        for method in [methods::GET_VIEW, methods::LIST_HISTORY, methods::DRAIN] {
+        for method in [methods::GET_VIEW, methods::LIST_HISTORY] {
             let err = result(&service, method, None).unwrap_err();
             assert_eq!(err.code, ErrorCode::Internal);
             assert_eq!(err.message, crate::strings::NOT_IMPLEMENTED_MESSAGE);
@@ -1329,6 +1365,92 @@ mod tests {
                 .to_grammar(),
             "10"
         );
+    }
+
+    /// 04/10: drain is entered (idempotently), new sessions are refused with the pinned
+    /// string while it holds, and status/readiness carry the live state.
+    #[test]
+    fn drain_refuses_new_sessions_with_the_pinned_string() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spawner = Arc::new(TestSpawner::default());
+        let service = make_service(tmp.path(), Arc::clone(&spawner));
+        create_ok(&service, None);
+        create_ok(&service, None);
+
+        // Not draining yet: the state reads inactive/zero while sessions run.
+        let status_before = result(&service, methods::STATUS, None).unwrap();
+        assert_eq!(
+            status_before["drain"],
+            json!({ "active": false, "remaining": 0 })
+        );
+
+        let state = result(&service, methods::DRAIN, None).expect("drain enters");
+        assert_eq!(state, json!({ "active": true, "remaining": 2 }));
+        // Idempotent: `--wait` polls the same call; a second drain is the same state.
+        let again = result(&service, methods::DRAIN, None).expect("poll");
+        assert_eq!(again, state);
+
+        for method in [methods::STATUS, methods::READINESS] {
+            let value = result(&service, method, None).unwrap();
+            assert_eq!(
+                value["drain"],
+                json!({ "active": true, "remaining": 2 }),
+                "{method}"
+            );
+        }
+
+        // Refused before anything parses or spawns; the envelope is 04 verbatim.
+        let spawned_before = spawner.spawned.lock().unwrap().len();
+        let err = result(&service, methods::CREATE_SESSION, Some(json!({}))).expect_err("refused");
+        assert_eq!(err.code, ErrorCode::Draining);
+        assert_eq!(err.message, crate::strings::draining(2));
+        assert_eq!(
+            err.hint.as_deref(),
+            Some(crate::strings::HINT_RETRY_AFTER_UPGRADE)
+        );
+        assert_eq!(
+            spawner.spawned.lock().unwrap().len(),
+            spawned_before,
+            "nothing spawned"
+        );
+    }
+
+    /// The remaining count follows the live registry: it drops as sessions close, reaches
+    /// zero, and drain stays active — only a manager stop clears it, so creates stay refused.
+    #[test]
+    fn drain_remaining_follows_closes_and_stays_active_at_zero() {
+        let tmp = tempfile::tempdir().unwrap();
+        let service = make_service(tmp.path(), Arc::new(TestSpawner::default()));
+        let first = create_ok(&service, None);
+        let second = create_ok(&service, None);
+
+        let state = result(&service, methods::DRAIN, None).expect("drain enters");
+        assert_eq!(state, json!({ "active": true, "remaining": 2 }));
+
+        let id = first["id"].as_str().unwrap().to_string();
+        result(
+            &service,
+            methods::CLOSE_SESSION,
+            Some(json!({ "session_id": id })),
+        )
+        .expect("closing while draining is allowed — that is how a drain completes");
+        let state = result(&service, methods::DRAIN, None).expect("poll");
+        assert_eq!(state, json!({ "active": true, "remaining": 1 }));
+
+        let id = second["id"].as_str().unwrap().to_string();
+        result(
+            &service,
+            methods::CLOSE_SESSION,
+            Some(json!({ "session_id": id })),
+        )
+        .expect("close");
+        let state = result(&service, methods::DRAIN, None).expect("poll");
+        assert_eq!(state, json!({ "active": true, "remaining": 0 }));
+
+        // Zero running does not clear the state: the manager is still going down.
+        let err = result(&service, methods::CREATE_SESSION, None).expect_err("still refused");
+        assert_eq!(err.code, ErrorCode::Draining);
+        assert_eq!(err.message, crate::strings::draining(0));
     }
 
     /// The P2 exit run: the lifecycle verbs against the **real** chain (mutter `--headless` →

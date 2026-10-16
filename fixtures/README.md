@@ -188,6 +188,7 @@ written, and scenario sockets live under `/tmp` so unix path-length limits are n
 | `remote-unreachable` | 04 shared string; `--remote` never falls back locally |
 | `manager-start-limits-unavailable` | 06 C6 startup refusal, 04 containment string |
 | `manager-start-limits-off-mode` | 06 C6 explicit downgrade: the start proceeds |
+| `frame-verbs` | 04 `drain` in all forms (enter, `--wait`, `--json`, the `--timeout` bound), `config reload` rendering, `view --stop` |
 
 Provisional shapes (mine to pin, additive-only afterwards, flagged in the P2 report): the
 history read shape (`{records: [{at, event, session_id, scope, origin, cause?}], next_cursor}`),
