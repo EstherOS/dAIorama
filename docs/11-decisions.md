@@ -365,3 +365,29 @@ dispositions in `audits/p0/reconcile-esther.md`, counter in
   mechanism, 01); kill-capable cgroups under `limits.mode = off` (keeps the
   downgrade simple; the cost is stated instead); one-time view codes
   (multi-consumer reality, 07).
+
+---
+
+## P2 hardening and stress findings (2026-10-16)
+
+The build's adversarial pass (live-drive on the frozen tip; raw-socket probes) — findings that
+became behavior, recorded so the readings are not re-derived.
+
+- **Refused handshake ends the connection** — already the reading of 05 A7 (rejected at
+  connect) plus the fixture's note; the pass found the manager still dispatching after a
+  refusal. Fixed, regression-tested, merged (`spec/v1 @ e19e5c7`). No new pin — enforcement,
+  not a new decision.
+
+### Hardening — Read-side frame cap · adopted · home: fixtures/README
+
+A request or response frame — the JSON text between newlines — is capped at 8 MiB
+(`MAX_FRAME_BYTES`). An over-cap request frame is refused with `bad_request` (`request frame
+must be at most 8388608 bytes`) and the connection ends — nothing follows the refusal, like a
+refused handshake. The cap is exact: a frame at the limit is read normally.
+
+*Rationale:* found live — the read side buffered an unbounded line, so a runaway peer could
+grow the manager (the one daemon that owns every session) without limit. The cap sits orders
+of magnitude above any legitimate frame (largest today: control args, config values) and far
+below process-killing sizes; ending the connection is the only resync that does not cost an
+unbounded drain of the oversized line.
+*Rejected:* drain-and-continue (unbounded work to resync); no cap (a killable daemon).

@@ -98,6 +98,10 @@ and every run**.
 - **Handshake first, always.** The first frame on every connection must be a `handshake` step;
   anything else is a failure. Every run is a fresh process, so every run needs its own
   handshake step — declare them explicitly, in run order.
+- **Frames are bounded.** One frame — the JSON text between newlines — is at most 8 MiB
+  (`MAX_FRAME_BYTES`). A longer line is refused with `bad_request` (`request frame must be at
+  most 8388608 bytes`) and the connection ends — nothing follows the refusal, like a refused
+  handshake. The cap is exact: a frame at the limit is read normally.
 - `expect.method` must match exactly. Methods mirror MCP tool names where they exist
   (`create_session`, `close_session`, `list_sessions`, `session_status`, `get_view`,
   `stop_view`, `list_history`, and the control tools by their own names) and are RPC-only

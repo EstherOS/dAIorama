@@ -35,9 +35,10 @@ use tokio::net::{UnixListener, UnixStream};
 
 use crate::config::{CoreConfig, Toggle};
 use crate::ipc::{
-    ErrorEnvelope, HandshakeParams, HandshakeResult, MIN_SUPPORTED, PROTOCOL_VERSION, Request,
-    Response, methods, ranges_overlap,
+    CappedLine, ErrorEnvelope, HandshakeParams, HandshakeResult, MAX_FRAME_BYTES, MIN_SUPPORTED,
+    PROTOCOL_VERSION, Request, Response, methods, ranges_overlap, read_capped_line,
 };
+use crate::strings;
 
 // ---------------------------------------------------------------------------
 // State enums (06)
@@ -836,17 +837,33 @@ impl Listener {
 /// One connection's lifecycle. `handshake` first, always: anything else is a malformed
 /// request (`bad_request`), and the connection ends. A *refused* handshake ends the
 /// connection the same way (05 A7: out-of-range ranges are rejected at connect — nothing
-/// follows a refusal).
+/// follows a refusal). An *over-cap* frame ([`MAX_FRAME_BYTES`]) is refused the same way —
+/// draining an oversized line to resync would cost exactly the unbounded read the cap
+/// exists to prevent (P2 hardening).
 async fn serve_connection(stream: UnixStream, handler: Arc<dyn Handler>) -> std::io::Result<()> {
     let mut reader = BufReader::new(stream);
     let mut handshake_done = false;
     loop {
-        let line = match read_request_line(&mut reader).await {
-            Ok(Some(line)) => line,
-            Ok(None) => return Ok(()),
-            Err(err) => return Err(err),
+        let bytes = match read_capped_line(&mut reader).await? {
+            CappedLine::Line(bytes) => bytes,
+            CappedLine::Eof => return Ok(()),
+            CappedLine::TooLarge => {
+                let response = Response::Error(ErrorEnvelope::bad_request(
+                    strings::frame_too_large(MAX_FRAME_BYTES),
+                ));
+                write_response(&mut reader, &response).await?;
+                return Ok(());
+            }
         };
-        let request: Request = match serde_json::from_str(&line) {
+        let Ok(raw_line) = std::str::from_utf8(&bytes) else {
+            // A line that cannot be a frame is not answered; the connection ends.
+            return Ok(());
+        };
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let request: Request = match serde_json::from_str(line) {
             Ok(request) => request,
             Err(err) => {
                 let response = Response::Error(ErrorEnvelope::bad_request(format!(
@@ -915,25 +932,6 @@ fn handshake_response(handler: &Arc<dyn Handler>, params: Option<&Value>) -> Res
     }
 }
 
-async fn read_request_line<R>(reader: &mut R) -> std::io::Result<Option<String>>
-where
-    R: tokio::io::AsyncBufRead + Unpin,
-{
-    use tokio::io::AsyncBufReadExt;
-    loop {
-        let mut line = String::new();
-        let read = reader.read_line(&mut line).await?;
-        if read == 0 {
-            return Ok(None);
-        }
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        return Ok(Some(trimmed.to_string()));
-    }
-}
-
 async fn write_response<W>(writer: &mut W, response: &Response) -> std::io::Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -963,6 +961,7 @@ mod tests {
     use crate::ipc::{Address, Client};
     use crate::strings;
     use serde_json::json;
+    use tokio::io::AsyncWriteExt;
 
     fn record(id: &str, state: SessionState) -> SessionRecord {
         SessionRecord {
@@ -1423,6 +1422,108 @@ mod tests {
                 "a call after a refused handshake must not be dispatched (got {after:?})"
             );
         }
+
+        serving.abort();
+    }
+
+    /// P2 hardening: the read side is frame-capped. An over-cap frame is refused
+    /// (`bad_request`, the pinned message) and the connection ends — nothing follows the
+    /// refusal, like a refused handshake. The cap is exact: a frame at exactly
+    /// `MAX_FRAME_BYTES` is read normally (here it fails as malformed JSON, and the
+    /// connection stays usable) — no new refusal at the boundary.
+    #[tokio::test]
+    async fn frame_cap_refuses_oversized_frames_and_is_exact_at_the_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("manager.sock");
+        let listener = Listener::bind(&socket).await.unwrap();
+        let handler = Arc::new(SkeletonHandler {
+            status: InstanceStatus {
+                state: InstanceState::Running,
+                mode: InstanceMode::Attached,
+                pid: 4242,
+                socket: socket.display().to_string(),
+                versions: VersionInfo::current(),
+                sessions: SessionCounts {
+                    running: 0,
+                    dead: 0,
+                },
+                drain: DrainState::default(),
+                instance_id: "11111111-1111-4111-8111-111111111111".to_string(),
+            },
+            dashboard_module: None,
+        });
+        let serving = tokio::spawn(listener.serve(handler));
+
+        // --- One byte over the cap: refused with the pinned message, then the connection
+        // ends. The writer may fail partway (broken pipe) once the manager stops reading
+        // and closes — that is the refusal taking effect, not a test failure.
+        let stream = UnixStream::connect(&socket).await.unwrap();
+        let (read_half, mut write_half) = stream.into_split();
+        let mut over = vec![b'x'; crate::ipc::MAX_FRAME_BYTES + 1];
+        over.push(b'\n');
+        let _ = write_half.write_all(&over).await;
+        let mut reader = BufReader::new(read_half);
+        match crate::ipc::read_frame(&mut reader)
+            .await
+            .expect("refusal frame")
+        {
+            Response::Error(envelope) => {
+                assert_eq!(envelope.code, crate::ipc::ErrorCode::BadRequest);
+                assert_eq!(
+                    envelope.message,
+                    strings::frame_too_large(crate::ipc::MAX_FRAME_BYTES)
+                );
+            }
+            other => panic!("expected the cap refusal, got {other:?}"),
+        }
+        let after = crate::ipc::read_frame(&mut reader).await;
+        assert_eq!(
+            after.unwrap_err().kind(),
+            std::io::ErrorKind::UnexpectedEof,
+            "nothing follows the refusal"
+        );
+
+        // --- Exactly at the cap: read and answered normally; the connection stays usable.
+        let stream = UnixStream::connect(&socket).await.unwrap();
+        let (read_half, mut write_half) = stream.into_split();
+        let mut exact = vec![b'x'; crate::ipc::MAX_FRAME_BYTES];
+        exact.push(b'\n');
+        write_half.write_all(&exact).await.unwrap();
+        let handshake = Request::new(
+            methods::HANDSHAKE,
+            Some(json!({
+                "protocol_version": PROTOCOL_VERSION,
+                "min_supported": MIN_SUPPORTED,
+            })),
+        );
+        let mut line = serde_json::to_string(&handshake).unwrap();
+        line.push('\n');
+        write_half.write_all(line.as_bytes()).await.unwrap();
+
+        let mut reader = BufReader::new(read_half);
+        match crate::ipc::read_frame(&mut reader)
+            .await
+            .expect("malformed-frame refusal")
+        {
+            Response::Error(envelope) => {
+                assert_eq!(envelope.code, crate::ipc::ErrorCode::BadRequest);
+                assert!(
+                    envelope.message.starts_with("malformed request frame"),
+                    "got {}",
+                    envelope.message
+                );
+            }
+            other => panic!("expected the malformed-frame bad_request, got {other:?}"),
+        }
+        assert!(
+            matches!(
+                crate::ipc::read_frame(&mut reader)
+                    .await
+                    .expect("handshake answer"),
+                Response::Result(_)
+            ),
+            "a frame at exactly the cap is not oversized: the connection stays usable"
+        );
 
         serving.abort();
     }

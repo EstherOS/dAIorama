@@ -121,6 +121,12 @@ pub fn draining(n: u32) -> String {
     format!("manager is draining for upgrade; new sessions are refused ({n} still running).")
 }
 
+/// P2 hardening: a request frame over the read-side byte cap (fixtures/README frame
+/// contract). The refusal ends the connection, like a refused handshake.
+pub fn frame_too_large(max: usize) -> String {
+    format!("request frame must be at most {max} bytes")
+}
+
 /// 04: protocol ranges do not overlap (05 §Version handshake; 05 `version_incompatible`).
 pub fn protocol_mismatch(
     client_version: &str,

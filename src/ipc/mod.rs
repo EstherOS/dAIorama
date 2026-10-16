@@ -5,7 +5,8 @@
 //! depends on:
 //!
 //! 1. **Framing.** Newline-delimited UTF-8 JSON over a unix stream socket (or TCP when
-//!    `--remote host:port` names one). One object per line, no other framing. Requests are
+//!    `--remote host:port` names one). One object per line, no other framing, at most
+//!    [`MAX_FRAME_BYTES`] of JSON text per frame. Requests are
 //!    `{"method": "...", "params": {...}|null, "idempotency_key": "..."|omitted}`; responses
 //!    are `{"result": {...}}` or `{"error": {"code", "message", "hint?"}}`.
 //! 2. **Handshake first.** `handshake` is the first call on every connection, tokenless on
@@ -648,32 +649,102 @@ where
     writer.flush().await
 }
 
+/// The read-side frame bound: one frame — the JSON text between newlines — is at most this
+/// many bytes. The bound exists so neither side can be made to buffer an unbounded line:
+/// worst case without it, a runaway peer OOMs the manager, which owns every session
+/// (P2 hardening; refusal string pinned by the fixture README's frame contract).
+pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
+
+/// One read off the wire: a complete line (newline stripped), clean EOF, or the frame cap
+/// reached before a newline arrived. The manager refuses `TooLarge` (`bad_request`) and ends
+/// the connection — nothing follows it, like a refused handshake.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum CappedLine {
+    Line(Vec<u8>),
+    Eof,
+    TooLarge,
+}
+
+/// Read one newline-terminated line, never buffering more than [`MAX_FRAME_BYTES`] (the
+/// newline is not counted). Blank lines are not special here — callers skip them. EOF
+/// mid-line returns the bytes so far as a final line (the reading `read_line` gives).
+pub(crate) async fn read_capped_line<R>(reader: &mut R) -> io::Result<CappedLine>
+where
+    R: AsyncBufRead + Unpin,
+{
+    let mut buf: Vec<u8> = Vec::new();
+    loop {
+        let chunk = reader.fill_buf().await?;
+        if chunk.is_empty() {
+            return Ok(if buf.is_empty() {
+                CappedLine::Eof
+            } else {
+                CappedLine::Line(buf)
+            });
+        }
+        match chunk.iter().position(|&b| b == b'\n') {
+            Some(pos) => {
+                if buf.len() + pos > MAX_FRAME_BYTES {
+                    reader.consume(pos + 1);
+                    return Ok(CappedLine::TooLarge);
+                }
+                buf.extend_from_slice(&chunk[..pos]);
+                reader.consume(pos + 1);
+                return Ok(CappedLine::Line(buf));
+            }
+            None => {
+                let n = chunk.len();
+                if buf.len() + n > MAX_FRAME_BYTES {
+                    reader.consume(n);
+                    return Ok(CappedLine::TooLarge);
+                }
+                buf.extend_from_slice(chunk);
+                reader.consume(n);
+            }
+        }
+    }
+}
+
 /// One JSON object per line, no other framing (read side). Blank lines are skipped; a
-/// non-object line, an object that is neither `result` nor `error`, and EOF all surface as
-/// `io::Error`s the caller turns into a transport or protocol error.
+/// non-object line, an over-cap line, an object that is neither `result` nor `error`, and
+/// EOF all surface as `io::Error`s the caller turns into a transport or protocol error.
 pub async fn read_frame<R>(reader: &mut R) -> io::Result<Response>
 where
     R: AsyncBufRead + Unpin,
 {
     loop {
-        let mut line = String::new();
-        let read = reader.read_line(&mut line).await?;
-        if read == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "manager closed the connection without a response",
-            ));
+        match read_capped_line(reader).await? {
+            CappedLine::Eof => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "manager closed the connection without a response",
+                ));
+            }
+            CappedLine::TooLarge => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("frame exceeds the {MAX_FRAME_BYTES}-byte cap"),
+                ));
+            }
+            CappedLine::Line(bytes) => {
+                let line = String::from_utf8(bytes).map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "response line is not valid UTF-8",
+                    )
+                })?;
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                return serde_json::from_str::<Response>(trimmed).map_err(|err| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("malformed response line: {err}"),
+                    )
+                });
+            }
         }
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        return serde_json::from_str::<Response>(trimmed).map_err(|err| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("malformed response line: {err}"),
-            )
-        });
     }
 }
 
@@ -1240,6 +1311,67 @@ mod tests {
             read_frame(&mut reader).await.unwrap_err().kind(),
             io::ErrorKind::InvalidData
         );
+    }
+
+    /// The read side is byte-capped (P2 hardening): a line past `MAX_FRAME_BYTES` reads as
+    /// `TooLarge` instead of buffering — whether it arrives in one chunk or many — the
+    /// boundary is exact (a line at the cap itself reads fine), and the EOF semantics are
+    /// unchanged (mid-line EOF is a final line).
+    #[tokio::test]
+    async fn read_side_is_frame_capped() {
+        // One chunk, exactly at the cap (the newline is not counted): a line.
+        let mut exact = vec![b'x'; MAX_FRAME_BYTES];
+        exact.push(b'\n');
+        let mut reader = io::Cursor::new(exact);
+        assert_eq!(
+            read_capped_line(&mut reader).await.unwrap(),
+            CappedLine::Line(vec![b'x'; MAX_FRAME_BYTES])
+        );
+
+        // One chunk, one byte over: `TooLarge` — the rest of the line is never buffered.
+        let mut reader = io::Cursor::new(vec![b'x'; MAX_FRAME_BYTES + 1]);
+        assert_eq!(
+            read_capped_line(&mut reader).await.unwrap(),
+            CappedLine::TooLarge
+        );
+
+        // Many chunks (a small duplex buffer forces the split): the same verdict.
+        let (mut w, r) = tokio::io::duplex(1024);
+        let writer = tokio::spawn(async move {
+            let mut payload = vec![b'x'; MAX_FRAME_BYTES + 1];
+            payload.push(b'\n');
+            let _ = w.write_all(&payload).await;
+        });
+        let mut reader = BufReader::new(r);
+        assert_eq!(
+            read_capped_line(&mut reader).await.unwrap(),
+            CappedLine::TooLarge
+        );
+        writer.abort();
+
+        // Clean EOF: `Eof`; EOF mid-line: the bytes so far are a final line.
+        let (a, b) = tokio::io::duplex(64);
+        drop(a);
+        let mut reader = BufReader::new(b);
+        assert_eq!(
+            read_capped_line(&mut reader).await.unwrap(),
+            CappedLine::Eof
+        );
+
+        let (mut a, b) = tokio::io::duplex(64);
+        a.write_all(b"{\"result\":1}").await.unwrap();
+        drop(a);
+        let mut reader = BufReader::new(b);
+        assert_eq!(
+            read_capped_line(&mut reader).await.unwrap(),
+            CappedLine::Line(b"{\"result\":1}".to_vec())
+        );
+
+        // The client read (`read_frame`) refuses an over-cap response the same way.
+        let mut reader = io::Cursor::new(vec![b'x'; MAX_FRAME_BYTES + 1]);
+        let err = read_frame(&mut reader).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains(&MAX_FRAME_BYTES.to_string()));
     }
 
     #[test]
