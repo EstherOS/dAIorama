@@ -2,6 +2,10 @@
 # Stage the pinned noVNC tree into <dest> (asset root: <data>/novnc).
 # Usage: fetch.sh [dest] [tarball]
 set -eu
+# Prerequisites: tar and sha256sum are always needed; curl only downloads the tarball.
+for tool in tar sha256sum; do
+    command -v "$tool" >/dev/null 2>&1 || { echo "refusing: $tool is required" >&2; exit 1; }
+done
 DEST=${1-./novnc}
 TARBALL=${2:-}
 PIN_SHA256=b1003a11b6e6e8d8f7f5e5586daae7f8ca651d8aee0aa155ff9ac841c48f52c6
@@ -24,6 +28,7 @@ trap 'rm -rf "$WORK"' EXIT
 if [ -n "$TARBALL" ]; then
     SRC=$TARBALL
 else
+    command -v curl >/dev/null 2>&1 || { echo "refusing: curl is required to download the pinned tarball" >&2; exit 1; }
     SRC=$WORK/noVNC-1.7.0.tar.gz
     curl -fsSLo "$SRC" "$URL"
 fi

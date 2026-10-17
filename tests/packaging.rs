@@ -129,3 +129,24 @@ fn novnc_installer_refuses_unsafe_destinations_before_downloading() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("not a noVNC tree"));
     assert_eq!(std::fs::read_to_string(keep.join("keep.txt")).unwrap(), "x");
 }
+
+#[test]
+fn the_installer_names_and_checks_its_prerequisites() {
+    // N2: a missing tool fails up front with a named prerequisite, not a bare shell error.
+    assert!(
+        NOVNC_FETCH.contains("for tool in tar sha256sum"),
+        "the fixed tools are named"
+    );
+    assert!(
+        NOVNC_FETCH.contains("command -v \"$tool\""),
+        "each named tool is checked"
+    );
+    assert!(
+        NOVNC_FETCH.contains("refusing: curl is required to download"),
+        "download path names curl"
+    );
+    assert!(
+        README.contains("Installer prerequisites"),
+        "runbook states the prerequisites"
+    );
+}

@@ -139,5 +139,7 @@ staged into the persisted `/data` mount, not baked into an ephemeral layer.
 | `Hyprland {found} is outside the supported range {min}-{max}.` | install a supported Hyprland; `doctor` names the package (09, C5) |
 | sessions die immediately | `daiorama doctor` — a session needs a working renderer and wayvnc, not just Hyprland |
 | cgroup limits refused | the user manager must delegate controllers; if the host cannot, `config set limits.mode off` (06) and the manager reports limits off |
+Installer prerequisites: `curl` (download path only), `tar`, `sha256sum`. A missing tool is refused up front, not mid-run.
+
 | view answers `view assets not installed (expected <data>/novnc)` | the noVNC tree is missing at `<data root>/novnc`; stage it once with `packaging/novnc/fetch.sh` (*View assets*) |
 | another manager answers | sockets are per instance under `$XDG_RUNTIME_DIR/daiorama/<instance>/`; `daiorama status` prints the path it used |

@@ -635,14 +635,14 @@ mod tests {
         assert_eq!(lines[10], format!("  {}", strings::VIEW_ASSETS_MISSING));
         assert_eq!(
             lines[11],
-            "  install: packaging/novnc/fetch.sh \
+            "  install: packaging/novnc/fetch.sh (from the source release) \
              /home/agent/.local/share/daiorama/default/novnc"
         );
         assert_eq!(answer.payload["assets"]["installed"], json!(false));
         assert_eq!(
             answer.payload["assets"]["install"],
             json!(
-                "install: packaging/novnc/fetch.sh \
+                "install: packaging/novnc/fetch.sh (from the source release) \
                  /home/agent/.local/share/daiorama/default/novnc"
             )
         );

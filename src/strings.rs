@@ -68,7 +68,7 @@ pub const DOCTOR_CONTAINMENT_LABEL: &str = "containment:";
 pub const DOCTOR_ASSETS_LABEL: &str = "assets:";
 
 /// 09: the pinned installer that stages the noVNC tree into `<data>/novnc`.
-pub const NOVNC_FETCH_SCRIPT: &str = "packaging/novnc/fetch.sh";
+pub const NOVNC_FETCH_SCRIPT: &str = "packaging/novnc/fetch.sh (from the source release)";
 
 /// `doctor`'s next step for a missing view asset tree: the script, then the resolved target.
 pub fn novnc_install_hint(path: &str) -> String {
