@@ -132,6 +132,28 @@ every other scope is own-sessions-only with no quota override. The handshake
 stays tokenless and carries neither field; the bridge sets both on every call
 after it.
 
+**Credentials on the TCP manager transport (`manager.bind`, 07).** The same
+frame gains two additive credential fields, presented on every call after the
+tokenless handshake:
+
+- `token` — the instance token (the transport gate).
+- `scope_token` — the scope's network secret, presented with `scope`. A
+  claimed string is never authentication: a scope with no secret file cannot
+  be used over the network.
+
+The unix socket stays tokenless, ever: a local frame may omit both and their
+presence is ignored there. Over TCP the gate class decides what follows a
+refusal: a missing or incorrect `token` answers `token_required` and ends the
+connection (transport gate — "nothing follows a refusal"); a missing
+`scope`/`scope_token`, an unknown or secretless scope, or a wrong secret
+answers `scope_auth_required` and the connection continues (scope identity is
+per request, so a pooled connection can multiplex scopes). A `scope` that is
+not a valid scope name — `[a-z0-9][a-z0-9_-]{0,63}`, 08 — is refused
+`bad_request` (`invalid scope name`) before any path is joined, and the
+connection continues. The media endpoint on a TCP manager surface requires the
+instance token in a `Daiorama-Token` header (the id remains the artifact's own
+capability; scope headers are not part of a media fetch).
+
 ## Tool exposure model
 
 Two questions, kept separate in design and code:

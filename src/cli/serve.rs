@@ -29,7 +29,7 @@ use serde_json::json;
 use crate::config::{CoreConfig, Paths, StartMode, read_token};
 use crate::ipc::{self, Address, Client, EnvView, ErrorEnvelope};
 use crate::manager::{
-    self, Handler, InstanceMode, Listener, SessionSpawner,
+    self, Handler, InstanceMode, Listener, NetworkListener, SessionSpawner,
     startup::{ContainmentProbe, LimitsPlan, StartupDecision, StartupPlan, plan_startup},
 };
 use crate::runtime::containment::{
@@ -79,6 +79,9 @@ pub struct Prepared {
     /// The manager-side media store (05 A8): serves `GET /media/<id>` on the socket.
     pub media: Arc<crate::media::MediaStore>,
     pub socket: PathBuf,
+    /// The `manager.bind` TCP surface (07), parsed: `Some` binds in addition to the unix
+    /// socket, with the instance-token and scope-secret gate on every call.
+    pub bind: Option<(String, u16)>,
     pub mode: InstanceMode,
     /// The recorded-downgrade notice when `limits.mode = off` (06); `None` otherwise.
     pub notice: Option<&'static str>,
@@ -170,6 +173,25 @@ pub fn prepare(deps: &ServeDeps) -> Result<Prepared, ErrorEnvelope> {
     let mode = effective_mode(&deps.config);
     let instance_id = read_or_create_instance_id(&deps.paths)?;
     let socket = deps.socket.clone();
+    // 07: `manager.bind` is the TCP surface. Parse it at startup (a malformed value refuses
+    // the start, never accept-time), and make the network credentials exist before the
+    // listener can accept a caller.
+    let bind = match deps
+        .config
+        .manager
+        .bind
+        .as_deref()
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+    {
+        Some(raw) => Some(crate::config::parse_bind(raw)?),
+        None => None,
+    };
+    if bind.is_some() {
+        for line in crate::config::ensure_network_credentials(&deps.paths)? {
+            eprintln!("{line}");
+        }
+    }
     let media = Arc::new(crate::media::MediaStore::for_instance(&deps.paths));
     let service = RuntimeService::new(
         ServiceOptions {
@@ -189,6 +211,7 @@ pub fn prepare(deps: &ServeDeps) -> Result<Prepared, ErrorEnvelope> {
         media,
         handler: Arc::new(service),
         socket,
+        bind,
         mode,
         notice,
         lock_wait: deps.lock_wait,
@@ -380,6 +403,15 @@ pub async fn run_until(
     let listener = Listener::bind(&prepared.socket)
         .await
         .map_err(|error| ErrorEnvelope::internal(format!("manager socket: {error}")))?;
+    // 07: `manager.bind` adds the TCP surface beside the unix socket. A bind failure is a
+    // startup failure (the operator asked for the surface explicitly) — never a silent
+    // unix-only start.
+    let network = match &prepared.bind {
+        Some((host, port)) => Some(NetworkListener::bind(host, *port).await.map_err(|error| {
+            ErrorEnvelope::internal(format!("manager bind {host}:{port}: {error}"))
+        })?),
+        None => None,
+    };
     // The pinned startup report (04); stderr, so `--json` stdout stays machine-readable.
     eprintln!(
         "{}",
@@ -389,12 +421,24 @@ pub async fn run_until(
             &prepared.socket.display().to_string(),
         )
     );
+    if let Some(network) = &network {
+        // 04: the network surface reports the address it actually bound (`:0` resolves).
+        eprintln!("listening on {}", network.authority());
+    }
     if let Some(notice) = prepared.notice {
         eprintln!("{notice}");
     }
 
+    let handler = prepared.handler;
+    let media = prepared.media;
     tokio::select! {
-        _ = listener.serve(prepared.handler, prepared.media) => {}
+        _ = listener.serve(Arc::clone(&handler), Arc::clone(&media)) => {}
+        _ = async {
+            match network {
+                Some(network) => network.serve(handler, media).await,
+                None => std::future::pending::<()>().await,
+            }
+        } => {}
         _ = shutdown => {}
     }
     let _ = std::fs::remove_file(&prepared.socket);

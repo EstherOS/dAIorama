@@ -46,6 +46,11 @@ pub fn scope_from_env() -> Result<String, ErrorEnvelope> {
 /// Load the caller scope's definition. A scope without a file is `scope_unknown` — the bridge
 /// never invents a manifest.
 pub fn load_scope(instance: &str, scope: &str) -> Result<ScopeFile, ErrorEnvelope> {
+    if !crate::config::valid_scope_name(scope) {
+        return Err(ErrorEnvelope::bad_request(
+            crate::strings::INVALID_SCOPE_NAME,
+        ));
+    }
     let path = Paths::from_process(instance).scope_file(scope);
     if !path.exists() {
         return Err(ErrorEnvelope::scope_unknown(scope));
@@ -488,6 +493,15 @@ impl Bridge {
                 }
                 None => Client::connect_local(&self.instance).await?,
             };
+            if client.is_gated() {
+                // 07: a remote manager on TCP needs the scope's secret on every frame; the
+                // bridge receives it the same way the caller presented it (`DAIORAMA_SCOPE_TOKEN`).
+                client.set_scope_token(
+                    std::env::var("DAIORAMA_SCOPE_TOKEN")
+                        .ok()
+                        .filter(|value| !value.is_empty()),
+                );
+            }
             // The handshake is first and pre-auth — it carries no caller identity; the scope
             // rides every call after it (05 A7, 07).
             client.handshake().await?;

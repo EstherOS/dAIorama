@@ -108,7 +108,9 @@ is an error, never a local fallback.
 
 A cold command against "no manager" is an answer, not an error: `no manager
 running`. When a hot command lazily starts one it prints one line: `started
-manager (mode=<attached|background>, pid=<pid>) socket=<path>` (B5).
+manager (mode=<attached|background>, pid=<pid>) socket=<path>` (B5). With
+`manager.bind` set, startup prints one more line naming the address it actually
+bound: `listening on <addr>` (07).
 
 ## Refusal and error strings
 
@@ -123,6 +125,8 @@ these; wording changes are spec changes.
 - `refusing to bind {addr}: non-loopback binds require a token; none could be generated at {path}.`
 - `containment unavailable: cgroup v2 delegation is not available here ({detail}). Fix: run with a writable/delegated cgroupfs (see the compose notes), or set limits.mode = off and accept losing per-session limits and crash-time cleanup.`
 - `token required for {addr}: set DAIORAMA_TOKEN (value from 'daiorama token show' on the manager host).`
+- `manager.bind takes a host or host:port address` — a malformed bind refuses the start (07).
+- `invalid scope name` — a network-supplied `scope` that is not `[a-z0-9][a-z0-9_-]{0,63}` (07).
 - `session limit reached: scope '{scope}' {n}/{max}; global {g}/{gmax}. Close a session first.`
 - `backend 'host' is exclusive; in use by session {id}. Close it or use --backend=headless.`
 - `manager is draining for upgrade; new sessions are refused ({n} still running).`

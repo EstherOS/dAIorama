@@ -753,12 +753,10 @@ listener never runs tokenless (07). `token rotate` writes the new value to the f
 process keeps the value it adopted at start until it restarts, and `config reload` reports
 `token` under `restart_only` (the file no longer matches the adopted value).
 
-**The manager's own TCP surface is not bound yet** — `manager.bind` is a restart-only config key
-with no consumer in `serve`, and the unix socket stays tokenless by rule (07). So today the
-"running manager keeps accepting the old token" clause has nothing to enforce it against: there
-is no server-side token gate, only the client-side `requires_token` check and the bridge's own
-listener gate. Binding the manager TCP surface **with** its token gate is the `P4-ENDPOINT` row;
-until it lands, the rotation window is file semantics, not an enforced contract.
+**The manager's own TCP surface was the missing half** — `manager.bind` was a restart-only key
+with no consumer in `serve`, so the "running manager keeps accepting the old token" clause had
+nothing to enforce it against. `P4-ENDPOINT` (below) binds it **with** its token gate; the
+rotation window is now a live-testable contract, not file semantics.
 
 ## B9 rate limit — the build
 
@@ -803,3 +801,29 @@ reads.
 *Rejected:* inferring session end from mtimes (fragile, and copying a directory breaks it);
 cross-session cursors (a merged ordering over per-session segments needs an index the log does
 not have); fsync per record (the log is an operational aid, not the source of truth).
+
+## P4-ENDPOINT — the manager TCP surface and its gate
+
+`manager.bind` now has its consumer: `serve` binds the unix socket as before and, when the key
+is set, a TCP listener beside it (`host` or `host:port`, bare host = 8756, IPv6 in brackets).
+The frame protocol is unchanged; credentials ride the frame as additive fields — `token`,
+`scope`, `scope_token` (05) — presented on every call after the tokenless handshake. The
+transport gate is the instance token this start adopted (no token, no network caller); scope
+identity is per request and authenticated against the scope's secret file, because a claimed
+string is never authentication (07). Refusal classes follow the frame's connection rule: a
+token failure ends the connection (transport gate), scope failures continue (per-request
+identity, pooled connections). Scope names are validated as filename components before any
+path join — a network-supplied `../` could otherwise steer the secret read; the same validator
+closes the pre-existing listen-bridge path, where the `scope` header reached `scope_file`
+unchecked.
+
+Startup ensures the credentials a network surface needs (instance token, one secret per scope
+file present), printing paths only; the token is created only when absent so two racing
+starters converge on one value. The rotation window is now enforceable on the wire: the running
+manager keeps accepting the adopted value and refuses the rotated one until restart.
+
+*Rejected:* HTTP-shaping the manager RPC (a second protocol for one surface, and the frame
+already carries identity); a loopback exemption for the token (07's gate is request-time, and
+the bridge already ensures a token for loopback binds); letting an absent `scope` mean
+`operator` on TCP (a unix convenience becoming a network default identity); a token in the URL
+(shell history and proxy logs; the frame is the carriage).

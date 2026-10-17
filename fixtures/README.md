@@ -124,6 +124,16 @@ and every run**.
   The bridge's stdin frames follow the same rule: an absent `id` is a notification (no
   response, nothing executed) while `"id": null` is an invalid request answered `-32600`
   (`id must be a string or a number, not null`) and the connection continues.
+- **On the TCP manager transport (`manager.bind`), credentials ride the same frame.** Every
+  request after the tokenless handshake carries `token` (the instance token) and, with
+  `scope`, `scope_token` (the scope's secret). A missing or incorrect `token` answers
+  `token_required` and the connection ends. A missing `scope`/`scope_token`, a secretless
+  scope or a wrong secret answers `scope_auth_required` — `scope required: set scope and
+  scope_token on the request frame`, `scope "x" has no secret; it cannot be used over the
+  network`, `scope "x" requires its scope secret (scope_token frame field)` — and the
+  connection continues; a `scope` outside `[a-z0-9][a-z0-9_-]{0,63}` is `bad_request`
+  (`invalid scope name`) and the connection continues. The unix socket never carries either
+  field.
 - `expect.method` must match exactly. Methods mirror MCP tool names where they exist
   (`create_session`, `close_session`, `list_sessions`, `session_status`, `get_view`,
   `stop_view`, `list_history`, and the control tools by their own names) and are RPC-only

@@ -1587,9 +1587,147 @@ pub fn token_file_mode(paths: &Paths) -> Option<u32> {
         .map(|metadata| metadata.permissions().mode() & 0o777)
 }
 
+/// 04's pinned manager TCP port: a `manager.bind` host without a port uses this one.
+pub const DEFAULT_MANAGER_PORT: u16 = 8756;
+
+/// Parse `manager.bind` (04/08): a host or a host:port, IPv6 in brackets. A bare host uses
+/// [`DEFAULT_MANAGER_PORT`]. Anything that is not an authority — whitespace, a path, a
+/// non-numeric port — is refused here, at startup, never at accept time.
+pub fn parse_bind(raw: &str) -> Result<(String, u16), ErrorEnvelope> {
+    let raw = raw.trim();
+    let invalid = || ErrorEnvelope::bad_request(crate::strings::MANAGER_BIND_INVALID);
+    if raw.is_empty() || raw.contains('/') || raw.chars().any(char::is_whitespace) {
+        return Err(invalid());
+    }
+    if let Some(rest) = raw.strip_prefix('[') {
+        let Some((host, tail)) = rest.split_once(']') else {
+            return Err(invalid());
+        };
+        if host.is_empty() {
+            return Err(invalid());
+        }
+        let port = match tail {
+            "" => DEFAULT_MANAGER_PORT,
+            _ => match tail.strip_prefix(':') {
+                Some(port) => port.parse::<u16>().map_err(|_| invalid())?,
+                None => return Err(invalid()),
+            },
+        };
+        return Ok((host.to_string(), port));
+    }
+    match raw.rsplit_once(':') {
+        Some((host, port)) if !host.is_empty() => {
+            let port = port.parse::<u16>().map_err(|_| invalid())?;
+            Ok((host.to_string(), port))
+        }
+        // A colon without a numeric port is either a typo or a bare IPv6 literal; both are
+        // refused rather than guessed (brackets are the unambiguous form).
+        Some(_) => Err(invalid()),
+        None => Ok((raw.to_string(), DEFAULT_MANAGER_PORT)),
+    }
+}
+
+/// Scope names are filename components (08): lowercase alphanumerics, `-` and `_`, starting
+/// with an alphanumeric, at most 64 characters. A network-supplied `scope` is validated
+/// before it reaches any path join — path characters can never name a scope.
+pub fn valid_scope_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first.is_ascii_lowercase() || first.is_ascii_digit()) {
+        return false;
+    }
+    name.len() <= 64
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+}
+
+/// Length-checked, value-constant-time comparison (the token and scope secrets are secrets;
+/// length is not).
+pub fn secret_matches(presented: &str, expected: &str) -> bool {
+    let presented = presented.as_bytes();
+    let expected = expected.as_bytes();
+    if presented.len() != expected.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (a, b) in presented.iter().zip(expected) {
+        diff |= a ^ b;
+    }
+    diff == 0
+}
+
+/// 07: a network surface never runs tokenless. Ensure the instance token and a network
+/// secret for every scope file, minting what is missing; returns one line per minted file
+/// (path only — a value is never printed). Shared by `daiorama serve` with `manager.bind`
+/// and `daiorama mcp --listen`, so both network starts report the same way.
+///
+/// The instance token is created **only when absent** (`create_new`): two starters racing
+/// converge on the first writer's value instead of the loser clobbering it.
+pub fn ensure_network_credentials(paths: &Paths) -> Result<Vec<String>, ErrorEnvelope> {
+    let mut lines = Vec::new();
+    if read_token(paths)?.is_none() {
+        let token = generate_token();
+        if let Some(path) = write_token_new(paths, &token)? {
+            lines.push(format!(
+                "wrote {} (mode 0600); 'daiorama token show' prints the value",
+                path.display()
+            ));
+        }
+    }
+    for scope in paths.scope_names() {
+        if read_scope_token(paths, &scope)?.is_none() {
+            let secret = generate_token();
+            let path = write_scope_token(paths, &scope, &secret)?;
+            lines.push(format!(
+                "wrote {} (scope secret, mode 0600)",
+                path.display()
+            ));
+        }
+    }
+    Ok(lines)
+}
+
+/// Create the token file only when no file exists yet, at mode 0600 from the first byte.
+/// `None` means another starter won the create; its value is the one to read.
+pub fn write_token_new(paths: &Paths, token: &str) -> Result<Option<PathBuf>, ErrorEnvelope> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let path = paths.token_file();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| {
+            ErrorEnvelope::bad_request(format!("cannot create {}: {err}", parent.display()))
+        })?;
+    }
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)
+    {
+        Ok(mut file) => {
+            file.write_all(format!("{token}\n").as_bytes())
+                .map_err(|err| {
+                    ErrorEnvelope::bad_request(format!("cannot write {}: {err}", path.display()))
+                })?;
+            Ok(Some(path))
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),
+        Err(err) => Err(ErrorEnvelope::bad_request(format!(
+            "cannot create {}: {err}",
+            path.display()
+        ))),
+    }
+}
+
 /// Read a scope's network secret; `None` when the scope has none (07: a scope without a
 /// secret cannot be used over the network).
 pub fn read_scope_token(paths: &Paths, scope: &str) -> Result<Option<String>, ErrorEnvelope> {
+    if !valid_scope_name(scope) {
+        return Err(ErrorEnvelope::bad_request(
+            crate::strings::INVALID_SCOPE_NAME,
+        ));
+    }
     let path = paths.scope_token_file(scope);
     match std::fs::read_to_string(&path) {
         Ok(text) => Ok(Some(text.trim().to_string())),

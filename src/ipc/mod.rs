@@ -610,6 +610,15 @@ pub struct Request {
     /// `mcp`; it rides the session record, never the tool surface.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
+    /// The instance token (07), presented on every call made over the TCP manager transport.
+    /// Absent on the unix socket — that transport stays tokenless, ever. Additive frame
+    /// field: a manager that predates it ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    /// The scope's network secret (07), presented with `scope` on the TCP manager transport.
+    /// A claimed scope with no secret file cannot be used over the network at all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_token: Option<String>,
 }
 
 /// 05: `idempotency_key` — string ≤ 64 chars, unique per (scope, logical operation).
@@ -623,6 +632,8 @@ impl Request {
             idempotency_key: None,
             scope: None,
             origin: None,
+            token: None,
+            scope_token: None,
         }
     }
 
@@ -938,6 +949,10 @@ fn current_uid() -> u32 {
 /// The instance name every unqualified command targets (04 pinned default).
 pub const DEFAULT_INSTANCE: &str = "default";
 
+/// The reserved `operator` scope (07): the CLI's identity, and the scope a TCP caller's
+/// absent `scope` would otherwise have silently acquired on the unix socket.
+pub const OPERATOR_SCOPE: &str = "operator";
+
 /// The local socket path for an instance (08), computed identically by CLI and manager.
 pub fn socket_path(instance: &str) -> PathBuf {
     EnvView::from_process().socket_path(instance)
@@ -971,6 +986,15 @@ pub struct Client {
     /// these from its own scope; the CLI leaves them absent (operator / shell).
     scope: Option<String>,
     origin: Option<String>,
+    /// The instance token, presented on every request when the transport is TCP (07). The
+    /// unix socket never carries it.
+    token: Option<String>,
+    /// The scope's network secret, presented with `scope` over TCP (07). Sourced from
+    /// `DAIORAMA_SCOPE_TOKEN` by the clients that have one.
+    scope_token: Option<String>,
+    /// 07: TCP is a network surface, so every request after the handshake carries
+    /// credentials; on the unix path the same fields stay absent.
+    gated: bool,
 }
 
 impl fmt::Debug for Client {
@@ -1008,6 +1032,9 @@ impl Client {
                     address: display,
                     scope: None,
                     origin: None,
+                    token: None,
+                    scope_token: None,
+                    gated: false,
                 })
             }
             Address::Tcp { host, port } => {
@@ -1023,6 +1050,9 @@ impl Client {
                     address: display,
                     scope: None,
                     origin: None,
+                    token: token.map(str::to_string),
+                    scope_token: None,
+                    gated: true,
                 })
             }
         }
@@ -1065,6 +1095,17 @@ impl Client {
     pub fn set_caller(&mut self, scope: Option<String>, origin: Option<String>) {
         self.scope = scope;
         self.origin = origin;
+    }
+
+    /// Present a scope's network secret with every request (07). Only the TCP transport
+    /// sends it; the unix socket's fields stay absent.
+    pub fn set_scope_token(&mut self, secret: Option<String>) {
+        self.scope_token = secret;
+    }
+
+    /// Is every call on this connection credential-bearing? (TCP: yes; unix: never.)
+    pub fn is_gated(&self) -> bool {
+        self.gated
     }
 
     /// The first call on every connection: `handshake`, always, tokenless (05 A7). Applies
@@ -1110,10 +1151,19 @@ impl Client {
         params: Option<Value>,
         idempotency_key: Option<String>,
     ) -> Result<Value, ErrorEnvelope> {
-        let request = Request::new(method, params)
+        let mut request = Request::new(method, params)
             .with_idempotency_key(idempotency_key)
             .with_scope(self.scope.clone())
             .with_origin(self.origin.clone());
+        if self.gated {
+            // 07: over TCP every call after the tokenless handshake presents the instance
+            // token and — since a claimed string is never authentication — the scope's
+            // secret. The CLI's absent scope means `operator` locally; on a network surface
+            // it must be named, so the client names it rather than let the server guess.
+            request.token = self.token.clone();
+            request.scope = request.scope.or_else(|| Some(OPERATOR_SCOPE.to_string()));
+            request.scope_token = self.scope_token.clone();
+        }
         request.validate()?;
         write_frame(&mut self.reader, &request)
             .await

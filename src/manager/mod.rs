@@ -32,13 +32,13 @@ use std::time::{Duration as StdDuration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::io::{AsyncWriteExt, BufReader};
-use tokio::net::{UnixListener, UnixStream};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::net::{TcpListener, UnixListener};
 
 use crate::config::{CoreConfig, Toggle};
 use crate::ipc::{
-    CappedLine, ErrorEnvelope, HandshakeParams, HandshakeResult, MAX_FRAME_BYTES, MIN_SUPPORTED,
-    PROTOCOL_VERSION, Request, Response, methods, ranges_overlap, read_capped_line,
+    CappedLine, ErrorCode, ErrorEnvelope, HandshakeParams, HandshakeResult, MAX_FRAME_BYTES,
+    MIN_SUPPORTED, PROTOCOL_VERSION, Request, Response, methods, ranges_overlap, read_capped_line,
 };
 use crate::media::{MediaHandle, MediaStore};
 use crate::strings;
@@ -390,6 +390,13 @@ pub struct DrainState {
 /// 06 §Tombstones: closed/reaped IDs are remembered for 24 h (bounded; cleared on manager
 /// restart). Calls inside the window get the distinct code; outside it, `session_not_found`.
 pub const TOMBSTONE_TTL: StdDuration = StdDuration::from_secs(24 * 60 * 60);
+
+/// Bound on concurrent TCP manager connections (07): the bridge's 64, applied to the other
+/// network listener. Over-cap sockets are closed on accept; the unix socket is unaffected.
+const MANAGER_MAX_CONNECTIONS: usize = 64;
+/// A TCP connection must make progress within this bound — handshake, frame or media head —
+/// or it closes. The unix socket keeps no deadline (local, credential-free).
+const MANAGER_PROGRESS: StdDuration = StdDuration::from_secs(10);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TombstoneKind {
@@ -814,11 +821,39 @@ pub trait Handler: Send + Sync {
         method: &str,
         params: Option<&Value>,
     ) -> Response;
+
+    /// 07: the instance-token transport gate for a network surface. Only the runtime service
+    /// holds the token this start adopted; the default refuses, so a handler with no
+    /// credential source can never serve a TCP caller by omission.
+    fn authorize_instance(
+        &self,
+        _token: Option<&str>,
+        authority: &str,
+    ) -> Result<(), ErrorEnvelope> {
+        Err(ErrorEnvelope::token_required(authority))
+    }
+
+    /// 07: per-request scope authentication after the transport gate. A claimed string is
+    /// never authentication, so the scope's secret is checked on every call. The default
+    /// refuses: a handler with no scope files cannot authenticate a network caller.
+    fn authorize_scope(
+        &self,
+        token: Option<&str>,
+        _scope: Option<&str>,
+        _scope_token: Option<&str>,
+        authority: &str,
+    ) -> Result<(), ErrorEnvelope> {
+        self.authorize_instance(token, authority)?;
+        Err(ErrorEnvelope::new(
+            crate::ipc::ErrorCode::ScopeAuthRequired,
+            strings::FRAME_SCOPE_REQUIRED,
+        ))
+    }
 }
 
 /// The reserved scope every CLI call runs as (04, 07); a request without a `scope` field is
 /// the CLI's local path and carries it. Sessions created under it are operator-wide.
-pub const OPERATOR_SCOPE: &str = "operator";
+pub use crate::ipc::OPERATOR_SCOPE;
 
 /// The skeleton handler: serves the read shapes that need no runtime (`status`, `readiness`)
 /// and answers the not-implemented envelope for everything else — for it, every non-read
@@ -867,6 +902,15 @@ pub struct Listener {
     path: PathBuf,
 }
 
+/// How a connection reached the manager (07). The unix socket is filesystem-gated and
+/// tokenless, ever; TCP is a network surface, so every post-handshake frame carries the
+/// instance token and its scope's secret.
+#[derive(Clone, Debug)]
+enum Transport {
+    Unix,
+    Tcp { authority: String },
+}
+
 impl Listener {
     /// Bind the manager socket. The parent directory is ensured with the pinned 0700 model
     /// (08); a socket already in use is *not* stolen — that belongs to a live manager.
@@ -895,7 +939,56 @@ impl Listener {
             let handler = Arc::clone(&handler);
             let media = Arc::clone(&media);
             tokio::spawn(async move {
-                let _ = serve_connection(stream, handler, media).await;
+                let _ = serve_connection(stream, handler, media, Transport::Unix, None).await;
+            });
+        }
+    }
+}
+
+/// The `manager.bind` listener (07): the same frame protocol on TCP, with the credential gate
+/// that makes a network surface safe. Bound in addition to the unix socket — never instead.
+pub struct NetworkListener {
+    listener: TcpListener,
+    authority: String,
+}
+
+impl NetworkListener {
+    /// Bind an already-parsed `manager.bind` authority. The bound address is read back (a
+    /// `:0` port resolves to the real one), and that string is what refusals name.
+    pub async fn bind(host: &str, port: u16) -> std::io::Result<Self> {
+        let listener = TcpListener::bind((host, port)).await?;
+        let authority = listener.local_addr()?.to_string();
+        Ok(Self {
+            listener,
+            authority,
+        })
+    }
+
+    pub fn authority(&self) -> &str {
+        &self.authority
+    }
+
+    pub async fn serve(self, handler: Arc<dyn Handler>, media: Arc<MediaStore>) {
+        // 07: the TCP surface is reachable before any credential check, so its own bounds run
+        // before the gate: a connection cap and a per-read progress deadline.
+        let permits = Arc::new(tokio::sync::Semaphore::new(MANAGER_MAX_CONNECTIONS));
+        loop {
+            let Ok((stream, _)) = self.listener.accept().await else {
+                continue;
+            };
+            let Ok(permit) = Arc::clone(&permits).try_acquire_owned() else {
+                drop(stream);
+                continue;
+            };
+            let handler = Arc::clone(&handler);
+            let media = Arc::clone(&media);
+            let transport = Transport::Tcp {
+                authority: self.authority.clone(),
+            };
+            tokio::spawn(async move {
+                let _permit = permit;
+                let _ = serve_connection(stream, handler, media, transport, Some(MANAGER_PROGRESS))
+                    .await;
             });
         }
     }
@@ -908,15 +1001,20 @@ impl Listener {
 /// An *over-cap* frame ([`MAX_FRAME_BYTES`]) is refused the same way — draining an
 /// oversized line to resync would cost exactly the unbounded read the cap exists to
 /// prevent (P2 hardening) — as is a line that is not valid UTF-8, which cannot be a frame.
-async fn serve_connection(
-    stream: UnixStream,
+async fn serve_connection<S>(
+    stream: S,
     handler: Arc<dyn Handler>,
     media: Arc<MediaStore>,
-) -> std::io::Result<()> {
+    transport: Transport,
+    progress: Option<StdDuration>,
+) -> std::io::Result<()>
+where
+    S: AsyncRead + AsyncWrite + Send + Unpin,
+{
     let mut reader = BufReader::new(stream);
     let mut handshake_done = false;
     loop {
-        let bytes = match read_capped_line(&mut reader).await? {
+        let bytes = match read_with_deadline(&mut reader, progress).await? {
             CappedLine::Line(bytes) => bytes,
             CappedLine::Eof => return Ok(()),
             CappedLine::TooLarge => {
@@ -951,7 +1049,8 @@ async fn serve_connection(
             "GET" | "POST" | "PUT" | "DELETE" | "HEAD" | "OPTIONS" | "PATCH" | "TRACE" | "CONNECT"
         );
         if http_method && target.starts_with("/media") {
-            return serve_media_http(&mut reader, line, &media).await;
+            return serve_media_http(&mut reader, line, &media, &handler, &transport, progress)
+                .await;
         }
         let request: Request = match serde_json::from_str(line) {
             Ok(request) => request,
@@ -997,6 +1096,26 @@ async fn serve_connection(
                 Response::Error(ErrorEnvelope::bad_request(strings::DUPLICATE_HANDSHAKE));
             write_response(&mut reader, &response).await?;
             return Ok(());
+        }
+        if let Transport::Tcp { authority } = &transport {
+            // 07: the network gate runs on every call after the tokenless handshake. The
+            // instance token is the transport gate: a failure means this caller is not a
+            // client of this instance, so the connection ends ("nothing follows a refusal").
+            // Scope identity is per request — a pooled connection may multiplex scopes — so
+            // its refusals are dispatch-level and the connection continues.
+            if let Err(envelope) = handler.authorize_scope(
+                request.token.as_deref(),
+                request.scope.as_deref(),
+                request.scope_token.as_deref(),
+                authority,
+            ) {
+                let transport_gate = envelope.code == ErrorCode::TokenRequired;
+                write_response(&mut reader, &Response::Error(envelope)).await?;
+                if transport_gate {
+                    return Ok(());
+                }
+                continue;
+            }
         }
         let origin = match request.origin.as_deref() {
             None => Origin::Shell,
@@ -1055,11 +1174,39 @@ async fn dispatch_offloaded(
 /// The manager's media endpoint (05 A8): one HTTP fetch per connection, no token on the
 /// unix socket (07's local rule — peer-credential trust, the same rule the bridge relies on).
 /// Ids are never echoed in errors or logs; unknown, expired and consumed ids are identical.
-async fn serve_media_http(
-    reader: &mut BufReader<UnixStream>,
+/// One capped line, bounded by the transport's progress deadline (`None` on the unix socket):
+/// a stalled handshake, frame or media head closes the connection instead of holding it.
+async fn read_with_deadline<R>(
+    reader: &mut R,
+    progress: Option<StdDuration>,
+) -> std::io::Result<crate::ipc::CappedLine>
+where
+    R: tokio::io::AsyncBufRead + Unpin,
+{
+    match progress {
+        None => read_capped_line(reader).await,
+        Some(deadline) => tokio::time::timeout(deadline, read_capped_line(reader))
+            .await
+            .map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "manager progress deadline exceeded",
+                )
+            })?,
+    }
+}
+
+async fn serve_media_http<S>(
+    reader: &mut BufReader<S>,
     request_line: &str,
     media: &MediaStore,
-) -> std::io::Result<()> {
+    handler: &Arc<dyn Handler>,
+    transport: &Transport,
+    progress: Option<StdDuration>,
+) -> std::io::Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or_default();
     let target = parts.next().unwrap_or_default();
@@ -1070,8 +1217,9 @@ async fn serve_media_http(
     // Headers: a media fetch carries no body; chunked framing or a declared body is refused
     // (the same strict-head class the network bridge pins).
     let mut content_length = 0usize;
+    let mut presented_token: Option<String> = None;
     loop {
-        let bytes = match read_capped_line(reader).await? {
+        let bytes = match read_with_deadline(reader, progress).await? {
             CappedLine::Line(bytes) => bytes,
             CappedLine::Eof => return Ok(()),
             CappedLine::TooLarge => {
@@ -1105,8 +1253,17 @@ async fn serve_media_http(
                     }
                 };
             }
+            "daiorama-token" => presented_token = Some(value.to_string()),
             _ => {}
         }
+    }
+    // 07: on the TCP surface the instance token is the listener's gate. The media id remains
+    // the artifact's own capability, and scope headers are not part of a media fetch — but a
+    // network listener never serves without the token. The unix path stays tokenless.
+    if let Transport::Tcp { authority } = transport
+        && let Err(envelope) = handler.authorize_instance(presented_token.as_deref(), authority)
+    {
+        return write_media_http(reader, 403, Some(&envelope), None).await;
     }
     if content_length > 0 {
         let envelope = ErrorEnvelope::bad_request(strings::MEDIA_BODY_NOT_ALLOWED);
@@ -1135,18 +1292,22 @@ async fn serve_media_http(
     }
 }
 
-async fn write_media_http(
-    reader: &mut BufReader<UnixStream>,
+async fn write_media_http<S>(
+    reader: &mut BufReader<S>,
     status: u16,
     envelope: Option<&ErrorEnvelope>,
     extra_header: Option<&str>,
-) -> std::io::Result<()> {
+) -> std::io::Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     let body = envelope
         .map(|envelope| serde_json::to_vec(envelope).expect("media envelopes serialize"))
         .unwrap_or_default();
     let reason = match status {
         200 => "OK",
         400 => "Bad Request",
+        403 => "Forbidden",
         404 => "Not Found",
         405 => "Method Not Allowed",
         _ => "Error",
@@ -1165,27 +1326,28 @@ async fn write_media_http(
         head.push_str("\r\n");
     }
     head.push_str("\r\n");
-    let stream = reader.get_mut();
-    stream.write_all(head.as_bytes()).await?;
+    reader.write_all(head.as_bytes()).await?;
     if !body.is_empty() {
-        stream.write_all(&body).await?;
+        reader.write_all(&body).await?;
     }
-    stream.flush().await
+    reader.flush().await
 }
 
-async fn write_media_http_ok(
-    reader: &mut BufReader<UnixStream>,
+async fn write_media_http_ok<S>(
+    reader: &mut BufReader<S>,
     handle: MediaHandle,
-) -> std::io::Result<()> {
+) -> std::io::Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     let head = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         handle.content_type,
         handle.bytes.len()
     );
-    let stream = reader.get_mut();
-    stream.write_all(head.as_bytes()).await?;
-    stream.write_all(&handle.bytes).await?;
-    stream.flush().await
+    reader.write_all(head.as_bytes()).await?;
+    reader.write_all(&handle.bytes).await?;
+    reader.flush().await
 }
 
 /// Check the client's range against ours and answer, or refuse with the pinned mismatch
@@ -1246,6 +1408,7 @@ mod tests {
     use crate::strings;
     use serde_json::json;
     use tokio::io::AsyncWriteExt;
+    use tokio::net::UnixStream;
 
     fn record(id: &str, state: SessionState) -> SessionRecord {
         SessionRecord {
@@ -2175,6 +2338,10 @@ mod tests {
             strings::invalid_origin("x"),
             strings::takes_no_parameters("bogus"),
             strings::DISPATCH_PANICKED.to_string(),
+            strings::FRAME_SCOPE_REQUIRED.to_string(),
+            strings::scope_has_no_secret("x"),
+            strings::frame_scope_auth_required("x"),
+            strings::INVALID_SCOPE_NAME.to_string(),
         ] {
             assert!(
                 flat.contains(&pinned),

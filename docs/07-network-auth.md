@@ -9,7 +9,7 @@ the view-port gate had no enforcer).
 
 | surface | default | when exposed beyond loopback |
 |---------|---------|------------------------------|
-| manager RPC | unix socket, zero-config, tokenless | TCP bind requires instance token, always |
+| manager RPC | unix socket, zero-config, tokenless | TCP bind requires instance token, always; frame credentials below |
 | MCP bridge, network mode | loopback (`127.0.0.1:8757`) | instance token **and** per-request scope auth (below) |
 | view front (noVNC + proxy to wayvnc) | loopback | per-view credential derived from the instance token (HMAC, below), enforced by the front itself |
 | dashboard | loopback | **v1 refuses non-loopback binds** (remote humans use SSH forwarding or an overlay network); its manager connections carry per-connection tokens |
@@ -52,6 +52,39 @@ the view-port gate had no enforcer).
 - **TLS is never dAIorama's job** (01 non-goal). Documented pattern: overlay
   network for encryption + identity (Tailscale/WireGuard family), and/or a
   mature reverse proxy for TLS termination, for anyone exposing further.
+
+## Manager RPC over TCP (`manager.bind`)
+
+`manager.bind` (08; restart-only) adds a TCP listener beside the unix socket.
+The socket always stays, and the TCP surface always carries the instance
+token — loopback included, because the gate is request-time, not bind-time
+(above). `manager.bind` is a host or `host:port`; a bare host uses the pinned
+manager TCP port (04). IPv6 literals use brackets (`[::1]:8756`).
+
+- **Carriage.** The frame's `token`, `scope` and `scope_token` fields (05): the
+  handshake stays tokenless and first; every call after it presents the
+  instance token and its scope's secret. `scope` is required on this transport
+  — there is no default scope on a network surface; the CLI names `operator`
+  and presents its secret (`DAIORAMA_SCOPE_TOKEN`, 04).
+- **Startup credentials.** A network start never runs tokenless: the manager
+  ensures the instance token and a secret for every scope file present,
+  minting what is missing and printing each path once (never a value). The
+  token is created only when absent, so two racing starters converge on one
+  value instead of the loser clobbering the winner's. The bound address is
+  reported (`listening on <addr>`); a bind failure refuses the start — never a
+  silent unix-only manager.
+- **Refusals.** Missing or incorrect token: `token_required`, connection ends
+  (transport gate). Scope: `scope_auth_required` (missing secret, secretless scope, wrong
+  secret) and `bad_request` (`invalid scope name`, before any path is joined); both are
+  per-request and the connection continues. The scope secret is checked before the scope
+  file is read, so a scope's existence is never leaked to an unauthenticated caller.
+- **Rotation window.** The token is adopted at manager start: `token rotate`
+  rewrites the file at once, but the running manager keeps accepting the old
+  value and refuses the new one until the next start. This surface is what
+  makes that window enforceable on the wire (live test, no reload path).
+- **Media.** A fetch on the TCP surface presents `Daiorama-Token`; the
+  artifact id remains its own capability, and scope headers are not part of a
+  media fetch.
 
 ## Instance token lifecycle (A5 — one rule, no contradiction)
 

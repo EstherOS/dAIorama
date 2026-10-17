@@ -41,6 +41,7 @@ use crate::manager::{
     Origin, Registry, Resolution, SessionRecord, SessionSpawner, SessionSpec, SessionState,
     VersionInfo, ViewRecord, ViewState,
 };
+use crate::strings;
 
 /// `list_sessions` page size when the caller sends no `limit` (provisional; additive).
 pub const DEFAULT_LIST_LIMIT: u64 = 100;
@@ -894,6 +895,65 @@ impl Handler for RuntimeService {
             min_supported: Some(MIN_SUPPORTED.to_string()),
             instance_id: self.registry().instance_id.clone(),
         }
+    }
+
+    /// 07: the instance token this start adopted is the transport gate over TCP. A missing
+    /// token on the manager side (no network bind ever configured) refuses every network
+    /// caller — never "no token configured, so anything goes".
+    fn authorize_instance(
+        &self,
+        token: Option<&str>,
+        authority: &str,
+    ) -> Result<(), ErrorEnvelope> {
+        let expected = self
+            .token_at_start
+            .as_deref()
+            .ok_or_else(|| ErrorEnvelope::token_required(authority))?;
+        if !crate::config::secret_matches(token.unwrap_or_default(), expected) {
+            return Err(ErrorEnvelope::token_required(authority));
+        }
+        Ok(())
+    }
+
+    /// 07: scope identity over a network surface is authenticated per request; the scope's
+    /// secret file is the credential (a claimed string is never authentication). Names are
+    /// validated before any path join, so a frame cannot steer the read.
+    fn authorize_scope(
+        &self,
+        token: Option<&str>,
+        scope: Option<&str>,
+        scope_token: Option<&str>,
+        authority: &str,
+    ) -> Result<(), ErrorEnvelope> {
+        self.authorize_instance(token, authority)?;
+        let scope = scope.filter(|value| !value.is_empty()).ok_or_else(|| {
+            ErrorEnvelope::new(ErrorCode::ScopeAuthRequired, strings::FRAME_SCOPE_REQUIRED)
+        })?;
+        if !crate::config::valid_scope_name(scope) {
+            return Err(ErrorEnvelope::bad_request(strings::INVALID_SCOPE_NAME));
+        }
+        // A missing secret is "present your credentials", not "your credentials are wrong":
+        // the two get different pinned strings so a caller can tell which fix applies.
+        let Some(presented) = scope_token.filter(|value| !value.is_empty()) else {
+            return Err(ErrorEnvelope::new(
+                ErrorCode::ScopeAuthRequired,
+                strings::FRAME_SCOPE_REQUIRED,
+            ));
+        };
+        let secret = crate::config::read_scope_token(&self.paths, scope)?.ok_or_else(|| {
+            ErrorEnvelope::new(
+                ErrorCode::ScopeAuthRequired,
+                strings::scope_has_no_secret(scope),
+            )
+            .with_hint("create the scope secret file on the manager host")
+        })?;
+        if !crate::config::secret_matches(presented, &secret) {
+            return Err(ErrorEnvelope::new(
+                ErrorCode::ScopeAuthRequired,
+                strings::frame_scope_auth_required(scope),
+            ));
+        }
+        Ok(())
     }
 
     fn dispatch(
@@ -3298,5 +3358,305 @@ mod tests {
         assert!(events.contains(&"view.started"), "{events:?}");
         assert!(events.contains(&"view.stopped"), "{events:?}");
         service.views.stop(&id);
+    }
+
+    // -----------------------------------------------------------------------
+    // P4-ENDPOINT: the TCP manager surface and its credential gate
+    // -----------------------------------------------------------------------
+
+    fn seed_scope_secret(dir: &std::path::Path, scope: &str, secret: &str) {
+        let paths = Paths::for_env(Some(dir), Some(dir), Some(dir), "default");
+        std::fs::create_dir_all(paths.scope_tokens_dir()).expect("scope-tokens dir");
+        std::fs::write(paths.scope_token_file(scope), format!("{secret}\n")).expect("scope secret");
+    }
+
+    /// One frame written to a raw TCP connection, one response read back. Raw sockets, not
+    /// `Client`: the client refuses a missing token up front, and the point here is the
+    /// server's answer to each credential class.
+    struct Gated {
+        reader: tokio::io::BufReader<tokio::net::tcp::OwnedReadHalf>,
+        writer: tokio::net::tcp::OwnedWriteHalf,
+    }
+
+    impl Gated {
+        /// Connect and complete the tokenless handshake every gated connection needs.
+        async fn connect(authority: &str) -> Self {
+            let stream = tokio::net::TcpStream::connect(authority)
+                .await
+                .expect("connect");
+            let (reader, writer) = stream.into_split();
+            let mut gated = Self {
+                reader: tokio::io::BufReader::new(reader),
+                writer,
+            };
+            let response = gated.exchange(&handshake_frame()).await;
+            assert!(
+                matches!(response, crate::ipc::Response::Result(_)),
+                "handshake answers: {response:?}"
+            );
+            gated
+        }
+
+        async fn exchange(&mut self, request: &crate::ipc::Request) -> crate::ipc::Response {
+            crate::ipc::write_frame(&mut self.writer, request)
+                .await
+                .expect("frame writes");
+            crate::ipc::read_frame(&mut self.reader)
+                .await
+                .expect("frame reads")
+        }
+
+        /// `None` on a clean EOF — the shape a transport-gate refusal leaves behind.
+        async fn exchange_or_eof(
+            &mut self,
+            request: &crate::ipc::Request,
+        ) -> Option<crate::ipc::Response> {
+            crate::ipc::write_frame(&mut self.writer, request)
+                .await
+                .expect("frame writes");
+            crate::ipc::read_frame(&mut self.reader).await.ok()
+        }
+    }
+
+    fn handshake_frame() -> crate::ipc::Request {
+        crate::ipc::Request::new(
+            methods::HANDSHAKE,
+            Some(json!({
+                "protocol_version": crate::ipc::PROTOCOL_VERSION,
+                "min_supported": crate::ipc::MIN_SUPPORTED,
+            })),
+        )
+    }
+
+    fn gated_status(
+        token: Option<&str>,
+        scope: Option<&str>,
+        secret: Option<&str>,
+    ) -> crate::ipc::Request {
+        let mut request = crate::ipc::Request::new(methods::STATUS, None);
+        request.token = token.map(str::to_string);
+        request.scope = scope.map(str::to_string);
+        request.scope_token = secret.map(str::to_string);
+        request
+    }
+
+    async fn tcp_service(
+        dir: &std::path::Path,
+        token_at_start: Option<&str>,
+    ) -> (String, Arc<crate::media::MediaStore>) {
+        let service = Arc::new(make_service_with_config(
+            dir,
+            Arc::new(TestSpawner::default()),
+            CoreConfig::default(),
+            token_at_start.map(str::to_string),
+        ));
+        let handler: Arc<dyn Handler> = service;
+        let listener = crate::manager::NetworkListener::bind("127.0.0.1", 0)
+            .await
+            .expect("bind");
+        let authority = listener.authority().to_string();
+        let paths = Paths::for_env(Some(dir), Some(dir), Some(dir), "default");
+        let media = Arc::new(crate::media::MediaStore::with_ttl(
+            paths.media_dir(),
+            crate::media::DEFAULT_TTL,
+        ));
+        tokio::spawn(listener.serve(handler, Arc::clone(&media)));
+        (authority, media)
+    }
+
+    #[tokio::test]
+    async fn tcp_surface_gates_token_then_scope() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        seed_scope_secret(tmp.path(), "operator", "scope-secret");
+        let (authority, _media) = tcp_service(tmp.path(), Some("instance-token")).await;
+
+        // No token: the transport gate refuses and the connection ends.
+        let mut gated = Gated::connect(&authority).await;
+        match gated.exchange_or_eof(&gated_status(None, None, None)).await {
+            Some(crate::ipc::Response::Error(envelope)) => {
+                assert_eq!(envelope.code, ErrorCode::TokenRequired);
+                assert_eq!(envelope.message, strings::token_required(&authority));
+            }
+            other => panic!("expected token_required, got {other:?}"),
+        }
+        assert!(
+            gated
+                .exchange_or_eof(&gated_status(
+                    Some("instance-token"),
+                    Some("operator"),
+                    Some("scope-secret")
+                ))
+                .await
+                .is_none(),
+            "nothing follows the transport-gate refusal"
+        );
+
+        // Wrong token: same class.
+        let mut gated = Gated::connect(&authority).await;
+        match gated
+            .exchange(&gated_status(
+                Some("wrong"),
+                Some("operator"),
+                Some("scope-secret"),
+            ))
+            .await
+        {
+            crate::ipc::Response::Error(envelope) => {
+                assert_eq!(envelope.code, ErrorCode::TokenRequired);
+            }
+            other => panic!("expected token_required, got {other:?}"),
+        }
+
+        // Right token, no scope: scope auth refuses, the connection continues.
+        let mut gated = Gated::connect(&authority).await;
+        match gated
+            .exchange(&gated_status(Some("instance-token"), None, None))
+            .await
+        {
+            crate::ipc::Response::Error(envelope) => {
+                assert_eq!(envelope.code, ErrorCode::ScopeAuthRequired);
+                assert_eq!(envelope.message, strings::FRAME_SCOPE_REQUIRED);
+            }
+            other => panic!("expected scope_required, got {other:?}"),
+        }
+
+        // Wrong scope secret: refused, and the connection is still usable.
+        match gated
+            .exchange(&gated_status(
+                Some("instance-token"),
+                Some("operator"),
+                Some("wrong"),
+            ))
+            .await
+        {
+            crate::ipc::Response::Error(envelope) => {
+                assert_eq!(envelope.code, ErrorCode::ScopeAuthRequired);
+                assert_eq!(
+                    envelope.message,
+                    strings::frame_scope_auth_required("operator")
+                );
+            }
+            other => panic!("expected scope_auth_required, got {other:?}"),
+        }
+
+        // A traversal-shaped name never reaches a path join.
+        match gated
+            .exchange(&gated_status(
+                Some("instance-token"),
+                Some("../../etc"),
+                Some("x"),
+            ))
+            .await
+        {
+            crate::ipc::Response::Error(envelope) => {
+                assert_eq!(envelope.code, ErrorCode::BadRequest);
+                assert_eq!(envelope.message, strings::INVALID_SCOPE_NAME);
+            }
+            other => panic!("expected invalid scope name, got {other:?}"),
+        }
+
+        // Unknown but well-formed scope: the secret file is the credential, so the answer is
+        // the same `scope_auth_required` class as a secretless scope — existence is not leaked.
+        match gated
+            .exchange(&gated_status(
+                Some("instance-token"),
+                Some("ghost"),
+                Some("x"),
+            ))
+            .await
+        {
+            crate::ipc::Response::Error(envelope) => {
+                assert_eq!(envelope.code, ErrorCode::ScopeAuthRequired);
+                assert_eq!(envelope.message, strings::scope_has_no_secret("ghost"));
+            }
+            other => panic!("expected scope_auth_required, got {other:?}"),
+        }
+
+        // Authenticated: dispatched.
+        match gated
+            .exchange(&gated_status(
+                Some("instance-token"),
+                Some("operator"),
+                Some("scope-secret"),
+            ))
+            .await
+        {
+            crate::ipc::Response::Result(value) => {
+                assert_eq!(value["state"], "running");
+            }
+            other => panic!("expected a dispatched status, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn the_rotation_window_is_enforced_on_the_wire() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        seed_scope_secret(tmp.path(), "operator", "scope-secret");
+        let paths = Paths::for_env(
+            Some(tmp.path()),
+            Some(tmp.path()),
+            Some(tmp.path()),
+            "default",
+        );
+        std::fs::write(paths.token_file(), "old-token\n").expect("token file");
+
+        // This start adopted the old value; the file now holds a new one.
+        std::fs::write(paths.token_file(), "new-token\n").expect("rotate");
+        let (authority, _media) = tcp_service(tmp.path(), Some("old-token")).await;
+
+        let mut gated = Gated::connect(&authority).await;
+        assert!(
+            matches!(
+                gated
+                    .exchange(&gated_status(
+                        Some("old-token"),
+                        Some("operator"),
+                        Some("scope-secret")
+                    ))
+                    .await,
+                crate::ipc::Response::Result(_)
+            ),
+            "the adopted token keeps working until restart"
+        );
+        match gated
+            .exchange(&gated_status(
+                Some("new-token"),
+                Some("operator"),
+                Some("scope-secret"),
+            ))
+            .await
+        {
+            crate::ipc::Response::Error(envelope) => {
+                assert_eq!(envelope.code, ErrorCode::TokenRequired);
+            }
+            other => panic!("expected the rotated token to be refused, got {other:?}"),
+        }
+
+        // A manager started after the rotation adopts the new value and refuses the old one.
+        let (authority, _media) = tcp_service(tmp.path(), Some("new-token")).await;
+        let mut gated = Gated::connect(&authority).await;
+        assert!(matches!(
+            gated
+                .exchange(&gated_status(
+                    Some("new-token"),
+                    Some("operator"),
+                    Some("scope-secret")
+                ))
+                .await,
+            crate::ipc::Response::Result(_)
+        ));
+        match gated
+            .exchange(&gated_status(
+                Some("old-token"),
+                Some("operator"),
+                Some("scope-secret"),
+            ))
+            .await
+        {
+            crate::ipc::Response::Error(envelope) => {
+                assert_eq!(envelope.code, ErrorCode::TokenRequired);
+            }
+            other => panic!("expected the old token to be refused after restart, got {other:?}"),
+        }
     }
 }

@@ -101,30 +101,13 @@ pub async fn run_listen(
     let display = format!("{}:{}", bind.0, bind.1);
 
     // A network surface never runs tokenless: mint the instance token on any listen bind,
-    // loopback included (07).
-    let token = match config::read_token(&paths)? {
-        Some(token) => token,
-        None => {
-            let token = config::generate_token();
-            let path = config::write_token(&paths, &token)?;
-            eprintln!(
-                "wrote {} (mode 0600); 'daiorama token show' prints the value",
-                path.display()
-            );
-            token
-        }
-    };
-
-    // A scope without a secret cannot be used over the network (07); the first network start
-    // makes every scope file present usable rather than leaving a silent dead end. Deleting a
-    // scope's secret file takes it off the network again.
-    for scope in paths.scope_names() {
-        if config::read_scope_token(&paths, &scope)?.is_none() {
-            let secret = config::generate_token();
-            let path = config::write_scope_token(&paths, &scope, &secret)?;
-            eprintln!("wrote {} (scope secret, mode 0600)", path.display());
-        }
+    // loopback included (07), and make every scope file present network-usable.
+    for line in config::ensure_network_credentials(&paths)? {
+        eprintln!("{line}");
     }
+    let token = config::read_token(&paths)?.ok_or_else(|| {
+        ErrorEnvelope::internal("instance token missing after the credential ensure")
+    })?;
 
     let listener = TcpListener::bind((bind.0.as_str(), bind.1))
         .await
@@ -526,7 +509,7 @@ async fn serve_media(
         return refuse(input, &reply, Some(request)).await;
     };
     let presented = request.header("daiorama-token").unwrap_or_default();
-    if !secret_matches(presented, &network.token) {
+    if !config::secret_matches(presented, &network.token) {
         let reply = media_reply(403, ErrorEnvelope::token_required(&network.display), None);
         return refuse(input, &reply, Some(request)).await;
     }
@@ -688,7 +671,7 @@ async fn authenticate(
 ) -> Result<(String, ScopeFile), ErrorEnvelope> {
     // Transport gate first: a caller without the instance token learns nothing about scopes.
     let presented = request.header("daiorama-token").unwrap_or_default();
-    if !secret_matches(presented, &network.token) {
+    if !config::secret_matches(presented, &network.token) {
         return Err(ErrorEnvelope::token_required(&network.display));
     }
 
@@ -712,28 +695,13 @@ async fn authenticate(
         .with_hint("create the scope secret file on the bridge host")
     })?;
     let presented = request.header("daiorama-scope-token").unwrap_or_default();
-    if !secret_matches(presented, &secret) {
+    if !config::secret_matches(presented, &secret) {
         return Err(ErrorEnvelope::new(
             ErrorCode::ScopeAuthRequired,
             strings::network_scope_auth_required(scope),
         ));
     }
     Ok((scope.to_string(), definition))
-}
-
-/// Length-checked, value-constant-time comparison (the token and scope secrets are secrets;
-/// length is not).
-fn secret_matches(presented: &str, expected: &str) -> bool {
-    let presented = presented.as_bytes();
-    let expected = expected.as_bytes();
-    if presented.len() != expected.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (a, b) in presented.iter().zip(expected) {
-        diff |= a ^ b;
-    }
-    diff == 0
 }
 
 /// `Origin` must name the same authority the request was sent to (`Host`): the bridge has one
@@ -1145,10 +1113,10 @@ mod tests {
 
     #[test]
     fn secrets_compare_exactly_and_bound() {
-        assert!(secret_matches("abc", "abc"));
-        assert!(!secret_matches("abc", "abd"));
-        assert!(!secret_matches("abc", "abcd"));
-        assert!(!secret_matches("", "abc"));
+        assert!(config::secret_matches("abc", "abc"));
+        assert!(!config::secret_matches("abc", "abd"));
+        assert!(!config::secret_matches("abc", "abcd"));
+        assert!(!config::secret_matches("", "abc"));
     }
 
     /// A head dribbled one line at a time never stalls long enough for the per-line progress

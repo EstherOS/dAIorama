@@ -445,6 +445,14 @@ impl App {
             .filter(|v| !v.is_empty())
     }
 
+    /// The operator scope's network secret, exact env name `DAIORAMA_SCOPE_TOKEN` (07). Only
+    /// the TCP transport presents it; the unix socket's frames stay credential-free.
+    fn scope_token() -> Option<String> {
+        std::env::var("DAIORAMA_SCOPE_TOKEN")
+            .ok()
+            .filter(|v| !v.is_empty())
+    }
+
     /// Resolve `--remote` to an address (04: one flag, one meaning, everywhere).
     fn address(&self) -> Result<Option<Address>, ErrorEnvelope> {
         match &self.remote {
@@ -459,11 +467,18 @@ impl App {
         let token = Self::token();
         match self.address()? {
             Some(address) => {
-                match Client::connect(&address, CONNECT_TIMEOUT, token.as_deref()).await {
-                    Ok(client) => Ok(Some(client)),
-                    // 04: with --remote, unreachable is an error — never a local fallback.
-                    Err(envelope) => Err(envelope),
+                let mut client =
+                    match Client::connect(&address, CONNECT_TIMEOUT, token.as_deref()).await {
+                        Ok(client) => client,
+                        // 04: with --remote, unreachable is an error — never a local fallback.
+                        Err(envelope) => return Err(envelope),
+                    };
+                if client.is_gated() {
+                    // 07: over TCP the operator scope authenticates with its secret; the CLI
+                    // never silently claims `operator` without one.
+                    client.set_scope_token(Self::scope_token());
                 }
+                Ok(Some(client))
             }
             None => match Client::connect_local(&self.instance).await {
                 Ok(client) => Ok(Some(client)),

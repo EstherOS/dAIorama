@@ -115,6 +115,23 @@ pub fn scope_has_no_secret(scope: &str) -> String {
     format!("scope {scope:?} has no secret; it cannot be used over the network")
 }
 
+/// A TCP manager frame with no `scope`/`scope_token` (07): the unix rule — absent scope means
+/// `operator` — does not apply on a network surface; identity is authenticated per request.
+pub const FRAME_SCOPE_REQUIRED: &str =
+    "scope required: set scope and scope_token on the request frame";
+
+/// A TCP manager frame presents a scope whose secret does not match (07).
+pub fn frame_scope_auth_required(scope: &str) -> String {
+    format!("scope {scope:?} requires its scope secret (scope_token frame field)")
+}
+
+/// A `scope` that is not a valid scope name: scope names are the filename component
+/// (`[a-z0-9][a-z0-9_-]{0,63}`), so path characters can never name a scope (07, 08).
+pub const INVALID_SCOPE_NAME: &str = "invalid scope name";
+
+/// `manager.bind` is a host or host:port; the unix socket has its own key-less transport (04).
+pub const MANAGER_BIND_INVALID: &str = "manager.bind takes a host or host:port address";
+
 /// Browser-shaped requests are validated: an `Origin` must match the `Host` it was sent to
 /// (07's exposure rule).
 pub fn origin_not_allowed(origin: &str) -> String {
