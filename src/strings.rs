@@ -248,6 +248,13 @@ pub fn invalid_origin(raw: &str) -> String {
     format!("invalid origin {raw:?}; expected one of: shell, mcp")
 }
 
+/// A request whose `id` is present but null. JSON-RPC distinguishes this from a notification
+/// (an absent id): it is an invalid request and still owes an answer — silence would hang the
+/// client like a dropped frame.
+pub fn null_id() -> &'static str {
+    "id must be a string or a number, not null"
+}
+
 /// A pinned-surface method this build does not implement yet (views/query methods, control
 /// tools). `internal`: the call is valid, the build is what is missing; no hint — there is no
 /// corrective step.

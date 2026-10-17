@@ -403,3 +403,58 @@ async fn list_capabilities_reports_the_live_quota() {
 
     child.kill().await.unwrap();
 }
+
+/// `"id": null` is an invalid request and still owes an answer; an absent id is a
+/// notification and owes nothing. Telling them apart matters: silence on a null id hangs the
+/// caller exactly like a dropped frame.
+#[tokio::test]
+async fn null_id_is_refused_while_notifications_stay_silent() {
+    let harness = Harness::new();
+    harness.write_scope("agent", "()");
+    let _server = harness.serve();
+    let mut child = harness.bridge(Some("agent"));
+    let stdout = child.stdout.take().unwrap();
+    let mut lines = BufReader::new(stdout).lines();
+    let mut stdin = child.stdin.take().unwrap();
+
+    let refused = send(
+        &mut stdin,
+        &mut lines,
+        json!({"jsonrpc": "2.0", "id": null, "method": "tools/list", "params": {}}),
+    )
+    .await;
+    assert_eq!(refused["error"]["code"], -32600);
+    assert_eq!(
+        refused["error"]["message"],
+        "id must be a string or a number, not null"
+    );
+
+    // An absent id is a notification: nothing is answered and nothing is executed.
+    let notification = json!({
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "params": {"name": "list_sessions", "arguments": {}}
+    });
+    stdin
+        .write_all(format!("{notification}\n").as_bytes())
+        .await
+        .unwrap();
+    stdin.flush().await.unwrap();
+    let quiet = tokio::time::timeout(Duration::from_millis(300), lines.next_line()).await;
+    assert!(quiet.is_err(), "a notification must not be answered");
+
+    // The refusal is dispatch-level: the connection continues.
+    let ping = send(
+        &mut stdin,
+        &mut lines,
+        json!({"jsonrpc": "2.0", "id": 1, "method": "ping"}),
+    )
+    .await;
+    assert_eq!(ping["result"], json!({}));
+    assert!(
+        harness.frames().is_empty(),
+        "neither line reached the manager"
+    );
+
+    child.kill().await.unwrap();
+}

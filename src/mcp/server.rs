@@ -160,11 +160,22 @@ impl Bridge {
                 ));
             }
         };
-        let id = request.id.clone();
-        // Notifications carry no id and never get a response (JSON-RPC). Nothing is executed
-        // for one: MCP's only notifications are `notifications/*`, and an action smuggled
-        // into a notification is ignored rather than run without an answer.
-        id.as_ref()?;
+        // A notification carries no `id` and never gets a response (JSON-RPC); nothing is
+        // executed for one — MCP's only notifications are `notifications/*`, and an action
+        // smuggled into one is ignored rather than run without an answer.
+        let id = match request.id.clone() {
+            None => return None,
+            // `"id": null` is not a notification: it is an invalid request that still owes an
+            // answer. Staying silent here hangs the caller exactly like a dropped frame.
+            Some(Value::Null) => {
+                return Some(json_rpc_error(
+                    Value::Null,
+                    INVALID_REQUEST,
+                    strings::null_id(),
+                ));
+            }
+            Some(id) => id,
+        };
 
         if let Some(declared) = request
             .params
@@ -178,7 +189,7 @@ impl Bridge {
             // is -32022 and maps to `version_incompatible` with both pairs.
             let envelope =
                 ErrorEnvelope::version_incompatible(declared, declared, MCP_REVISION, MCP_REVISION);
-            return Some(json_rpc_envelope_error(id, &envelope));
+            return Some(json_rpc_envelope_error(Some(id), &envelope));
         }
 
         let outcome = match request.method.as_str() {
@@ -191,7 +202,6 @@ impl Bridge {
             ))),
         };
 
-        let id = id.unwrap_or(Value::Null);
         Some(match outcome {
             Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
             // A malformed MCP request is a protocol error; tool failures returned below are

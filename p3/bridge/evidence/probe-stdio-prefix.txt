@@ -1,0 +1,24 @@
+=== null id on tools/list (invalid request per JSON-RPC, silence?): rc=0 stdout_lines=0
+=== missing id key on tools/list: rc=0 stdout_lines=0
+=== batch array of one request: rc=0 stdout_lines=1
+  out: {"error":{"code":-32700,"message":"parse error: invalid type: map, expected a string at line 1 column 1"},"id":null,"jsonrpc":"2.0"}
+=== missing method: rc=0 stdout_lines=1
+  out: {"error":{"code":-32700,"message":"parse error: missing field `method` at line 1 column 27"},"id":null,"jsonrpc":"2.0"}
+=== method not a string: rc=0 stdout_lines=1
+  out: {"error":{"code":-32700,"message":"parse error: invalid type: integer `7`, expected a string at line 1 column 39"},"id":null,"jsonrpc":"2.0"}
+=== tools/call with array params: rc=0 stdout_lines=1
+  out: {"id":4,"jsonrpc":"2.0","result":{"content":[{"text":"tools/call params must be an object with a name","type":"text"}],"isError":true,"structuredContent":{"code":"bad_request","hint":"check the request against 'daiorama <command> --help'","message":"tools/call params must be an object with a name"}}
+=== tools/call with no params: rc=0 stdout_lines=1
+  out: {"id":5,"jsonrpc":"2.0","result":{"content":[{"text":"tools/call params must be an object with a name","type":"text"}],"isError":true,"structuredContent":{"code":"bad_request","hint":"check the request against 'daiorama <command> --help'","message":"tools/call params must be an object with a name"}}
+=== tools/call notification (no id) must not execute: rc=0 stdout_lines=0
+=== initialize with legacy protocolVersion param: rc=0 stdout_lines=1
+  out: {"id":6,"jsonrpc":"2.0","result":{"capabilities":{"tools":{"listChanged":false}},"instructions":"dAIorama desktop sessions. Call list_capabilities to see this scope's tools.","protocolVersion":"2026-07-28","serverInfo":{"name":"daiorama","version":"0.1.0"}}}
+=== non-UTF-8 line: rc=0 stdout_lines=1
+  out: {"error":{"code":-32600,"message":"request line is not valid UTF-8"},"id":null,"jsonrpc":"2.0"}
+=== over-cap line (8 MiB + 1): rc=0 stdout_lines=1
+  out: {"error":{"code":-32600,"message":"request frame must be at most 8388608 bytes"},"id":null,"jsonrpc":"2.0"}
+=== relay with no manager listening: rc=0 stdout_lines=1
+  out: {"id":9,"jsonrpc":"2.0","result":{"content":[{"text":"manager unreachable at /tmp/dai-p3-probe/runtime/daiorama/default/manager.sock","type":"text"}],"isError":true,"structuredContent":{"code":"manager_unreachable","message":"manager unreachable at /tmp/dai-p3-probe/runtime/daiorama/default/manager.
+=== two calls, one bad one good (connection continues?): rc=0 stdout_lines=2
+  out: {"error":{"code":-32600,"data":{"code":"bad_request","hint":"check the request against 'daiorama <command> --help'","message":"unknown method \"nope\""},"message":"unknown method \"nope\""},"id":10,"jsonrpc":"2.0"}
+  out: {"id":11,"jsonrpc":"2.0","result":{}}

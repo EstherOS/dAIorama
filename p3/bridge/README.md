@@ -38,3 +38,14 @@ python3 p3/bridge/evidence/repro.py > p3/bridge/evidence/bridge-live.txt
 
 The script needs `target/debug/daiorama` (or `DAIORAMA_BIN`) and nothing else; it seeds and
 tears down its own root, and it terminates the manager it spawns.
+
+## Adversarial battery — `evidence/probe-stdio.py`
+
+Raw stdin classes, one process per probe: null/missing id, JSON-RPC batch, missing/typed
+method, `tools/call` with no/array params, a notification carrying a call, a legacy
+`initialize`, a non-UTF-8 line, an over-cap line (8 MiB + 1), a relay with no manager, and a
+bad-then-good pair to prove the connection survives a dispatch-level refusal. Found the null-id
+silence (`"id": null` was treated as a notification and never answered); the fix and its pin
+are in `src/mcp/` and `fixtures/README.md`. `evidence/probe-stdio-prefix.txt` is the battery on
+the pre-fix code (null id: no line at all) and `evidence/probe-stdio-fixed.txt` the same battery
+after it (null id answers `-32600`; an absent id stays silent).

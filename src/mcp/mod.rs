@@ -60,12 +60,27 @@ pub struct JsonRpcRequest {
     pub method: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub params: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "id_some_or_absent"
+    )]
     pub id: Option<Value>,
 }
 
 fn jsonrpc_version() -> String {
     "2.0".to_string()
+}
+
+/// Distinguish `"id": null` from an absent `id`. A plain `Option` maps both to `None`, but
+/// JSON-RPC calls them different things: an absent id is a notification (no response owed),
+/// while a null id is an invalid request that still owes an answer — silence there hangs the
+/// client exactly like a dropped frame. `#[serde(default)]` covers the absent case.
+fn id_some_or_absent<'de, D>(deserializer: D) -> Result<Option<Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Value::deserialize(deserializer).map(Some)
 }
 
 /// A JSON-RPC error object. Protocol errors are reserved for malformed MCP requests; tool

@@ -119,6 +119,9 @@ and every run**.
   with `bad_request` (`invalid origin "x"; expected one of: shell, mcp`). The MCP bridge's
   tool surface uses the same class: a tool name outside the registry is `bad_request`
   (`unknown tool "x"`), a known but ungranted name is `tool_not_granted`.
+  The bridge's stdin frames follow the same rule: an absent `id` is a notification (no
+  response, nothing executed) while `"id": null` is an invalid request answered `-32600`
+  (`id must be a string or a number, not null`) and the connection continues.
 - `expect.method` must match exactly. Methods mirror MCP tool names where they exist
   (`create_session`, `close_session`, `list_sessions`, `session_status`, `get_view`,
   `stop_view`, `list_history`, and the control tools by their own names) and are RPC-only
