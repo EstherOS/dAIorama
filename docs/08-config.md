@@ -111,9 +111,11 @@ Single master table in 04 (ports, resolution, reaper off, history 8×4 MiB /
 
 ## Scope files and validation (D4)
 
-- Scopes are readable, scriptable, reviewable: `config scope list`,
+- Scopes are readable, scriptable, reviewable, and creatable: `config scope list`,
   `config scope get <name>`, `config scope validate <name>`,
-  `config effective [--scope]` (04).
+  `config scope create <name> [--template own|all|dashboard]`,
+  `config effective [--scope]` (04). Create writes a new 0600 file from a template and prints
+  its path; an existing file is never overwritten, and every template leaves the grant empty.
 - **Startup validation + on-demand validation.** Unknown tool or category
   names are load errors listing the valid names — a typo must never silently
   shrink a manifest (deny-by-default turns silent shrinkage into mystery

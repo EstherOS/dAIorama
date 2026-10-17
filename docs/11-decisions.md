@@ -851,3 +851,29 @@ already carries identity); a loopback exemption for the token (07's gate is requ
 the bridge already ensures a token for loopback binds); letting an absent `scope` mean
 `operator` on TCP (a unix convenience becoming a network default identity); a token in the URL
 (shell history and proxy logs; the frame is the carriage).
+
+## P5-D2 — `config scope create` and its templates
+
+`dashboard` was a pinned reserved name with no creation path: scope files were readable and
+validatable only, so a fresh setup could not credential the dashboard identity without
+hand-editing a file — the one step packaging cannot ask an operator to perform through
+`$EDITOR`. `config scope create <name> [--template own|all|dashboard]` writes one new
+`scopes/<name>.ron` (mode 0600 from the first syscall, `create_new` — an existing path refuses
+with `scope "<name>" already exists`), validates the rendered text before writing, and prints
+the path only. `own` is the default (own-scope visibility); `all` sets visibility `all`;
+`dashboard` sets visibility `all`, audit flags false, and the default rate limit. Grants stay
+empty in every template, so a template never grants capability.
+
+The dashboard note's "reads only, no session creation" was corrected in place: the always-on
+session-lifecycle set (05) is available to every scope and a scope file cannot remove it, so
+the phrase describes the dashboard's own calls rather than a narrowed capability. The network
+secret stays out of create — `ensure_network_credentials` already mints one per scope file at
+every network start, and a second minting path would only diverge.
+
+*Rationale:* creation is a template write, not a new configuration language; the pinned
+template names carry the dashboard mapping so packaging passes a name, not a hand-copied RON
+fragment.
+*Rejected:* `config set scopes.<name>...` (the list-tolerant file form is deliberate — `get`/
+`set` do not address scopes); an implicit `dashboard` scope created by the dashboard's first
+use (the reserved name is created explicitly, never as a side effect); a `--grant` flag on
+create (grants are the security-relevant part and stay a file edit under review).

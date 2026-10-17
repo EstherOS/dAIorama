@@ -39,11 +39,12 @@ creation/usage options in place (D1). Read commands accept `--json`.
 
 **Config** (authority rules in 08):
 - `daiorama config get <key>` / `config set <key> <value>` — dot-path keys, max one level of nesting. Against `--remote`: RPC to that manager. Local, no manager needed: operates on the files directly (cold). A local `config set` writes the file; a running manager keeps the old value until `config reload` (or restart) — `config set` output states which of the two applies.
-- `daiorama config edit` — `$EDITOR` on the core config file. Refused against `--remote` (explicit refusal, not fetch-edit-push). Scope files are edited where they live (08); `config scope` commands are for reading them.
+- `daiorama config edit` — `$EDITOR` on the core config file. Refused against `--remote` (explicit refusal, not fetch-edit-push). Scope files are edited where they live (08); `config scope list|get|validate` read them and `config scope create` writes a new one.
 - `daiorama config setup` — first-run wizard: detect environment (deps, GPU via `doctor`), write starter config, offer commented starter scope files. Sequence in 10.
 - `daiorama config reload` — re-read core config on a running manager (reload rules: 08). Targets a running manager; if none is running: `no manager running` — config applies at next start anyway. Never auto-starts (cold class).
 - `daiorama config validate [<path>]` — validate core config and/or scope files; unknown tool/category names are load errors listing valid names (D4).
 - `daiorama config scope list` / `config scope get <name>` / `config scope validate <name>` — scope defs are first-class, readable and scriptable (D4).
+- `daiorama config scope create <name> [--template own|all|dashboard]` — write a new scope file (mode 0600, never overwriting) and print its path. Default template `own` sets own-scope visibility; `all` sets `sessions.visibility: all`; `dashboard` is the reserved dashboard identity — `sessions.visibility: all`, audit flags false, the default rate limit (08, 10 D3). Grants stay empty in every template (deny-by-default); no scope secret is written — the next network start mints one for every existing scope file (07).
 - `daiorama config effective [--scope <name>]` — resolved view: which values apply where, effective quotas/manifests/audit flags per scope (D4).
 
 **Token** (lifecycle: 07):
@@ -126,7 +127,9 @@ these; wording changes are spec changes.
 - `containment unavailable: cgroup v2 delegation is not available here ({detail}). Fix: run with a writable/delegated cgroupfs (see the compose notes), or set limits.mode = off and accept losing per-session limits and crash-time cleanup.`
 - `token required for {addr}: set DAIORAMA_TOKEN (value from 'daiorama token show' on the manager host).`
 - `manager.bind takes a host or host:port address` — a malformed bind refuses the start (07).
-- `invalid scope name` — a network-supplied `scope` that is not `[a-z0-9][a-z0-9_-]{0,63}` (07).
+- `invalid scope name` — a network-supplied `scope`, or a `config scope create` name, that is not `[a-z0-9][a-z0-9_-]{0,63}` (07, 08).
+- `scope "{name}" already exists` — `config scope create` never overwrites an existing scope file (08).
+- `invalid scope template "{raw}"; expected own, all, or dashboard` — `config scope create --template` refuses a name outside the pinned set (08).
 - `session limit reached: scope '{scope}' {n}/{max}; global {g}/{gmax}. Close a session first.`
 - `backend 'host' is exclusive; in use by session {id}. Close it or use --backend=headless.`
 - `manager is draining for upgrade; new sessions are refused ({n} still running).`

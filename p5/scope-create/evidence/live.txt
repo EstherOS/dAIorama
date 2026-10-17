@@ -1,0 +1,37 @@
+$ daiorama config scope create dashboard --template dashboard
+$ROOT/conf/daiorama/default/scopes/dashboard.ron
+(exit 0)
+
+$ stat -c '%a %n' $ROOT/conf/daiorama/default/scopes/dashboard.ron
+600 $ROOT/conf/daiorama/default/scopes/dashboard.ron
+
+$ daiorama config scope list
+dashboard
+
+$ daiorama config scope validate dashboard
+scope "dashboard" valid: $ROOT/conf/daiorama/default/scopes/dashboard.ron
+
+$ daiorama config scope get dashboard
+scope dashboard ($ROOT/conf/daiorama/default/scopes/dashboard.ron)
+sessions.max: (unset)
+sessions.visibility: all
+limits.rate: 20 per_sec, burst 40, mode pace
+audit: store_clips off, store_screenshots off
+grant: categories [], tools []
+
+$ daiorama config scope create dashboard --template dashboard   # second time
+scope "dashboard" already exists (bad_request)
+hint: check the request against 'daiorama <command> --help'
+(exit 1)
+
+--- no secret yet ---
+ls: cannot access '$ROOT/data/daiorama/default/scope-tokens': No such file or directory
+
+$ timeout 2 daiorama mcp --listen 127.0.0.1:18765   # one network start
+wrote $ROOT/data/daiorama/default/token (mode 0600); 'daiorama token show' prints the value
+wrote $ROOT/data/daiorama/default/scope-tokens/dashboard (scope secret, mode 0600)
+listening on 127.0.0.1:18765
+(timeout exit 124)
+
+--- secret after the network start ---
+600 $ROOT/data/daiorama/default/scope-tokens/dashboard

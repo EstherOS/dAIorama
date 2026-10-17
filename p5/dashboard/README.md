@@ -50,9 +50,11 @@ install or revert is visible without a restart.
 `dashboard` is a **reserved scope name**, like `operator`: it is created explicitly, never
 implicitly, and it is the identity the dashboard queries as (10, D3).
 
-- `config scope create <name> [--template own|all|dashboard]` is the creation path (packaging
-  implements it). Default template `own`; `dashboard` maps to `(sessions: (visibility: all))`
-  with audit flags false and the default rate limit — reads only, no session creation.
+- `config scope create <name> [--template own|all|dashboard]` is the creation path (04, 08).
+  Default template `own`; `dashboard` maps to `(sessions: (visibility: all))`
+  with audit flags false and the default rate limit. The always-on session-lifecycle set (05)
+  is available to every scope and is not removable by a scope file, so "reads only" describes
+  the dashboard's own calls, not a capability the template takes away.
 - Refusals: invalid name → `bad_request` `invalid scope name`; existing file → `bad_request`
   `scope "<name>" already exists`; the command writes a 0600 file and prints the path only.
 - The network secret is not written by `config scope create`: the next network start mints a
