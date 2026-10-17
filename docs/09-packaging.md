@@ -101,13 +101,27 @@ rule is scoped to the core image. The systemd unit in `packaging/systemd/` is th
 channel, the image `CMD` is the container channel — two channels, not alternatives.
 
 The base is `debian:sid-slim`, pinned by digest at build (trixie carries no Hyprland; sid
-carries 0.56.2, inside 04's supported range). The core package set follows what the binary
-actually runs: `wayvnc` (`view.wayvnc_command`), `grim` and `wf-recorder` (`capture.*` defaults),
-the Mesa userspace, `xwayland`, `dbus`, `seatd`, `fontconfig` + `fonts-dejavu-core`. No terminal,
-no app suite, no browser in core; `wtype`/`wlrctl` are the L1 harness's stand-ins and do not ship.
+carries 0.56.2, inside 04's supported range). The digest is a **required build argument**
+(`ARG DEBIAN_SID_DIGEST`), never a checked-in default: a default goes stale silently, and the
+release manifest records the digest a build actually used (C2). The core package set follows
+what the binary actually runs: `wayvnc` (`view.wayvnc_command`), `grim` and `wf-recorder`
+(`capture.*` defaults), the Mesa userspace, `xwayland`, `dbus`, `seatd`, `fontconfig` +
+`fonts-dejavu-core`. No terminal, no app suite, no browser in core; `wtype`/`wlrctl` are the L1
+harness's stand-ins and do not ship. The binary is built from source in a builder stage and
+copied into the pinned base — the image builds the binary directly, it does not download a
+release artifact (channel table, above).
 
-The desktop image sets `ENV XDG_DATA_HOME=/data`; the manager and the entrypoint
-must resolve one data root or the seed lands where the front does not look.
+Container assets live beside the docs: `packaging/container/Containerfile.core` (the core
+artifact), `packaging/compose/*.yml` (one file per shape named above) and
+`packaging/quadlet/daiorama.container` (the supervised container channel). The desktop
+Containerfile follows the session launcher that 06 pins at `/usr/local/bin/daiorama-browser`;
+the core image is the substrate every shape composes on.
+
+The image sets `ENV XDG_DATA_HOME=/data`, `XDG_CONFIG_HOME=/config` and `XDG_RUNTIME_DIR=/run`,
+so the manager, the entrypoint and the compose mounts resolve one path set — 08's container row
+(`/config`, `/data`, `/run/daiorama/<instance>/`). The desktop image's one extra requirement is
+the data root: the seed must land where the front looks, so it shares that pin rather than
+setting its own.
 
 **The noVNC tree stays data.** The desktop image carries one read-only seed at
 `/usr/share/daiorama/novnc`; `packaging/container/entrypoint.sh` copies it into

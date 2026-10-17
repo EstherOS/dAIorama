@@ -147,9 +147,58 @@ and the entrypoint resolve the same data root; without it the seed lands somewhe
 binary never reads. Mount `/data` and `/config` at 08's container equivalents; the
 token and scope secrets live in `/data`, so back that volume up like a credential.
 
-The Containerfiles, the Quadlet unit and the compose snippets are the next packaging slice;
-this section fixes the contract they have to implement, and the entrypoint is tested here so a
-broken seed rule fails before an image exists.
+The Containerfiles, the Quadlet unit and the compose snippets are the shipped container channel;
+the entrypoint is tested beside them so a broken seed rule fails before an image exists.
+
+### Build the core image
+
+The base digest is a required build argument and is never defaulted (09): read the current one
+for the tag, then build. There is no podman inside the agent's own container; this runs on the
+host or the reference box.
+
+    podman pull -q docker.io/library/debian:sid-slim
+    DIGEST=$(podman image inspect --format '{{.Digest}}' docker.io/library/debian:sid-slim)
+    podman build --build-arg DEBIAN_SID_DIGEST="$DIGEST" \
+      -f packaging/container/Containerfile.core -t daiorama:dev .
+
+The core image has no default command — it is the substrate every shape composes on. The
+desktop image (Chromium plus the session launcher at `/usr/local/bin/daiorama-browser`) builds
+on it once the launcher exists (06); until then a browser started in the core image is unrouted
+and the session reads `renderer: unverified`.
+
+### Run it
+
+One compose file per shape (09). The image reference is digest-pinned at use, and compose
+refuses to start while it is unset:
+
+    export DAIORAMA_IMAGE=localhost/daiorama@sha256:…
+    export DAIORAMA_CONFIG=~/.config/daiorama-container
+    export DAIORAMA_DATA=~/.local/share/daiorama-container
+
+    packaging/compose/manager-only.yml        manager exposing the TCP surface (8756)
+    packaging/compose/manager-and-bridge.yml  manager plus network bridge on one private network
+    packaging/compose/bridge-remote.yml       bare bridge to a remote manager (8757)
+
+    podman-compose -f packaging/compose/manager-only.yml up -d
+
+A published manager port needs `manager.bind` set inside the mounted config volume
+(`daiorama config set manager.bind 0.0.0.0:8756`); without it the manager answers on the unix
+socket only. The bridge shapes read `DAIORAMA_TOKEN`, `DAIORAMA_SCOPE` and
+`DAIORAMA_SCOPE_TOKEN` from `bridge.env` beside the compose file (04, 07). Per-session limits
+want a writable, delegated cgroupfs; the snippets mount it and say where to drop it for the
+`limits.mode off` downgrade (06).
+
+### Quadlet
+
+For hosts that supervise containers with systemd, the same core image as a user Quadlet:
+
+    install -Dm644 packaging/quadlet/daiorama.container ~/.config/containers/systemd/daiorama.container
+    systemctl --user daemon-reload
+    systemctl --user start daiorama
+
+`loginctl enable-linger` applies here too. Edit the unit's `Image=` to the digest-pinned
+reference and its two `Volume=` paths to the host directories you want persisted; the shipped
+paths under `~/.local/share/daiorama-container/` are the defaults, not a requirement.
 
 ## Troubleshooting
 

@@ -14,6 +14,12 @@ const SPEC_09: &str = include_str!("../docs/09-packaging.md");
 const SPEC_10: &str = include_str!("../docs/10-operations.md");
 const IMAGE_NOTE: &str = include_str!("../p5/image/README.md");
 const ENTRYPOINT: &str = include_str!("../packaging/container/entrypoint.sh");
+const COREFILE: &str = include_str!("../packaging/container/Containerfile.core");
+const COMPOSE_MANAGER_ONLY: &str = include_str!("../packaging/compose/manager-only.yml");
+const COMPOSE_MANAGER_AND_BRIDGE: &str =
+    include_str!("../packaging/compose/manager-and-bridge.yml");
+const COMPOSE_BRIDGE_REMOTE: &str = include_str!("../packaging/compose/bridge-remote.yml");
+const QUADLET: &str = include_str!("../packaging/quadlet/daiorama.container");
 
 #[test]
 fn unit_is_a_user_service_that_runs_serve_for_the_instance() {
@@ -309,4 +315,178 @@ fn entrypoint_repairs_an_interrupted_first_seed() {
         !dest.join("stale.js").exists(),
         "the partial tree is replaced, not merged"
     );
+}
+
+/// Strip comment lines so an absence pin tests the file, not its prose.
+fn code_only(text: &str) -> String {
+    text.lines()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            !(trimmed.starts_with('#') || trimmed.starts_with("//"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn core_image_is_a_substrate_with_no_default_command() {
+    // 09: the no-default-CMD rule is scoped to the core image, and the image is substrate.
+    let code = code_only(COREFILE);
+    assert!(
+        !code.contains("CMD "),
+        "the core image carries a default command"
+    );
+    assert!(
+        !code.contains("ENTRYPOINT"),
+        "the core image carries an entrypoint"
+    );
+    // 08's container row: one path set for the manager, the CLI and the compose mounts.
+    for pin in [
+        "XDG_DATA_HOME=/data",
+        "XDG_CONFIG_HOME=/config",
+        "XDG_RUNTIME_DIR=/run",
+    ] {
+        assert!(COREFILE.contains(pin), "core image lost {pin}");
+    }
+}
+
+#[test]
+fn core_image_pins_its_base_by_required_digest() {
+    // 09: the digest is a required build argument, never a checked-in default.
+    assert!(
+        COREFILE.contains("ARG DEBIAN_SID_DIGEST"),
+        "the base digest is not a build argument"
+    );
+    let froms: Vec<&str> = COREFILE
+        .lines()
+        .filter(|line| line.trim_start().starts_with("FROM "))
+        .collect();
+    assert_eq!(
+        froms.len(),
+        2,
+        "expected builder and runtime stages: {froms:?}"
+    );
+    for line in froms {
+        assert!(
+            line.contains("@${DEBIAN_SID_DIGEST}"),
+            "unpinned base in {line}"
+        );
+    }
+}
+
+#[test]
+fn core_image_builds_the_binary_from_source_and_ships_the_tool_set() {
+    // 09's channel table: the container image builds the binary directly.
+    assert!(
+        COREFILE.contains("cargo build --release --locked -p daiorama"),
+        "{COREFILE}"
+    );
+    assert!(
+        COREFILE.contains("COPY --from=build /src/target/release/daiorama /usr/local/bin/daiorama"),
+        "{COREFILE}"
+    );
+    let code = code_only(COREFILE);
+    for package in [
+        "hyprland",
+        "mutter",
+        "wayvnc",
+        "grim",
+        "wf-recorder",
+        "libgbm1",
+        "xwayland",
+        "seatd",
+    ] {
+        assert!(code.contains(package), "core package set lost {package}");
+    }
+    for absent in ["chromium", "foot", "wtype", "wlrctl"] {
+        assert!(!code.contains(absent), "the core image ships {absent}");
+    }
+}
+
+#[test]
+fn compose_shapes_pin_the_image_and_the_sandbox() {
+    for (name, file) in [
+        ("manager-only", COMPOSE_MANAGER_ONLY),
+        ("manager-and-bridge", COMPOSE_MANAGER_AND_BRIDGE),
+        ("bridge-remote", COMPOSE_BRIDGE_REMOTE),
+    ] {
+        // 09 C2: compose pins by digest — the reference is required, never defaulted.
+        assert!(
+            file.contains("${DAIORAMA_IMAGE:?"),
+            "{name} does not require a pinned image"
+        );
+        assert!(file.contains("cap_drop"), "{name} lost cap_drop");
+        assert!(
+            file.contains("no-new-privileges"),
+            "{name} lost no-new-privileges"
+        );
+    }
+    for (name, file) in [
+        ("manager-only", COMPOSE_MANAGER_ONLY),
+        ("manager-and-bridge", COMPOSE_MANAGER_AND_BRIDGE),
+    ] {
+        assert!(
+            file.contains("/dev/dri/renderD128"),
+            "{name} lost the render node"
+        );
+        assert!(
+            file.contains("/sys/fs/cgroup:/sys/fs/cgroup:rw"),
+            "{name} lost the delegation mount"
+        );
+        assert!(
+            file.contains("limits.mode off"),
+            "{name} lost the off-mode escape"
+        );
+    }
+    // The bridge shapes read their credentials from an env file (04, 07).
+    for (name, file) in [
+        ("manager-and-bridge", COMPOSE_MANAGER_AND_BRIDGE),
+        ("bridge-remote", COMPOSE_BRIDGE_REMOTE),
+    ] {
+        assert!(file.contains("bridge.env"), "{name} names no env file");
+        for var in ["DAIORAMA_TOKEN", "DAIORAMA_SCOPE", "DAIORAMA_SCOPE_TOKEN"] {
+            assert!(file.contains(var), "{name} does not document {var}");
+        }
+    }
+}
+
+#[test]
+fn quadlet_wraps_the_core_image_with_the_same_sandbox() {
+    for needle in [
+        "Image=localhost/daiorama:dev",
+        "Exec=daiorama serve",
+        "DropCapability=all",
+        "NoNewPrivileges=true",
+        "AddDevice=/dev/dri/renderD128",
+        "/data:Z",
+        "/config:Z",
+        "PublishPort=127.0.0.1:8756:8756",
+        "PodmanArgs=--cgroupns=host",
+        "WantedBy=default.target",
+    ] {
+        assert!(QUADLET.contains(needle), "quadlet lost {needle}");
+    }
+    // 07/10: credentials live in the data volume, never in a unit file.
+    assert!(!QUADLET.contains("DAIORAMA_TOKEN"), "{QUADLET}");
+}
+
+#[test]
+fn docs_and_runbook_name_the_shipped_container_assets() {
+    for needle in [
+        "packaging/container/Containerfile.core",
+        "packaging/compose/",
+        "packaging/quadlet/daiorama.container",
+        "ARG DEBIAN_SID_DIGEST",
+        "XDG_CONFIG_HOME=/config",
+    ] {
+        assert!(SPEC_09.contains(needle), "09 does not name {needle}");
+    }
+    for needle in [
+        "DEBIAN_SID_DIGEST",
+        "podman build",
+        "podman-compose",
+        "packaging/quadlet/daiorama.container",
+    ] {
+        assert!(README.contains(needle), "runbook lost {needle}");
+    }
 }

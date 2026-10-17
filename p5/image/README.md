@@ -96,8 +96,13 @@ lands the Containerfiles must carry that evidence, not a local build claim:
 
 ## Open items (named, not implied)
 
-- **Digest pinning:** how the sid digest reaches the Containerfile (a `--build-arg` with a
-  checked-in default vs. a release-time bump). Decide in the image PR; do not pin "latest".
+- **Digest pinning (decided):** a required `--build-arg DEBIAN_SID_DIGEST`; **no checked-in
+  default** — a default goes stale silently, and the release manifest records the digest a build
+  actually used. The runbook carries the one-liner that reads it for the tag.
+- **Desktop Containerfile:** lands with the launcher. The desktop artifact copies the launcher to
+  `/usr/local/bin/daiorama-browser`, so a Containerfile naming that path before the file exists
+  ships a browser route that cannot work. The core artifact is
+  `packaging/container/Containerfile.core`; compose shapes and the Quadlet unit wrap it.
 - **`doctor` coverage:** it checks `hyprland`, `wayvnc`, and the asset tree — not `mutter`,
   `grim`, `wf-recorder` or the browser. A missing capture tool surfaces at the first capture,
   not in `doctor`. Adding those checks is a diagnostics slice, tracked separately.

@@ -1,0 +1,27 @@
+# Manager only: one core container answering the TCP manager surface (07).
+# Before the first start, in the /config volume: daiorama config set manager.bind 0.0.0.0:8756
+# — the listener binds beyond loopback only when the key is set, and every call on it
+# carries the instance token.
+services:
+  manager:
+    image: ${DAIORAMA_IMAGE:?set a digest-pinned daiorama core image}
+    command: ["daiorama", "serve"]
+    restart: unless-stopped
+    ports:
+      - "8756:8756"
+      # Views for remote consumers: publish the range and set view.advertise_base (05, 07).
+      # - "6080-6099:6080-6099"
+    volumes:
+      - ${DAIORAMA_CONFIG:?}:/config
+      - ${DAIORAMA_DATA:?}:/data
+      # Per-session limits need a writable, delegated cgroupfs (06). Hosts that cannot
+      # delegate: drop this mount and set limits.mode off; the manager reports limits off.
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    devices:
+      - /dev/dri/renderD128
+    # podman value: keep the host's group membership for the render node (09).
+    group_add: ["keep-groups"]
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    cgroup: host
