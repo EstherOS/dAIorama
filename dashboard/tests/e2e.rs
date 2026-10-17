@@ -264,7 +264,7 @@ fn rebinding_hosts_and_foreign_origins_are_refused() {
 }
 
 #[test]
-fn connections_are_capped_and_a_silent_head_is_closed() {
+fn connections_are_capped() {
     let tmp = tempfile::tempdir().unwrap();
     let config = tmp.path().join("connections.ron");
     std::fs::write(&config, "(version: 1, connections: [])\n").unwrap();
@@ -280,9 +280,20 @@ fn connections_are_capped_and_a_silent_head_is_closed() {
     let mut byte = [0u8; 1];
     let closed = matches!(overflow.read(&mut byte), Ok(0) | Err(_));
     assert!(closed, "over-cap connection must be closed, not served");
-    drop(held);
 
-    // A connection that sends a partial head and stops is closed at the 10 s deadline.
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[test]
+fn a_silent_head_is_closed_at_the_progress_deadline() {
+    // Its own module: a shared instance would let a permit from the cap test's socket still be
+    // in flight, closing this connection early as over-cap (observed 1.15 ms once).
+    let tmp = tempfile::tempdir().unwrap();
+    let config = tmp.path().join("connections.ron");
+    std::fs::write(&config, "(version: 1, connections: [])\n").unwrap();
+    let (mut child, port) = start_module(&config, &ui_dir());
+
     let mut silent = connect_hold(port);
     silent
         .set_read_timeout(Some(Duration::from_secs(14)))
