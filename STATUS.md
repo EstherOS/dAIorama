@@ -12,22 +12,28 @@ are read-when-on pointers)._
   per-request `Daiorama-Token` / `Daiorama-Scope` / `Daiorama-Scope-Token`
   gate, `Host`/`Origin` validation, bounded bodies, MCP-level refusals, a head
   that refuses proxy-disagreement shapes). Scope secrets pin to
-  `<data>/<instance>/scope-tokens/<scope>` (0600). Merged as `spec/v1 @ 7c9d11c`; the strict-head parser and the transport limits (10 s
-  per-read progress timeout, 64-connection cap) follow it.
+  `<data>/<instance>/scope-tokens/<scope>` (0600). Merged as `spec/v1 @ 7c9d11c`; the strict-head parser, the transport limits (10 s
+  per-read progress timeout, 64-connection cap, gate before body) and a total 15 s head
+  window follow it (`spec/v1 @ d7fe685`).
 - **Phase/branches:** P0 **frozen @ `4eeb585`** (paper: `audits/p0/`) · **P1 L1
   green** (`p1/` @ `eb35a4d`) · P2 through `2d83625`; P3 W1 merged
-  (`p3/bridge/*` → `spec/v1 @ 7c9d11c`).
+  (`p3/bridge/*` → `spec/v1 @ d7fe685`).
 - **Repo target:** fork workflow (`EstherOS/dAIorama`); upstream
   `ygypt/dAIorama` takes our PRs post-sign-off.
-- **Last green:** W1b + strict-head tree — 163 (+5 ignored) unit · 4 daemon ·
-  2 doctor · 27 fixtures · 7 mcp · 13 mcp_listen, fmt/clippy clean; raw-HTTP
+- **Last green:** W1b + transport tree — 165 (+5 ignored) unit · 4 daemon ·
+  2 doctor · 27 fixtures · 7 mcp · 14 mcp_listen, fmt/clippy clean; raw-HTTP
   battery green (`p3/listen/evidence/probe-http.txt`), transport-limit drill green
-  (`p3/listen/evidence/probe-timeout.txt`).
+  (`p3/listen/evidence/probe-timeout.txt`), head-deadline drill green
+  (`p3/listen/evidence/probe-head-deadline.txt`).
 - **Next:** W2 media/runtime calls (runtime side) and the capture tools on the
   bridge surface.
 - **Open (tracked, not omitted):** L3 llvmpipe lane (waits on the operator's
   workflow token scope) · L2 NVIDIA/CDI (operator's call) · rate-limit numbers
   → P4 · per-family GPU recipes · resize/scale path · renderer re-verification
   of the L2 image · `/media/*` pass-through on the network listener (rides the
-  capture tools, W2) · a head dribbled slower than the per-read bound can hold a slot
-  past it (measured 14 s); a total head-phase deadline is the follow-up.
+  capture tools, W2) · a body trickled a byte at a time can still hold a
+  connection slot (a total-body deadline was rejected for authentic slow
+  uploads; measured as WATCH in `probe-head-deadline.txt`) · a refused request
+  that bursts a large body without `Expect` can lose the refusal's JSON body
+  (4 MiB; 256 KiB/1 MiB intact — bounded lingering close is the follow-up,
+  `P3-TRANSPORT-FU`).

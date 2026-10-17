@@ -1,0 +1,14 @@
+bin=daiorama
+port=18761 manager_pid=242330 bridge_pid=242336
+mode=after
+
+=== a head dribbled one line every 2 s ===
+[OK]   the dribbled head dies at the head deadline :: closed after 15.00s, bytes=0
+
+=== a head written in one go ===
+[OK]   a normal head still answers :: HTTP/1.1 200 OK
+
+=== WATCH: a body trickled 1 byte / 2 s (not fixed here) ===
+[WATCH]  a trickled body holds the slot :: open after 25.03s (bytes=0; one byte every 2 s is progress, so no bound fires)
+
+FAILS=0

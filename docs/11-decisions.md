@@ -535,6 +535,24 @@ legal while bytes keep flowing. The cap bounds the fd set; over-cap sockets are 
 *Rejected:* a total-body deadline (60 s covers 8 MiB at ~1.1 Mbps but punishes a slow upload that
 is making progress); answering a stalled request with 408 (the peer is gone).
 
+## A head must arrive inside a total window
+
+Once the request line has arrived, the rest of the head must arrive within 15 s; a head dribbled
+one line at a time is closed with nothing written. The 10 s progress bound is per line, so a
+client writing a short line every few seconds never stalls long enough to fire it and held a
+connection slot until it chose to finish (`p3/listen/evidence/probe-head-deadline.txt`: answered
+at 24.01 s before, closed at 15.00 s after).
+
+*Rationale:* a head is at most 64 KiB and a real client writes it in one go; 15 s is 1.5× the
+progress bound and far above any real pause. The clock starts after the request line (itself
+bounded by the progress bound), so an idle kept-alive connection still closes at 10 s, and a
+complete head is unaffected. The same trickle one layer down — a body written a byte at a time —
+still holds a slot; it is recorded in the evidence README rather than silently fixed, because the
+total-body deadline it needs was rejected above for authentic slow uploads.
+
+*Rejected:* counting the window from accept (an idle keep-alive pause would eat it); answering
+the cut with 408 (the peer is gone, like the progress bound).
+
 ## The identity gate answers before the body is read
 
 `authenticate` runs on the head alone, before any body byte is read or parsed. An unauthenticated
@@ -542,8 +560,10 @@ caller gets `token_required` (or `scope_auth_required`) even when the body is ma
 parser is not reachable without credentials, and its errors leak nothing.
 
 *Rationale:* the adversarial pass (WATCH) found the body parsed before the gate — no creds plus
-malformed JSON answered a parse error, so unauthenticated callers exercised the JSON parser. On a
-gate failure the declared body is still drained, so the next kept-alive request starts at a frame
-boundary; an over-cap body ends the connection instead.
+malformed JSON answered a parse error, so unauthenticated callers exercised the JSON parser. A
+gate failure answers `Connection: close` and ends the connection: a client that sent
+`Expect: 100-continue` stops on the refusal, so no phantom body is left to be read as the next
+request's head, and keep-alive after a refused auth buys nothing. An over-cap body ends the
+connection too.
 
 *Rejected:* gating only `tools/call` (leaves the parser reachable through other request shapes).

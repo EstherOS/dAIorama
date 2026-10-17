@@ -36,6 +36,14 @@ const MAX_HEAD_BYTES: usize = 64 * 1024;
 /// the manager connect timeout, and far above any real pause; an idle keep-alive close is
 /// invisible to HTTP clients, they reconnect.
 const PROGRESS_TIMEOUT: Duration = Duration::from_secs(10);
+/// Once the request line has arrived, the rest of the head must arrive within this window.
+/// A per-line bound alone lets a client that writes one short header line every few seconds
+/// hold a connection slot indefinitely: every line makes progress, so `PROGRESS_TIMEOUT` never
+/// fires. A head is at most `MAX_HEAD_BYTES` and a real client writes it in one go; 15 s is
+/// 1.5× the progress bound and far above any real pause. The clock starts after the request
+/// line (itself bounded by the progress timeout), so an idle kept-alive connection waits on
+/// the progress bound alone.
+const HEAD_DEADLINE: Duration = Duration::from_secs(15);
 /// Bound on concurrent connections, so the fd set stays bounded no matter how fast a caller
 /// opens sockets. Over-cap connections are closed on accept.
 const MAX_CONNECTIONS: usize = 64;
@@ -158,11 +166,22 @@ where
 {
     let mut lines = Vec::new();
     let mut total = 0usize;
+    // The head's clock starts once the request line has arrived: an idle kept-alive
+    // connection is the progress bound's business, and the request line is bounded by it too.
+    let mut started: Option<tokio::time::Instant> = None;
     loop {
         let mut line = Vec::new();
-        let read = match tokio::time::timeout(PROGRESS_TIMEOUT, input.read_until(b'\n', &mut line))
-            .await
-        {
+        let budget = match started {
+            None => PROGRESS_TIMEOUT,
+            Some(started) => {
+                let remaining = HEAD_DEADLINE.saturating_sub(started.elapsed());
+                if remaining.is_zero() {
+                    return Ok(HeadRead::Timeout);
+                }
+                PROGRESS_TIMEOUT.min(remaining)
+            }
+        };
+        let read = match tokio::time::timeout(budget, input.read_until(b'\n', &mut line)).await {
             Ok(result) => result?,
             // A head that stalls mid-line is a dead peer, not a slow one: close.
             Err(_elapsed) => return Ok(HeadRead::Timeout),
@@ -170,6 +189,7 @@ where
         if read == 0 {
             return Ok(HeadRead::Eof);
         }
+        started.get_or_insert_with(tokio::time::Instant::now);
         total += read;
         if total > MAX_HEAD_BYTES {
             return Ok(HeadRead::TooLarge);
@@ -707,6 +727,51 @@ mod tests {
         assert!(!secret_matches("abc", "abd"));
         assert!(!secret_matches("abc", "abcd"));
         assert!(!secret_matches("", "abc"));
+    }
+
+    /// A head dribbled one line at a time never stalls long enough for the per-line progress
+    /// bound, so it used to hold a connection slot until the client chose to finish. The head
+    /// now has its own total window, counted from the request line.
+    #[tokio::test(start_paused = true)]
+    async fn a_dribbled_head_dies_at_the_head_deadline() {
+        let (mut peer, server) = tokio::io::duplex(1024);
+        tokio::spawn(async move {
+            if peer.write_all(b"POST /mcp HTTP/1.1\r\n").await.is_err() {
+                return;
+            }
+            for i in 0..12 {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                let line = format!("X-Pad-{i:02}: 1\r\n");
+                if peer.write_all(line.as_bytes()).await.is_err() {
+                    return;
+                }
+            }
+            let _ = peer.write_all(b"\r\n").await;
+        });
+        let mut input = tokio::io::BufReader::new(server);
+        let started = tokio::time::Instant::now();
+        let outcome = read_head(&mut input).await.unwrap();
+        assert!(
+            matches!(outcome, HeadRead::Timeout),
+            "a dribbled head is cut off, not waited out"
+        );
+        assert_eq!(
+            started.elapsed(),
+            HEAD_DEADLINE,
+            "the cut lands exactly on the pinned window"
+        );
+    }
+
+    /// The head clock starts after the request line: a kept-alive connection with nothing to
+    /// say is still closed by the progress bound, not by the head window.
+    #[tokio::test(start_paused = true)]
+    async fn an_idle_connection_waits_on_the_progress_bound() {
+        let (_peer, server) = tokio::io::duplex(1024);
+        let mut input = tokio::io::BufReader::new(server);
+        let started = tokio::time::Instant::now();
+        let outcome = read_head(&mut input).await.unwrap();
+        assert!(matches!(outcome, HeadRead::Timeout));
+        assert_eq!(started.elapsed(), PROGRESS_TIMEOUT);
     }
 
     #[test]

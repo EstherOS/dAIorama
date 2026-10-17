@@ -39,3 +39,20 @@ closes an idle kept-alive connection, a stalled head and a stalled body, each at
 | stalled body | close at ~10 s | 10.00 s |
 
 `FAILS=0`.
+
+## probe-head-deadline.txt — the total head window
+
+The progress bound is per read, so a head dribbled one short line at a time never stalls long
+enough to fire it: every line makes progress, and the slot is held until the client chooses to
+finish. `probe-head-deadline.py` measures the whole head phase.
+
+| Check | Before | After |
+|---|---|---|
+| head dribbled one line every 2 s | answered at 24.01 s (client chose to finish) | connection closed at 15.00 s, nothing written |
+| head written in one go | 200 | 200 |
+
+The WATCH line is the same shape one layer down and is **not** fixed here: a body trickled one
+byte every 2 s is progress by the per-read bound, so the slot is still held (observed past 25 s).
+A total body deadline was rejected for slow authentic uploads (`docs/11`); the honest state is
+that a trickled body can still hold a slot — recorded so it is a decision, not an oversight.
+
