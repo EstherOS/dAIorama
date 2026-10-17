@@ -25,6 +25,10 @@ bounded time and connects instead; if the winner died pre-bind, the loser
 `systemd-run --user … -p Delegate=yes` is the cgroup-delegation path and a
 *scope*: it does not sweep on manager death — say so when using it.
 `daemon start` (no supervisor) is dev convenience (terminal-scoped, below).
+The shipped unit is `packaging/systemd/daiorama@.service` — a service with
+`Delegate=yes`, so one unit carries both the sweep and the delegated subtree;
+the `systemd-run` scope stays the ad-hoc path. Install and upgrade steps are in
+`packaging/README.md`.
 
 ## Stopping
 

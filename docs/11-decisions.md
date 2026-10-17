@@ -877,3 +877,34 @@ fragment.
 `set` do not address scopes); an implicit `dashboard` scope created by the dashboard's first
 use (the reserved name is created explicitly, never as a side effect); a `--grant` flag on
 create (grants are the security-relevant part and stay a file edit under review).
+
+## P5-PACKAGING — the bare-host unit
+
+The bare-host channel (09) ships one systemd **user** unit, a template:
+`packaging/systemd/daiorama@.service`, `ExecStart=%h/.local/bin/daiorama serve
+--instance %i`. `KillMode=control-group` makes a unit stop sweep the manager's
+whole session tree, and `Delegate=yes` gives the manager the cgroup subtree the
+per-session limits need (06) — a service can carry both, where the `systemd-run`
+scope carries delegation without the sweep (10). `Restart=on-failure` brings a
+crashed manager back as an empty manager; sessions never survive a restart
+(01, 10), so nothing is silently resurrected. The unit holds no `Environment=`
+secrets: the token and scope secrets live in their 0600 files (07), and an
+environment line would also expose them through `systemctl show`. It runs no
+`ExecStartPre` directory creation because 08 single-sources directory creation
+in the binary — the same rule that keeps the image entrypoint from duplicating
+it.
+
+*Rationale:* instances are first-class in 08 (per-instance config, data, and
+socket), so supervision is per instance and `%i` is the only thing that varies;
+a template keeps one file for N instances and names the instance in `status` and
+the journal. The runbook reads the shipped unit back (a reader test pins
+`serve`, `KillMode=control-group`, `Delegate=yes`, no secret) so operator-facing
+wording cannot drift from an edit.
+*Rejected:* a system-wide unit (needs a fixed user account and loses the user
+runtime dir that 08's socket path assumes); an instance-less unit with a copied
+file per instance (config drift for no gain); `daemon start` inside the unit (a
+supervisor already provides detachment — nesting the detached form under it is
+the layering error 10 warns about); `Restart=always` (a clean stop is a decision,
+not a failure); auto-creating the noVNC tree in `ExecStartPre` (that install step
+belongs to the packaging slice that ships it, and 08 keeps directory creation
+in-binary).

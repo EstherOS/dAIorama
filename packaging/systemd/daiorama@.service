@@ -1,0 +1,17 @@
+[Unit]
+Description=dAIorama manager (instance %i)
+Documentation=https://github.com/ygypt/dAIorama/tree/main/docs
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/daiorama serve --instance %i
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=30
+# Stopping the unit sweeps the manager and every session process below it (10).
+KillMode=control-group
+# Delegated cgroup: per-session limits live below this unit (06, 10).
+Delegate=yes
+
+[Install]
+WantedBy=default.target
