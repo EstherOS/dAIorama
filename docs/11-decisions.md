@@ -908,3 +908,37 @@ the layering error 10 warns about); `Restart=always` (a clean stop is a decision
 not a failure); auto-creating the noVNC tree in `ExecStartPre` (that install step
 belongs to the packaging slice that ships it, and 08 keeps directory creation
 in-binary).
+
+## P5-NOVNC — the view asset tree is staged data, and `doctor` reports it
+
+The view front has always served a static tree from `<data>/novnc` (07, `Paths::novnc_dir`),
+and 09 called the assets "shipped with the core (embedded)" — one of those had to give. The
+code wins: **the tree is staged data**, installed with `packaging/novnc/fetch.sh` (pinned noVNC
+v1.7.0, artifact sha256 `b1003a11…`, 129 files) into the instance's data root, and the front
+refuses `view_unavailable` with its pinned message until the entry point (`vnc.html`) exists.
+`doctor` gains an `assets:` section that reads exactly that entry point: installed names the
+path; missing prints the front's refusal verbatim plus `install: packaging/novnc/fetch.sh
+<path>`. The staging script moved from the P5 sourcing note into `packaging/novnc/` — the
+install mechanism belongs to the packaging channel — while `p5/novnc/README.md` stays the
+sourcing record (pin, licence split, why the npm package cannot serve the front).
+
+*Rationale:* the binary already resolves a data path per instance (08), so embedding 1.6 MiB
+of MPL-2.0/BSD/OFL/CC-BY-SA assets into it would duplicate what the front already reads and
+would tie licence obligations to every binary release; staging lets the tree upgrade
+independently of the core version. The 503 already names the expected path, so its exit path
+is one command, and the doctor line is the same string the operator sees in the browser —
+wording drift between the two fails the build (the reader pin). Reading the entry point, not
+merely the directory, matches the front's own test: a directory without `vnc.html` serves
+nothing, so `doctor` must not call it installed.
+
+*Rejected:* embedding the tree in the binary (asset churn couples to core releases; the front
+still resolves a filesystem path, so the embed would be dead weight); installing from the npm
+`@novnc/novnc` package (its `files` list omits `vnc.html` and `app/`, so the front's lookup
+fails — recorded in the sourcing note); auto-staging in the unit's `ExecStartPre` (08 keeps
+directory creation in-binary, and a systemd unit is not the only deployment shape); a new
+`daiorama assets install` command (a download+verify surface this phase does not need — the
+script is the mechanism, and releases will carry its hash in the manifest).
+
+*Open:* whether the signed release manifest carries the noVNC tarball hash as its own row
+or the installer re-derives it from the core manifest. Nothing in this slice depends on the
+answer: the script's pin is fixed, and releases do not exist yet.

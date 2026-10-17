@@ -10,6 +10,9 @@
 //!   facts (the manager socket's pinned home, 08).
 //! - `containment:` — the same delegation check the manager start runs before binding (06
 //!   C6), through the existing probe; a failing check carries the pinned fix string.
+//! - `assets:` — the view asset tree at `<data>/novnc` (07/09): present, or the front's pinned
+//!   `view_unavailable` message plus the staging command that fixes it. The check reads the
+//!   entry point the front actually looks up (`vnc.html`), not merely the directory.
 //!
 //! Out of this layer's remit by design: the in-container renderer verification and the
 //! GPU-family detection stay runtime-side (03/09; `fixtures/README.md` §Containment classes).
@@ -87,12 +90,29 @@ struct DoctorFacts {
     wayland_display: Option<String>,
     runtime_dir: RuntimeDirFacts,
     containment: Result<String, String>,
+    assets: AssetFacts,
     os: OsFacts,
 }
 
+/// The view asset tree (07): the front serves `<data>/novnc` and looks up `vnc.html`; 09 owns
+/// staging it. `installed` is the front's own test — the entry point, not the directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AssetFacts {
+    path: PathBuf,
+    installed: bool,
+}
+
+impl AssetFacts {
+    fn probe(path: PathBuf) -> Self {
+        let installed = path.join("vnc.html").is_file();
+        Self { path, installed }
+    }
+}
+
 impl DoctorFacts {
-    /// Probe the real machine.
-    fn gather() -> Self {
+    /// Probe the real machine. The asset root follows 08 like every other data path, so
+    /// `--instance` selects the tree the matching manager would serve.
+    fn gather(instance: &str) -> Self {
         let hyprland = find_tool("Hyprland").map(|path| {
             let version = hyprland_version(&path, find_tool("hyprctl").as_deref());
             ToolFacts { path, version }
@@ -113,12 +133,14 @@ impl DoctorFacts {
             _ => RuntimeDirFacts::Unset,
         };
         let containment = LinuxCgroupProbe::new().probe().map(|d| d.detail);
+        let assets = AssetFacts::probe(crate::config::Paths::from_process(instance).novnc_dir());
         Self {
             hyprland,
             wayvnc,
             wayland_display,
             runtime_dir,
             containment,
+            assets,
             os: OsFacts::detect(),
         }
     }
@@ -287,8 +309,8 @@ fn resolve_install(package: Package, os: &OsFacts) -> String {
 // ---------------------------------------------------------------------------
 
 /// Probe this machine and render the report.
-pub fn report() -> Answer {
-    render(&DoctorFacts::gather())
+pub fn report(instance: &str) -> Answer {
+    render(&DoctorFacts::gather(instance))
 }
 
 fn render(facts: &DoctorFacts) -> Answer {
@@ -299,6 +321,8 @@ fn render(facts: &DoctorFacts) -> Answer {
     lines.extend(wayland_lines(facts));
     lines.push(strings::DOCTOR_CONTAINMENT_LABEL.to_string());
     lines.push(containment_line(facts));
+    lines.push(strings::DOCTOR_ASSETS_LABEL.to_string());
+    lines.extend(assets_lines(facts));
     let payload = json!({
         "tools": {
             "hyprland": tool_json(
@@ -317,6 +341,7 @@ fn render(facts: &DoctorFacts) -> Answer {
             Ok(detail) => json!({"ok": true, "detail": detail}),
             Err(detail) => json!({"ok": false, "detail": detail}),
         },
+        "assets": assets_json(facts),
     });
     Answer::new(payload, lines)
 }
@@ -403,6 +428,34 @@ fn containment_line(facts: &DoctorFacts) -> String {
     }
 }
 
+/// The asset section's lines: installed names the tree the front will serve; missing carries
+/// the front's own refusal verbatim (the operator greps the same string in the 503) and the
+/// staging command that resolves it.
+fn assets_lines(facts: &DoctorFacts) -> Vec<String> {
+    let path = facts.assets.path.display().to_string();
+    if facts.assets.installed {
+        vec![format!("  noVNC: installed at {path}")]
+    } else {
+        vec![
+            format!("  {}", strings::VIEW_ASSETS_MISSING),
+            format!("  {}", strings::novnc_install_hint(&path)),
+        ]
+    }
+}
+
+fn assets_json(facts: &DoctorFacts) -> Value {
+    let path = facts.assets.path.display().to_string();
+    json!({
+        "path": path,
+        "installed": facts.assets.installed,
+        "install": if facts.assets.installed {
+            Value::Null
+        } else {
+            json!(strings::novnc_install_hint(&path))
+        },
+    })
+}
+
 fn tool_json(tool: Option<&ToolFacts>, supported: Option<bool>, install: String) -> Value {
     match tool {
         Some(tool) => json!({
@@ -460,6 +513,10 @@ mod tests {
                 writable: true,
             },
             containment: Ok("delegated: cpu memory pids already enabled".to_string()),
+            assets: AssetFacts {
+                path: PathBuf::from("/home/agent/.local/share/daiorama/default/novnc"),
+                installed: true,
+            },
             os: OsFacts {
                 id: "arch".to_string(),
             },
@@ -550,6 +607,11 @@ mod tests {
             answer.human[8],
             "  ok — delegated: cpu memory pids already enabled"
         );
+        assert_eq!(answer.human[9], strings::DOCTOR_ASSETS_LABEL);
+        assert_eq!(
+            answer.human[10],
+            "  noVNC: installed at /home/agent/.local/share/daiorama/default/novnc"
+        );
         assert_eq!(
             answer.payload["tools"]["hyprland"]["supported"],
             json!(true)
@@ -557,6 +619,32 @@ mod tests {
         assert_eq!(
             answer.payload["containment"],
             json!({"ok": true, "detail": "delegated: cpu memory pids already enabled"})
+        );
+        assert_eq!(answer.payload["assets"]["installed"], json!(true));
+        assert_eq!(answer.payload["assets"]["install"], Value::Null);
+    }
+
+    #[test]
+    fn report_names_the_staging_step_when_assets_are_missing() {
+        let mut facts = base_facts();
+        facts.assets.installed = false;
+        let answer = render(&facts);
+        let lines = &answer.human;
+        assert_eq!(lines[9], strings::DOCTOR_ASSETS_LABEL);
+        // The front's refusal verbatim: the operator sees the same string in the 503.
+        assert_eq!(lines[10], format!("  {}", strings::VIEW_ASSETS_MISSING));
+        assert_eq!(
+            lines[11],
+            "  install: packaging/novnc/fetch.sh \
+             /home/agent/.local/share/daiorama/default/novnc"
+        );
+        assert_eq!(answer.payload["assets"]["installed"], json!(false));
+        assert_eq!(
+            answer.payload["assets"]["install"],
+            json!(
+                "install: packaging/novnc/fetch.sh \
+                 /home/agent/.local/share/daiorama/default/novnc"
+            )
         );
     }
 

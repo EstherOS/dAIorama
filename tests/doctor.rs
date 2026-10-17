@@ -88,3 +88,57 @@ fn doctor_reads_fake_tool_versions_both_human_and_json() {
     assert_eq!(payload["tools"]["wayvnc"]["version"], "0.9.1");
     assert!(payload["containment"]["ok"].is_boolean());
 }
+
+#[test]
+fn doctor_reports_the_view_asset_tree_and_the_staging_step() {
+    // 09/10: the asset tree is data the operator stages once; doctor is where a missing tree
+    // is diagnosed, and it must name the command that fixes it.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bin = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+
+    let out = run_with_path(tmp.path(), &bin, &["doctor"]);
+    assert!(out.status.success(), "doctor exits 0: {out:?}");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("\nassets:\n"), "{text}");
+    assert!(
+        text.contains("view assets not installed (expected <data>/novnc)"),
+        "{text}"
+    );
+    assert!(
+        text.contains("install: packaging/novnc/fetch.sh "),
+        "{text}"
+    );
+
+    let out = run_with_path(tmp.path(), &bin, &["doctor", "--json"]);
+    let payload: serde_json::Value = serde_json::from_slice(&out.stdout).expect("payload parses");
+    assert_eq!(payload["assets"]["installed"], false);
+    assert!(
+        payload["assets"]["path"]
+            .as_str()
+            .expect("path is a string")
+            .ends_with("daiorama/default/novnc")
+    );
+    assert!(
+        payload["assets"]["install"]
+            .as_str()
+            .expect("install is a string")
+            .starts_with("install: packaging/novnc/fetch.sh ")
+    );
+
+    // The front's own lookup is the entry point: the directory alone is not installed.
+    let assets = tmp.path().join("data/daiorama/default/novnc");
+    std::fs::create_dir_all(&assets).unwrap();
+    let out = run_with_path(tmp.path(), &bin, &["doctor"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("view assets not installed"),
+        "a bare directory must not read as installed: {text}"
+    );
+
+    std::fs::write(assets.join("vnc.html"), "<!doctype html>\n").unwrap();
+    let out = run_with_path(tmp.path(), &bin, &["doctor"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("noVNC: installed at "), "{text}");
+    assert!(!text.contains("view assets not installed"), "{text}");
+}
