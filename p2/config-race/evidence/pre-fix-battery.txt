@@ -1,0 +1,88 @@
+
+--- a parallel cross-talk + liveness ---
+workers=24 x 40 reqs; errors=0
+liveness probe 0: 0.6 ms ok=True
+liveness probe 1: 0.8 ms ok=True
+liveness probe 2: 0.9 ms ok=True
+liveness probe 3: 0.9 ms ok=True
+liveness probe 4: 0.9 ms ok=True
+>>> no cross-talk; all responses matched; live under load <<<
+
+--- b fd churn ---
+fds baseline=11
+after 200 bare connect/close: 22 -> 11
+after 200 handshaked connect/close: 11
+liveness after churn: {"result":{"instance_id":"8c7f3016-c9b5-43cc-8f89-636da277e923","min_supported":...
+
+--- c config lost-update race (rpc/rpc) ---
+small file: 4 rounds x 250 iters each, monitors on both keys
+round 0: violations=801 final LOST (A want 449, B want 269)
+    monitor saw sessions.max_global regress 200 -> 16
+    monitor saw history.segments regress 22 -> 20
+    monitor saw history.segments regress 22 -> 20
+    monitor saw history.segments regress 22 -> 20
+    err: history.segments: {"error":{"code":"bad_request","message":"config load error: 1:1: Expected opening `(` for struct `CoreConfig`","hint":"...
+    err: sessions.max_global: {"error":{"code":"bad_request","message":"config load error: 1:1: Expected opening `(` for struct `CoreConfig`","hint":"...
+    err: history.segments: {"error":{"code":"bad_request","message":"config load error: 1:1: Expected opening `(` for struct `CoreConfig`","hint":"...
+    err: sessions.max_global: {"error":{"code":"bad_request","message":"config load error: 1:1: Expected opening `(` for struct `CoreConfig`","hint":"...
+round 1: violations=329 final LOST (A want 449, B want 269)
+    monitor saw sessions.max_global regress 449 -> 200
+    monitor saw history.segments regress 25 -> 21
+    monitor saw sessions.max_global regress 449 -> 200
+    monitor saw history.segments regress 25 -> 21
+    err: history.segments: {"error":{"code":"bad_request","message":"config load error: 1:1: Expected opening `(` for struct `CoreConfig`","hint":"...
+    err: sessions.max_global: {"error":{"code":"bad_request","message":"config load error: 1:1: Expected opening `(` for struct `CoreConfig`","hint":"...
+    err: history.segments #23: {"error":{"code":"bad_request","message":"config load error: 1:1: Expected opening `(` for struct `CoreConfig`","hint":"check the request against 'daiorama <command> --help'"}}
+    err: history.segments: {"error":{"code":"bad_request","message":"config load error: 1:1: Expected opening `(` for struct `CoreConfig`","hint":"...
+round 2: violations=322 final LOST (A want 449, B want 269)
+    monitor saw sessions.max_global regress 449 -> 201
+    monitor saw sessions.max_global regress 449 -> 203
+    monitor saw sessions.max_global regress 449 -> 205
+    monitor saw sessions.max_global regress 449 -> 206
+    err: history.segments #5: {"error":{"code":"bad_request","message":"config load error: 1:1: Expected opening `(` for struct `CoreConfig`","hint":"check the request against 'daiorama <command> --help'"}}
+    err: sessions.max_global: {"error":{"code":"bad_request","message":"config load error: 1:1: Expected opening `(` for struct `CoreConfig`","hint":"...
+    err: history.segments: {"error":{"code":"bad_request","message":"config load error: 1:1: Expected opening `(` for struct `CoreConfig`","hint":"...
+    err: history.segments: {"error":{"code":"bad_request","message":"config load error: 1:1: Expected opening `(` for struct `CoreConfig`","hint":"...
+round 3: violations=330 final LOST (A want 449, B want 269)
+    monitor saw history.segments regress 24 -> 20
+    monitor saw history.segments regress 24 -> 20
+    monitor saw history.segments regress 24 -> 21
+    monitor saw history.segments regress 24 -> 22
+    err: history.segments: {"error":{"code":"bad_request","message":"config load error: 1:1: Expected opening `(` for struct `CoreConfig`","hint":"...
+    err: sessions.max_global: {"error":{"code":"bad_request","message":"config load error: 1:1: Expected opening `(` for struct `CoreConfig`","hint":"...
+    err: history.segments: {"error":{"code":"bad_request","message":"config load error: 1:1: Expected opening `(` for struct `CoreConfig`","hint":"...
+    err: sessions.max_global: {"error":{"code":"bad_request","message":"config load error: 1:1: Expected opening `(` for struct `CoreConfig`","hint":"...
+>>> 4/4 rounds showed lost updates <<<
+
+--- c2 config race wide file ---
+set view.advertise_base big: ok
+wide file (~256 KiB): 2 rounds x 40 iters each
+round 0: violations=4010 final LOST (A want 239, B want 59)
+    monitor saw sessions.max_global regress 449 -> 200
+    monitor saw sessions.max_global regress 449 -> 200
+    monitor saw sessions.max_global regress 449 -> 200
+    monitor saw sessions.max_global regress 449 -> 200
+    err: history.segments: {"error":{"code":"bad_request","message":"config load error: 15:30-15:31: Expected end of string","hint":"check the requ...
+    err: sessions.max_global: {"error":{"code":"bad_request","message":"config load error: 15:30-15:31: Expected end of string","hint":"check the requ...
+    err: sessions.max_global: {"error":{"code":"bad_request","message":"config load error: 15:30-15:31: Expected end of string","hint":"check the requ...
+    err: history.segments: {"error":{"code":"bad_request","message":"config load error: 1:1: Expected opening `(` for struct `CoreConfig`","hint":"...
+round 1: violations=2783 final OK (A want 239, B want 59)
+    monitor saw sessions.max_global regress 234 -> 200
+    monitor saw sessions.max_global regress 234 -> 200
+    monitor saw history.segments regress 59 -> 20
+    monitor saw history.segments regress 59 -> 20
+    err: sessions.max_global: {"error":{"code":"bad_request","message":"config load error: 1:1: Expected opening `(` for struct `CoreConfig`","hint":"...
+    err: history.segments: {"error":{"code":"bad_request","message":"config load error: 1:1: Expected opening `(` for struct `CoreConfig`","hint":"...
+    err: history.segments: {"error":{"code":"bad_request","message":"config load error: 1:1: Expected opening `(` for struct `CoreConfig`","hint":"...
+    err: history.segments: {"error":{"code":"bad_request","message":"config load error: 15:30-15:31: Expected end of string","hint":"check the requ...
+>>> 2/2 rounds showed lost updates <<<
+
+--- d config race cross-process (cli/rpc) ---
+sessions.max_global (cli writer) want=529 got=529
+history.segments (rpc writer) want=429 got=429
+>>> cross-process: both kept <<<
+
+--- e torn read (get during write) ---
+reader: ok=400 err=0
+
+all probes done

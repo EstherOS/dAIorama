@@ -428,3 +428,22 @@ a dedicated `method_not_found` code (permanent wire surface added for a transien
 `bad_request` is the class that exists); listing valid names in the message (the pinned list
 lives in the fixture README; the offending name is the payload); a hint on either refusal (there
 is no corrective step to name).
+
+### Hardening — config writes: one writer at a time, atomic replace · adopted · home: 08
+
+Writers of a core-config file serialize on a cross-process `flock` (`<config>.lock`,
+kernel-released on crash — the manager-lock pattern, 10) held across the whole
+read-modify-write; the one entry is `config::update_config`, used by both `config set` paths
+(local CLI and the manager's RPC arm). The write itself replaces the file atomically (temp
+sibling + `rename`): a reader — `config get`, a reload, another process — sees the old file or
+the new one, never a partial, and a crash mid-write cannot truncate it.
+
+*Rationale:* found live by the fourth stress pass (concurrency battery, `p2/config-race/`). The
+truncating in-place RMW lost updates between overlapping writers (hundreds of in-act
+regressions per round; a cross-process CLI/RPC pair lost a write), tore reads mid-write (RON
+parse errors on a live manager), and one run left the file persistently unparseable — an
+unreadable core config blocks every later read and write, sessions included, until hand-repair.
+*Rejected:* an in-process mutex only (the local CLI path races a manager across processes);
+an `O_EXCL` lockfile (stale after a crash — the reason the runtime lock is flock, 10);
+treating parse errors as transient and retrying (the race heals as data loss, and corruption
+does not heal at all).

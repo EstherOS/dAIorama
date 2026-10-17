@@ -1,0 +1,2 @@
+config load error: 36:2: Non-whitespace trailing characters (bad_request)
+hint: check the request against 'daiorama <command> --help'

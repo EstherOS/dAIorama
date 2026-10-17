@@ -506,6 +506,9 @@ impl CoreConfig {
     }
 
     /// Write the file (creating parents), 0600 like the rest of the per-instance state.
+    /// The write replaces the file atomically (temp sibling + `rename`): a concurrent
+    /// reader — `config get`, a reload, another process — sees the old file or the new
+    /// one, never a half-written one, and a crash mid-write cannot truncate the original.
     pub fn save(&self, path: &Path) -> Result<(), ErrorEnvelope> {
         use std::os::unix::fs::PermissionsExt;
         if let Some(parent) = path.parent() {
@@ -514,11 +517,17 @@ impl CoreConfig {
             })?;
         }
         let text = self.to_ron()?;
-        std::fs::write(path, text).map_err(|err| {
-            ErrorEnvelope::bad_request(format!("cannot write {}: {err}", path.display()))
+        let tmp = path.with_extension(format!("ron.tmp-{}", std::process::id()));
+        std::fs::write(&tmp, text).map_err(|err| {
+            ErrorEnvelope::bad_request(format!("cannot write {}: {err}", tmp.display()))
         })?;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|err| {
-            ErrorEnvelope::bad_request(format!("cannot set mode on {}: {err}", path.display()))
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)).map_err(|err| {
+            let _ = std::fs::remove_file(&tmp);
+            ErrorEnvelope::bad_request(format!("cannot set mode on {}: {err}", tmp.display()))
+        })?;
+        std::fs::rename(&tmp, path).map_err(|err| {
+            let _ = std::fs::remove_file(&tmp);
+            ErrorEnvelope::bad_request(format!("cannot replace {}: {err}", path.display()))
         })
     }
 
@@ -539,6 +548,64 @@ impl CoreConfig {
         }
         Ok(())
     }
+}
+
+// ---------------------------------------------------------------------------
+// Serialized writes (P2 hardening — the config-write race)
+// ---------------------------------------------------------------------------
+
+/// Cross-process write lock for one core-config file: an exclusive `flock` on a sibling
+/// `<file>.lock`, held across a whole read-modify-write. Kernel-released on crash — the same
+/// pattern as the manager's runtime lock (10), never an `O_EXCL` lockfile.
+pub struct ConfigWriteLock {
+    _file: std::fs::File,
+}
+
+/// Take the config write lock, creating the config dir and the lock file if needed.
+/// Blocking: the holder only ever holds it for one load-modify-save cycle (µs–ms), and a
+/// crashed holder releases at the kernel's discretion.
+pub fn lock_config_write(path: &Path) -> Result<ConfigWriteLock, ErrorEnvelope> {
+    use std::os::unix::fs::PermissionsExt;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| {
+            ErrorEnvelope::bad_request(format!("cannot create {}: {err}", parent.display()))
+        })?;
+    }
+    let lock_path = path.with_extension("lock");
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|err| {
+            ErrorEnvelope::bad_request(format!("cannot open {}: {err}", lock_path.display()))
+        })?;
+    let _ = std::fs::set_permissions(&lock_path, std::fs::Permissions::from_mode(0o600));
+    use std::os::unix::io::AsRawFd;
+    let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
+    if rc != 0 {
+        return Err(ErrorEnvelope::bad_request(format!(
+            "cannot lock {}: {}",
+            lock_path.display(),
+            std::io::Error::last_os_error()
+        )));
+    }
+    Ok(ConfigWriteLock { _file: file })
+}
+
+/// The one read-modify-write entry for a core-config file: lock, load, apply, save.
+/// Every writer goes through here — the local `config set` path and the manager's RPC alike —
+/// so overlapping writers serialize instead of clobbering each other's keys (P2 hardening).
+/// Readers need no lock: `save` replaces the file atomically.
+pub fn update_config(
+    path: &Path,
+    apply: impl FnOnce(&mut CoreConfig) -> Result<(), ErrorEnvelope>,
+) -> Result<(), ErrorEnvelope> {
+    let _lock = lock_config_write(path)?;
+    let mut config = CoreConfig::load_or_default(path)?;
+    apply(&mut config)?;
+    config.save(path)
 }
 
 // ---------------------------------------------------------------------------
@@ -1796,6 +1863,94 @@ mod tests {
             CoreConfig::load_or_default(&paths.scope_file("operator")).unwrap(),
             CoreConfig::default()
         );
+    }
+
+    /// P2 hardening: overlapping read-modify-write cycles must not lose each other's keys.
+    /// Pre-fix (`load_or_default` → `set` → `save`, no lock, in-place truncating write) the
+    /// lost-update race was live-reproduced; `update_config` serializes on the write lock.
+    #[test]
+    fn concurrent_updates_keep_every_key() {
+        let root = tempfile::tempdir().unwrap();
+        let path = paths_in(root.path()).core_config();
+        let iters = 40usize;
+        // Distinct keys, each with a value that changes per iteration.
+        type ValueFor = fn(usize) -> String;
+        let plan: [(&str, ValueFor); 8] = [
+            ("sessions.max_global", |i| (200 + i).to_string()),
+            ("history.segments", |i| (20 + i).to_string()),
+            ("history.segment_size", |i| (1000 + i).to_string()),
+            ("view.port_base", |i| (6080 + i).to_string()),
+            ("media.ttl", |i| (60 + i).to_string()),
+            ("reaper.sweep_dead", |i| {
+                if i % 2 == 0 {
+                    "on".into()
+                } else {
+                    "off".into()
+                }
+            }),
+            ("manager.bind", |i| format!("127.0.0.1:8{}", 100 + i)),
+            ("view.advertise_base", |i| {
+                format!("https://example.test/{i}")
+            }),
+        ];
+        let threads: Vec<_> = plan
+            .iter()
+            .map(|(key, value)| {
+                let key = key.to_string();
+                let value: fn(usize) -> String = *value;
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    for i in 0..iters {
+                        let raw = value(i);
+                        update_config(&path, |config| config.set(&key, parse_value(&key, &raw)?))
+                            .expect("update");
+                    }
+                    value(iters - 1)
+                })
+            })
+            .collect();
+        let expected: Vec<String> = threads.into_iter().map(|t| t.join().unwrap()).collect();
+
+        // The file parses (no torn write) and every writer's final value survived.
+        let on_disk = CoreConfig::load(&path).expect("parseable after concurrent updates");
+        for ((key, _), want_raw) in plan.iter().zip(expected) {
+            let want = parse_value(key, &want_raw).unwrap().to_grammar();
+            assert_eq!(on_disk.get(key).unwrap().to_grammar(), want, "{key}");
+        }
+    }
+
+    /// P2 hardening: a save replaces the file (temp sibling + rename) and leaves no litter;
+    /// the lock file is the only sibling a write adds.
+    #[test]
+    fn save_replaces_atomically_and_leaves_no_temp_litter() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = paths_in(root.path());
+        let path = paths.core_config();
+        let mut config = CoreConfig::default();
+        config
+            .set("media.ttl", ConfigValue::Duration(Duration::from_secs(120)))
+            .unwrap();
+        config.save(&path).unwrap();
+
+        let names = |dir: &Path| {
+            let mut names: Vec<String> = std::fs::read_dir(dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        };
+        let dir = path.parent().unwrap();
+        assert_eq!(names(dir), ["config.ron"], "no temp files survive a save");
+
+        update_config(&path, |config| {
+            config.set("media.ttl", ConfigValue::Duration(Duration::from_secs(60)))
+        })
+        .unwrap();
+        assert_eq!(names(dir), ["config.lock", "config.ron"]);
+        let on_disk = CoreConfig::load(&path).unwrap();
+        let want = parse_value("media.ttl", "60").unwrap().to_grammar();
+        assert_eq!(on_disk.get("media.ttl").unwrap().to_grammar(), want);
     }
 
     #[test]

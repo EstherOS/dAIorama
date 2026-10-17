@@ -881,9 +881,11 @@ impl App {
             };
         }
 
-        let mut config = CoreConfig::load_or_default(&paths.core_config())?;
-        config.set(&key, value.clone())?;
-        config.save(&paths.core_config())?;
+        // P2 hardening: the whole read-modify-write runs under the config write lock so a
+        // concurrent writer (a manager's RPC path, another local set) cannot interleave.
+        config::update_config(&paths.core_config(), |config| {
+            config.set(&key, value.clone())
+        })?;
         // 04/08: output states which of the two applies.
         let env = EnvView::from_process();
         let address = Address::Unix(env.socket_path(&self.instance));
@@ -910,7 +912,12 @@ impl App {
         }
         let path = paths.core_config();
         if !path.exists() {
-            CoreConfig::default().save(&path)?;
+            // First-run create under the same write lock (another writer may have raced us
+            // here; re-check once inside). P2 hardening.
+            let _lock = config::lock_config_write(&path)?;
+            if !path.exists() {
+                CoreConfig::default().save(&path)?;
+            }
         }
         let editor = std::env::var("EDITOR")
             .ok()
@@ -944,11 +951,21 @@ impl App {
                 core.display()
             ));
         } else {
-            CoreConfig::default().save(&core)?;
-            std::fs::write(&core, config::starter_config()).map_err(|err| {
-                ErrorEnvelope::bad_request(format!("cannot write {}: {err}", core.display()))
-            })?;
-            lines.push(format!("wrote {}", core.display()));
+            // First-run create under the config write lock (re-check inside; a concurrent
+            // writer may have created it since our check). P2 hardening.
+            let _lock = config::lock_config_write(&core)?;
+            if !core.exists() {
+                CoreConfig::default().save(&core)?;
+                std::fs::write(&core, config::starter_config()).map_err(|err| {
+                    ErrorEnvelope::bad_request(format!("cannot write {}: {err}", core.display()))
+                })?;
+                lines.push(format!("wrote {}", core.display()));
+            } else {
+                lines.push(format!(
+                    "config already exists at {}; edit it with 'daiorama config edit'",
+                    core.display()
+                ));
+            }
         }
         let scope = paths.scope_file("operator");
         if scope.exists() {

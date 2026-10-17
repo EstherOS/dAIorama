@@ -1,0 +1,40 @@
+
+--- a parallel cross-talk + liveness ---
+workers=24 x 40 reqs; errors=0
+liveness probe 0: 0.3 ms ok=True
+liveness probe 1: 0.4 ms ok=True
+liveness probe 2: 0.8 ms ok=True
+liveness probe 3: 0.9 ms ok=True
+liveness probe 4: 0.9 ms ok=True
+>>> no cross-talk; all responses matched; live under load <<<
+
+--- b fd churn ---
+fds baseline=11
+after 200 bare connect/close: 36 -> 11
+after 200 handshaked connect/close: 11
+liveness after churn: {"result":{"instance_id":"a38c8aca-8d7a-4320-b91e-921ebad82912","min_supported":...
+
+--- c config lost-update race (rpc/rpc) ---
+small file: 4 rounds x 250 iters each, monitors on both keys
+round 0: violations=0 final OK (A want 449, B want 269)
+round 1: violations=0 final OK (A want 1449, B want 1269)
+round 2: violations=0 final OK (A want 2449, B want 2269)
+round 3: violations=0 final OK (A want 3449, B want 3269)
+>>> no lost updates observed <<<
+
+--- c2 config race wide file ---
+set view.advertise_base big: ok
+wide file (~256 KiB): 2 rounds x 40 iters each
+round 0: violations=0 final OK (A want 10239, B want 10059)
+round 1: violations=0 final OK (A want 11239, B want 11059)
+>>> no lost updates observed <<<
+
+--- d config race cross-process (cli/rpc) ---
+sessions.max_global (cli writer) want=529 got=529
+history.segments (rpc writer) want=429 got=429
+>>> cross-process: both kept <<<
+
+--- e torn read (get during write) ---
+reader: ok=410 err=0
+
+all probes done

@@ -1,0 +1,7 @@
+
+--- d config race cross-process (cli/rpc) ---
+sessions.max_global (cli writer) want=529 got=529
+history.segments (rpc writer) want=429 got=428
+>>> cross-process: at least one write lost <<<
+
+all probes done

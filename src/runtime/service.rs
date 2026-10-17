@@ -417,9 +417,9 @@ impl RuntimeService {
             )));
         }
         let value = parse_value(&key, &raw)?;
-        let mut config = CoreConfig::load_or_default(&self.paths.core_config())?;
-        config.set(&key, value.clone())?;
-        config.save(&self.paths.core_config())?;
+        crate::config::update_config(&self.paths.core_config(), |config| {
+            config.set(&key, value.clone())
+        })?;
         Ok(json!({ "key": key, "value": value.to_grammar() }))
     }
 
@@ -1483,6 +1483,48 @@ mod tests {
         let out = result(&service, methods::CONFIG_RELOAD, None).expect("reload");
         assert_eq!(out["reloaded"], json!([]));
         assert_eq!(out["restart_only"], json!(["manager.bind"]));
+    }
+
+    /// P2 hardening: two connections racing `config_set` on distinct keys must both land —
+    /// the manager's RMW runs under the config write lock (`update_config`), so neither
+    /// writer clobbers the other; pre-fix this lost keys live (fourth stress pass).
+    #[test]
+    fn concurrent_config_sets_keep_both_keys() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (service, paths) = service_with_config_file(dir.path(), 10);
+        let service = Arc::new(service);
+        let iters = 60u64;
+
+        let threads: Vec<_> = [("sessions.max_global", 200u64), ("history.segments", 20)]
+            .into_iter()
+            .map(|(key, base)| {
+                let service = Arc::clone(&service);
+                std::thread::spawn(move || {
+                    for i in 0..iters {
+                        let out = result(
+                            &service,
+                            methods::CONFIG_SET,
+                            Some(json!({ "key": key, "value": (base + i).to_string() })),
+                        )
+                        .expect("set");
+                        assert_eq!(out["key"], json!(key));
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().expect("writer thread");
+        }
+
+        let on_disk = CoreConfig::load(&paths.core_config()).expect("load after concurrent sets");
+        assert_eq!(
+            on_disk.get("sessions.max_global").unwrap().to_grammar(),
+            (200 + iters - 1).to_string()
+        );
+        assert_eq!(
+            on_disk.get("history.segments").unwrap().to_grammar(),
+            (20 + iters - 1).to_string()
+        );
     }
 
     #[test]
