@@ -21,5 +21,21 @@ The last section of the run is exploratory (`WATCH`): bare-LF heads (accepted, R
 it), leading-zero lengths (accepted, they are digits), scope-name traversal (all answer
 `scope_unknown` — `load_scope` runs first, no file is read), origin shapes, pipelining, and the
 connection-lifetime gap: 64 idle connections stay open, a slow body and an idle head are held
-with no timeout. That last item is tracked in `STATUS.md` as an open item, not fixed here —
-a timeout needs a pinned value.
+with no timeout. That last item is fixed now — see `probe-timeout.txt` and the decisions in
+`docs/11`.
+
+## probe-timeout.txt — transport limits
+
+Five checks, live against the real binary (`probe-timeout.py`): the 64-connection cap closes an
+over-cap socket on accept while held connections still answer; and the 10 s progress timeout
+closes an idle kept-alive connection, a stalled head and a stalled body, each at 10.00 s.
+
+| Check | Expected | Result |
+|---|---|---|
+| over-cap connection | closed on accept, fast | closed after 0.00 s |
+| held connection under the cap | answers | `HTTP/1.1 200 OK` |
+| idle keep-alive | close at ~10 s | 10.00 s |
+| stalled head | close at ~10 s | 10.00 s |
+| stalled body | close at ~10 s | 10.00 s |
+
+`FAILS=0`.

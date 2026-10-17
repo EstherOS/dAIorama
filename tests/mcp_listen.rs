@@ -417,9 +417,15 @@ async fn only_post_mcp_is_served() {
 async fn oversized_bodies_are_refused_and_the_connection_ends() {
     let bridge = Bridge::start().await;
     let host = format!("127.0.0.1:{}", bridge.port);
+    let token = bridge.token();
+    let secret = bridge.scope_secret("agent1");
     let mut conn = bridge.connection().await;
     let larger = MAX_FRAME_BYTES + 1;
-    let head = format!("POST /mcp HTTP/1.1\r\nHost: {host}\r\nContent-Length: {larger}\r\n\r\n");
+    let head = format!(
+        "POST /mcp HTTP/1.1\r\nHost: {host}\r\nDaiorama-Token: {token}\r\n\
+         Daiorama-Scope: agent1\r\nDaiorama-Scope-Token: {secret}\r\n\
+         Content-Length: {larger}\r\n\r\n"
+    );
     conn.reader
         .get_mut()
         .write_all(head.as_bytes())
@@ -742,4 +748,45 @@ async fn capability_read_survives_a_manager_restart_over_listen() {
     assert_eq!(listings.len(), 1, "one replay listing on the new manager");
     assert_eq!(listings[0]["scope"], "agent1");
     assert_eq!(listings[0]["origin"], "mcp");
+}
+
+/// The identity gate answers from the head: an unauthenticated caller with a garbage body
+/// gets the auth refusal, not a JSON parse error — the parser is not reachable without
+/// credentials.
+#[tokio::test]
+async fn the_identity_gate_answers_before_the_body_is_parsed() {
+    let bridge = Bridge::start().await;
+    let host = format!("127.0.0.1:{}", bridge.port);
+    let mut conn = bridge.connection().await;
+    let (status, _, body) = conn
+        .request("POST", "/mcp", &[("Host", &host)], "{not json")
+        .await;
+    assert_eq!(status, 200);
+    let response: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        envelope_code(&response),
+        "token_required",
+        "auth refusal first, body never parsed: {response}"
+    );
+}
+
+/// The connection cap closes over-cap sockets on accept: the fd set stays bounded, and the
+/// connections already held keep working.
+#[tokio::test]
+async fn connection_cap_closes_the_over_cap_socket() {
+    let bridge = Bridge::start().await;
+    let addr = format!("127.0.0.1:{}", bridge.port);
+    let mut held = Vec::new();
+    for _ in 0..64 {
+        held.push(tokio::net::TcpStream::connect(&addr).await.unwrap());
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let mut over = tokio::net::TcpStream::connect(&addr).await.unwrap();
+    let mut buf = [0u8; 1];
+    match tokio::time::timeout(Duration::from_secs(3), over.read(&mut buf)).await {
+        Ok(Ok(0)) | Ok(Err(_)) => {}
+        Ok(Ok(_)) => panic!("an over-cap socket got bytes"),
+        Err(_) => panic!("an over-cap socket stayed open"),
+    }
+    drop(held);
 }

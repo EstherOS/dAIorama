@@ -1,0 +1,13 @@
+bin=daiorama
+port=18759 manager_pid=227440 bridge_pid=227446
+
+=== connection cap (64) ===
+[OK]   over-cap connection is closed on accept :: closed=True after 0.00s
+[OK]   a held connection still answers under the cap :: HTTP/1.1 200 OK
+
+=== progress timeout (10 s per read) ===
+[OK]   idle keep-alive closes at ~10s :: 200, then closed=True after 10.00s
+[OK]   stalled head closes at ~10s :: closed=True after 10.00s
+[OK]   stalled body closes at ~10s :: closed=True after 10.00s
+
+FAILS=0

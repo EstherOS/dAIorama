@@ -518,3 +518,32 @@ Rust's `parse` takes a leading plus. Each is a disagreement about where the next
 *Rejected:* refusing bare-LF heads (RFC 7230 lets a recipient accept them; the MUSTs above are
 the strict set); trimming a field name (that is the bug); turning any non-`POST` into 400
 (405 with `Allow: POST` is the pinned shape).
+
+## Transport limits: a per-read progress timeout and a connection cap
+
+The bridge closes any connection whose socket makes no progress for 10 s — a head line, a body
+chunk, or the idle wait for the next request on a kept-alive connection — and closes the 65th
+simultaneous connection on accept. Nothing is written for either: the read side proved the peer
+gone, so there is nobody to answer.
+
+*Rationale:* the adversarial pass held 64 idle connections, a stalled head and a stalled body for
+as long as it liked (`p3/listen/evidence/probe-timeout.txt`). 10 s is five times the manager
+connect timeout — far above any real pause, and invisible to an idle HTTP client, which
+reconnects. It is a per-read progress bound, not a total-body deadline, so an 8 MiB body stays
+legal while bytes keep flowing. The cap bounds the fd set; over-cap sockets are closed on accept.
+
+*Rejected:* a total-body deadline (60 s covers 8 MiB at ~1.1 Mbps but punishes a slow upload that
+is making progress); answering a stalled request with 408 (the peer is gone).
+
+## The identity gate answers before the body is read
+
+`authenticate` runs on the head alone, before any body byte is read or parsed. An unauthenticated
+caller gets `token_required` (or `scope_auth_required`) even when the body is malformed JSON: the
+parser is not reachable without credentials, and its errors leak nothing.
+
+*Rationale:* the adversarial pass (WATCH) found the body parsed before the gate — no creds plus
+malformed JSON answered a parse error, so unauthenticated callers exercised the JSON parser. On a
+gate failure the declared body is still drained, so the next kept-alive request starts at a frame
+boundary; an over-cap body ends the connection instead.
+
+*Rejected:* gating only `tools/call` (leaves the parser reachable through other request shapes).

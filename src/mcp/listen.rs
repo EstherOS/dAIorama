@@ -17,10 +17,11 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
 
 use crate::config::{self, Paths, ScopeFile};
 use crate::ipc::{Address, Client, ErrorCode, ErrorEnvelope, MAX_FRAME_BYTES};
@@ -29,6 +30,15 @@ use crate::strings;
 
 /// HTTP request heads are small; an over-cap head is a malformed client, not a payload.
 const MAX_HEAD_BYTES: usize = 64 * 1024;
+/// Every socket read must make progress within this bound — head lines, body chunks, and the
+/// idle wait for the next request on a kept-alive connection. It is a progress timeout, not a
+/// total-body deadline: an 8 MiB body stays legal as long as bytes keep flowing. Five times
+/// the manager connect timeout, and far above any real pause; an idle keep-alive close is
+/// invisible to HTTP clients, they reconnect.
+const PROGRESS_TIMEOUT: Duration = Duration::from_secs(10);
+/// Bound on concurrent connections, so the fd set stays bounded no matter how fast a caller
+/// opens sockets. Over-cap connections are closed on accept.
+const MAX_CONNECTIONS: usize = 64;
 /// JSON-RPC parse error (malformed JSON), same as the stdio bridge.
 const PARSE_ERROR: i32 = -32700;
 
@@ -107,6 +117,7 @@ pub async fn run_listen(
         display,
         client: Mutex::new(None),
     });
+    let permits = Arc::new(Semaphore::new(MAX_CONNECTIONS));
     loop {
         let (stream, _peer) = match listener.accept().await {
             Ok(accepted) => accepted,
@@ -115,8 +126,15 @@ pub async fn run_listen(
                 continue;
             }
         };
+        // Over the cap: close on accept. The fd set stays bounded no matter how fast a caller
+        // opens sockets; a client that retries gets in as soon as a slot frees.
+        let Ok(permit) = Arc::clone(&permits).try_acquire_owned() else {
+            drop(stream);
+            continue;
+        };
         let network = Arc::clone(&network);
         tokio::spawn(async move {
+            let _permit = permit;
             let _ = serve_connection(&network, stream).await;
         });
     }
@@ -128,6 +146,8 @@ pub async fn run_listen(
 
 enum HeadRead {
     Eof,
+    /// No progress within `PROGRESS_TIMEOUT`: close the connection, nothing follows.
+    Timeout,
     TooLarge,
     Lines(Vec<String>),
 }
@@ -140,7 +160,13 @@ where
     let mut total = 0usize;
     loop {
         let mut line = Vec::new();
-        let read = input.read_until(b'\n', &mut line).await?;
+        let read = match tokio::time::timeout(PROGRESS_TIMEOUT, input.read_until(b'\n', &mut line))
+            .await
+        {
+            Ok(result) => result?,
+            // A head that stalls mid-line is a dead peer, not a slow one: close.
+            Err(_elapsed) => return Ok(HeadRead::Timeout),
+        };
         if read == 0 {
             return Ok(HeadRead::Eof);
         }
@@ -201,6 +227,7 @@ async fn serve_connection(network: &Arc<Network>, stream: TcpStream) -> Result<(
     loop {
         let head = match read_head(&mut input).await? {
             HeadRead::Eof => return Ok(()),
+            HeadRead::Timeout => return Ok(()),
             HeadRead::TooLarge => {
                 let reply =
                     envelope_reply(400, ErrorEnvelope::bad_request(strings::HEAD_TOO_LARGE));
@@ -269,6 +296,27 @@ async fn serve_connection(network: &Arc<Network>, stream: TcpStream) -> Result<(
                 return Ok(());
             }
         };
+        // The identity gate answers from the head alone, before any body byte is read or
+        // parsed: an unauthenticated caller must not exercise the JSON parser or learn
+        // anything from its errors.
+        let (scope, definition) = match authenticate(network, &request).await {
+            Ok(caller) => caller,
+            Err(envelope) => {
+                let reply = Reply::mcp(json_rpc_envelope_error(None, &envelope));
+                write_reply(input.get_mut(), &reply).await?;
+                // The body still belongs to this request: drain it so the next request on a
+                // kept-alive connection starts at a frame boundary. An over-cap body has no
+                // usable next frame — the connection ends with the refusal.
+                if length > MAX_FRAME_BYTES {
+                    return Ok(());
+                }
+                if read_body(&mut input, length).await?.is_none() {
+                    return Ok(());
+                }
+                continue;
+            }
+        };
+
         if length > MAX_FRAME_BYTES {
             let reply = Reply::refusal(
                 200,
@@ -289,10 +337,9 @@ async fn serve_connection(network: &Arc<Network>, stream: TcpStream) -> Result<(
                 .write_all(b"HTTP/1.1 100 Continue\r\n\r\n")
                 .await?;
         }
-        let mut body = vec![0u8; length];
-        if length > 0 {
-            input.read_exact(&mut body).await?;
-        }
+        let Some(body) = read_body(&mut input, length).await? else {
+            return Ok(());
+        };
 
         let parsed: Result<crate::mcp::JsonRpcRequest, _> = serde_json::from_slice(&body);
         let request_json = match parsed {
@@ -310,14 +357,6 @@ async fn serve_connection(network: &Arc<Network>, stream: TcpStream) -> Result<(
 
         // Gate first, then dispatch. A notification is authenticated like a call but never
         // executes and never gets a response body (JSON-RPC; same rule as stdio).
-        let (scope, definition) = match authenticate(network, &request).await {
-            Ok(caller) => caller,
-            Err(envelope) => {
-                let reply = Reply::mcp(json_rpc_envelope_error(request_json.id.clone(), &envelope));
-                write_reply(input.get_mut(), &reply).await?;
-                continue;
-            }
-        };
         if request_json.id.is_none() {
             write_reply(input.get_mut(), &Reply::accepted()).await?;
             continue;
@@ -343,6 +382,26 @@ async fn serve_connection(network: &Arc<Network>, stream: TcpStream) -> Result<(
 // ---------------------------------------------------------------------------
 // Authentication (07: token gate, then per-connection scope)
 // ---------------------------------------------------------------------------
+
+/// Read exactly `length` bytes of body with the per-chunk progress timeout. `Ok(None)` means
+/// the peer stalled or closed mid-body: the caller ends the connection, nothing follows.
+async fn read_body<R>(input: &mut R, length: usize) -> std::io::Result<Option<Vec<u8>>>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let mut body = vec![0u8; length];
+    let mut filled = 0usize;
+    while filled < length {
+        match tokio::time::timeout(PROGRESS_TIMEOUT, input.read(&mut body[filled..])).await {
+            Ok(Ok(0)) => return Ok(None),
+            Ok(Ok(n)) => filled += n,
+            Ok(Err(err)) => return Err(err),
+            // A stalled body is a dead peer: close, nothing follows.
+            Err(_elapsed) => return Ok(None),
+        }
+    }
+    Ok(Some(body))
+}
 
 async fn authenticate(
     network: &Network,
