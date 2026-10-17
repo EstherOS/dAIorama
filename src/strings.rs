@@ -64,6 +64,16 @@ pub const DOCTOR_TOOLS_LABEL: &str = "tools:";
 pub const DOCTOR_WAYLAND_LABEL: &str = "wayland:";
 /// Section label: the delegation check (06 C6).
 pub const DOCTOR_CONTAINMENT_LABEL: &str = "containment:";
+/// Section label: the view asset tree (07/09).
+pub const DOCTOR_ASSETS_LABEL: &str = "assets:";
+
+/// 09: the pinned installer that stages the noVNC tree into `<data>/novnc`.
+pub const NOVNC_FETCH_SCRIPT: &str = "packaging/novnc/fetch.sh";
+
+/// `doctor`'s next step for a missing view asset tree: the script, then the resolved target.
+pub fn novnc_install_hint(path: &str) -> String {
+    format!("install: {NOVNC_FETCH_SCRIPT} {path}")
+}
 
 /// 04: software renderer detected at session creation (06 renderer policy).
 pub fn renderer_refused(renderer: &str) -> String {

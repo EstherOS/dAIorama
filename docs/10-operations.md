@@ -74,6 +74,22 @@ action. If Hyprland is missing on a bare host, `doctor` says so with the exact
 install command and points at the image; that is the strongest signal the
 image is the better path for that user.
 
+## View assets (noVNC)
+
+The view front serves a static noVNC tree from `<data>/novnc`; until that tree
+exists every view answers `view_unavailable` with `view assets not installed
+(expected <data>/novnc)` (07). Staging is one command per instance, run once
+(the image build runs it at build time into the persisted `/data` mount):
+
+    packaging/novnc/fetch.sh <data root>/novnc
+
+The script is pinned (noVNC v1.7.0, artifact sha256 checked before unpacking)
+and replaces an existing tree atomically, so re-running it is the upgrade path.
+Offline: pass the tarball as the second argument. `daiorama doctor` reports the
+tree under `assets:` — the path when installed, the front's refusal plus this
+command when not. That refusal is the 503's whole exit path: nothing else is
+needed, and a half-staged tree is never served.
+
 ## Diagnostics and logs
 
 - `daiorama doctor` — the diagnostic command (also in-container: verifies the
