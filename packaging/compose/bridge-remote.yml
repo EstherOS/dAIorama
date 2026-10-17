@@ -1,0 +1,18 @@
+# Bare bridge to a remote manager: the harness-side shape (09).
+# A thin container whose only job is the MCP endpoint; it never starts a local manager.
+# DAIORAMA_MANAGER is host:port of a manager already exposing its TCP surface (07).
+services:
+  bridge:
+    image: ${DAIORAMA_IMAGE:?set a digest-pinned daiorama core image}
+    command: ["daiorama", "mcp", "--listen", "0.0.0.0:8757", "--remote", "${DAIORAMA_MANAGER:?set the remote manager address, host:port}"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8757:8757"
+    # DAIORAMA_TOKEN, DAIORAMA_SCOPE and DAIORAMA_SCOPE_TOKEN for the bridge process (04, 07).
+    env_file:
+      - ./bridge.env
+    volumes:
+      - ${DAIORAMA_CONFIG:?}:/config
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
