@@ -100,6 +100,12 @@ Single master table in 04 (ports, resolution, reaper off, history 8×4 MiB /
   retention window from session end — the transition out of `running`,
   however caused (7 days, 04), then removed; the segment
   budget is text-only (persisted media has its own cap, above). Unbounded retention was the actual risk; this bounds it.
+- The sweep is a **startup pass plus an hourly pass** on a running manager. It
+  removes whole session directories — history and `<data root>/media/<session>/`
+  — once `.ended` is older than the window; the marker is the only clock. A
+  directory whose marker is missing or unparsable is never deleted on a guess:
+  at startup it is adopted (`cause=manager_restart`, the window starts there),
+  and a session the live registry still knows is never swept at all.
 - Records carry scope + origin (06). Not tamper-evident and not claimed to be
   (07 posture).
 

@@ -18,6 +18,7 @@
 pub mod capture;
 pub mod containment;
 pub mod rate;
+pub mod retention;
 pub mod service;
 pub mod spawner;
 pub mod views;

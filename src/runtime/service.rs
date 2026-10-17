@@ -420,6 +420,116 @@ impl RuntimeService {
         Ok(json!({ "id": id, "state": "closed" }))
     }
 
+    // -----------------------------------------------------------------------
+    // Retention (04/08)
+    // -----------------------------------------------------------------------
+
+    /// One retention pass under the live config window. Liveness comes from the registry, so
+    /// a session this manager still knows is never swept even if a marker exists.
+    pub fn sweep_retention(&self) -> crate::runtime::retention::SweepReport {
+        let retention = self.config.read().expect("config lock").history.retention;
+        let live = |id: &str| self.registry().get(id).is_some();
+        crate::runtime::retention::sweep(
+            &self.paths.history_dir(),
+            &self.paths.media_dir(),
+            &live,
+            retention.secs,
+            crate::runtime::retention::now_secs(),
+        )
+    }
+
+    /// The startup pass. A manager start owns no sessions, so a history directory without a
+    /// parsable `.ended` can only be a leftover from a previous manager (a crash, or a
+    /// shutdown that killed its sessions): stamp it `cause=manager_restart` so its window
+    /// starts here instead of never — adoption keeps the directory, it does not delete it —
+    /// then sweep.
+    pub fn startup_retention(&self) -> Vec<String> {
+        let root = self.paths.history_dir();
+        let mut adopted = 0;
+        for id in crate::runtime::retention::session_dirs(&root) {
+            if crate::runtime::retention::marker_secs(&root, &id).is_some() {
+                continue;
+            }
+            let scope = self
+                .history
+                .recorded_scope(&id)
+                .unwrap_or_else(|| "unknown".to_string());
+            self.history
+                .mark_ended(&id, &scope, "startup", "manager_restart");
+            adopted += 1;
+        }
+        let report = self.sweep_retention();
+        let mut lines = Vec::new();
+        if !report.removed.is_empty() {
+            lines.push(format!(
+                "retention sweep: {} expired session(s) removed",
+                report.removed.len()
+            ));
+        }
+        if adopted > 0 {
+            lines.push(format!(
+                "retention sweep: {adopted} unmarked session(s) adopted (cause=manager_restart)"
+            ));
+        }
+        if !report.failed.is_empty() {
+            lines.push(format!(
+                "retention sweep: {} session(s) could not be removed",
+                report.failed.len()
+            ));
+        }
+        lines
+    }
+
+    /// One pass on the blocking pool — the hourly task's step, so the scan never occupies a
+    /// reactor worker.
+    pub async fn sweep_retention_off_reactor(
+        self: &Arc<Self>,
+    ) -> crate::runtime::retention::SweepReport {
+        let service = Arc::clone(self);
+        tokio::task::spawn_blocking(move || service.sweep_retention())
+            .await
+            .unwrap_or_default()
+    }
+
+    /// The hourly pass a running manager keeps (08): the window is days, the scan is one
+    /// directory read, and the window is re-read every tick so `config reload` applies.
+    pub fn spawn_retention_sweeper(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+        self.spawn_retention_sweeper_every(crate::runtime::retention::SWEEP_INTERVAL)
+    }
+
+    /// [`Self::spawn_retention_sweeper`] with an injectable cadence (tests drive a short one;
+    /// the production wrapper owns the pinned hour).
+    pub fn spawn_retention_sweeper_every(
+        self: &Arc<Self>,
+        every: std::time::Duration,
+    ) -> tokio::task::JoinHandle<()> {
+        let service = Arc::clone(self);
+        // The ticker is created before the spawn so its schedule starts now, not at the
+        // task's first poll (a late poll must not shift every later tick).
+        let mut ticker = tokio::time::interval(every);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        tokio::spawn(async move {
+            // The first tick is immediate; startup already ran the pass.
+            ticker.tick().await;
+            loop {
+                ticker.tick().await;
+                let report = Arc::clone(&service).sweep_retention_off_reactor().await;
+                if !report.removed.is_empty() {
+                    eprintln!(
+                        "retention sweep: {} expired session(s) removed",
+                        report.removed.len()
+                    );
+                }
+                if !report.failed.is_empty() {
+                    eprintln!(
+                        "retention sweep: {} session(s) could not be removed",
+                        report.failed.len()
+                    );
+                }
+            }
+        })
+    }
+
     /// Append one history record (06 B8): scope and origin always, cause where relevant,
     /// never control-call arguments, media ids or credentials.
     fn record(
@@ -1783,6 +1893,128 @@ mod tests {
         assert!(
             artifact.exists(),
             "08: a dead session's persisted media keeps its retention window too"
+        );
+    }
+
+    #[test]
+    fn the_sweep_honors_the_configured_window() {
+        let tmp = tempfile::tempdir().unwrap();
+        let service = make_service(tmp.path(), Arc::new(TestSpawner::default()));
+        let value = create_ok(&service, None);
+        let id = value["id"].as_str().unwrap().to_string();
+        result(
+            &service,
+            methods::CLOSE_SESSION,
+            Some(json!({ "session_id": id })),
+        )
+        .unwrap();
+        let artifact_dir = service.paths.media_dir().join(&id);
+        std::fs::create_dir_all(&artifact_dir).unwrap();
+        std::fs::write(
+            artifact_dir.join("0123456789abcdef0123456789abcdef"),
+            b"png",
+        )
+        .unwrap();
+
+        // Two days old: inside the default seven-day window, outside a one-hour one.
+        let two_days_ago = crate::runtime::retention::now_secs() - 2 * 86_400;
+        let marker = service.paths.history_dir().join(&id).join(".ended");
+        std::fs::write(
+            &marker,
+            format!("{}\tcause=closed\n", rfc3339_from_unix_secs(two_days_ago)),
+        )
+        .unwrap();
+
+        let report = service.sweep_retention();
+        assert!(report.removed.is_empty(), "default window: {report:?}");
+        assert!(artifact_dir.exists());
+
+        service.config.write().unwrap().history.retention =
+            crate::config::Duration::from_secs(3_600);
+        let report = service.sweep_retention();
+        assert_eq!(report.removed, vec![id.clone()]);
+        assert!(!service.paths.history_dir().join(&id).exists());
+        assert!(!artifact_dir.exists(), "media follows the same window");
+    }
+
+    #[test]
+    fn a_running_session_is_kept_even_with_an_old_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let service = make_service(tmp.path(), Arc::new(TestSpawner::default()));
+        let value = create_ok(&service, None);
+        let id = value["id"].as_str().unwrap().to_string();
+        let history_dir = service.paths.history_dir().join(&id);
+        std::fs::create_dir_all(&history_dir).unwrap();
+        std::fs::write(
+            history_dir.join(".ended"),
+            "2020-01-01T00:00:00Z\tcause=closed\n",
+        )
+        .unwrap();
+
+        let report = service.sweep_retention();
+
+        assert!(report.removed.is_empty());
+        assert!(
+            history_dir.exists(),
+            "the registry's live session wins over the marker"
+        );
+    }
+
+    #[test]
+    fn the_startup_pass_adopts_an_unmarked_directory_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let service = make_service(tmp.path(), Arc::new(TestSpawner::default()));
+        let orphan = service.paths.history_dir().join("crash-leftover");
+        std::fs::create_dir_all(&orphan).unwrap();
+        std::fs::write(orphan.join("seg-0000.log"), b"{}\n").unwrap();
+
+        let lines = service.startup_retention();
+
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(
+            lines[0].contains("1 unmarked session(s) adopted"),
+            "{lines:?}"
+        );
+        let marker = std::fs::read_to_string(orphan.join(".ended")).unwrap();
+        assert!(marker.contains("cause=manager_restart"), "{marker}");
+        assert!(
+            orphan.exists(),
+            "adoption starts the window; it never deletes"
+        );
+
+        let again = service.startup_retention();
+        assert!(
+            again.is_empty(),
+            "the marker makes the pass idempotent: {again:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_running_manager_sweeps_on_its_timer() {
+        let tmp = tempfile::tempdir().unwrap();
+        let service = Arc::new(make_service(tmp.path(), Arc::new(TestSpawner::default())));
+        let value = create_ok(&service, None);
+        let id = value["id"].as_str().unwrap().to_string();
+        result(
+            &service,
+            methods::CLOSE_SESSION,
+            Some(json!({ "session_id": id })),
+        )
+        .unwrap();
+        let dir = service.paths.history_dir().join(&id);
+        std::fs::write(dir.join(".ended"), "2020-01-01T00:00:00Z\tcause=closed\n").unwrap();
+
+        // A short cadence stands in for the pinned hour: the task must tick on its own and
+        // run the pass off the reactor.
+        let sweeper = service.spawn_retention_sweeper_every(std::time::Duration::from_millis(20));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while dir.exists() && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        sweeper.abort();
+        assert!(
+            !dir.exists(),
+            "the running manager's pass removes an aged session"
         );
     }
 

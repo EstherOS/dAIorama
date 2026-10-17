@@ -597,3 +597,112 @@ fn network_listen_prints_the_path_and_hint_never_the_value() {
         "the value never reaches stderr: {text}"
     );
 }
+
+/// `YYYY-MM-DDTHH:MM:SSZ` for `now - secs`, by the same civil algorithm the marker parser
+/// inverts (the test binary cannot reach the crate's private helper).
+fn stamp_now_minus(secs: i64) -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(0);
+    let total = now - secs;
+    let days = total.div_euclid(86_400);
+    let rem = total.rem_euclid(86_400);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let year = if month <= 2 { year + 1 } else { year };
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    )
+}
+
+#[test]
+fn startup_retention_sweeps_expired_sessions_and_adopts_unmarked_ones() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let conf = tmp.path().join("conf");
+    let data = tmp.path().join("data");
+    let run = tmp.path().join("run");
+    let instance_config = conf.join("daiorama").join("dt");
+    std::fs::create_dir_all(&instance_config).unwrap();
+    std::fs::create_dir_all(&run).unwrap();
+    std::fs::write(
+        instance_config.join("config.ron"),
+        "(version: 1, limits: (mode: off))\n",
+    )
+    .unwrap();
+
+    let root = data.join("daiorama").join("dt");
+    let history = root.join("history");
+    let media = root.join("media");
+    // Expired: a marker well past the seven-day window, with persisted media beside it.
+    std::fs::create_dir_all(history.join("old-session")).unwrap();
+    std::fs::write(
+        history.join("old-session").join(".ended"),
+        "2020-01-01T00:00:00Z\tscope=operator\torigin=shell\tcause=closed\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(media.join("old-session")).unwrap();
+    std::fs::write(
+        media
+            .join("old-session")
+            .join("0123456789abcdef0123456789abcdef"),
+        b"png",
+    )
+    .unwrap();
+    // Inside the window: kept.
+    std::fs::create_dir_all(history.join("fresh-session")).unwrap();
+    std::fs::write(
+        history.join("fresh-session").join(".ended"),
+        format!("{}\tcause=closed\n", stamp_now_minus(86_400)),
+    )
+    .unwrap();
+    // Unmarked: a manager crash leftover — adopted, not deleted.
+    std::fs::create_dir_all(history.join("crash-leftover")).unwrap();
+    std::fs::write(history.join("crash-leftover").join("seg-0000.log"), b"{}\n").unwrap();
+
+    let out = run_binary(&conf, &data, &run, &["daemon", "start", "--instance", "dt"]);
+    assert!(
+        out.status.success(),
+        "daemon start: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    assert!(
+        !history.join("old-session").exists(),
+        "expired history removed"
+    );
+    assert!(!media.join("old-session").exists(), "expired media removed");
+    assert!(
+        history.join("fresh-session").exists(),
+        "inside the window: kept"
+    );
+    assert!(
+        history.join("crash-leftover").exists(),
+        "an unmarked directory is adopted, never deleted"
+    );
+    let marker = std::fs::read_to_string(history.join("crash-leftover").join(".ended")).unwrap();
+    assert!(marker.contains("cause=manager_restart"), "{marker}");
+    let log = std::fs::read_to_string(root.join("daemon.log")).unwrap();
+    assert!(
+        log.contains("retention sweep: 1 expired session(s) removed"),
+        "{log}"
+    );
+    assert!(
+        log.contains("retention sweep: 1 unmarked session(s) adopted"),
+        "{log}"
+    );
+
+    let out = run_binary(&conf, &data, &run, &["daemon", "end", "--instance", "dt"]);
+    assert!(out.status.success(), "daemon end: {out:?}");
+}

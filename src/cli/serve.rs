@@ -76,6 +76,9 @@ pub struct ServeDeps {
 /// The prepared, not-yet-bound manager: the startup decision already made.
 pub struct Prepared {
     pub handler: Arc<dyn Handler>,
+    /// The concrete service behind `handler`: the startup/hourly retention pass needs its
+    /// paths and live config snapshot (04/08).
+    pub service: Arc<RuntimeService>,
     /// The manager-side media store (05 A8): serves `GET /media/<id>` on the socket.
     pub media: Arc<crate::media::MediaStore>,
     pub socket: PathBuf,
@@ -193,7 +196,7 @@ pub fn prepare(deps: &ServeDeps) -> Result<Prepared, ErrorEnvelope> {
         }
     }
     let media = Arc::new(crate::media::MediaStore::for_instance(&deps.paths));
-    let service = RuntimeService::new(
+    let service = Arc::new(RuntimeService::new(
         ServiceOptions {
             instance_id,
             socket_path: socket.clone(),
@@ -206,10 +209,11 @@ pub fn prepare(deps: &ServeDeps) -> Result<Prepared, ErrorEnvelope> {
         },
         Arc::clone(&deps.spawner),
         Arc::clone(&media),
-    );
+    ));
     Ok(Prepared {
         media,
-        handler: Arc::new(service),
+        handler: service.clone(),
+        service,
         socket,
         bind,
         mode,
@@ -400,6 +404,12 @@ pub async fn run_until(
         }
     }
 
+    // 04/08: retention runs on every start — adopt directories a previous manager left
+    // unmarked, then remove expired session directories — before the socket accepts.
+    for line in prepared.service.startup_retention() {
+        eprintln!("{line}");
+    }
+
     let listener = Listener::bind(&prepared.socket)
         .await
         .map_err(|error| ErrorEnvelope::internal(format!("manager socket: {error}")))?;
@@ -431,6 +441,8 @@ pub async fn run_until(
 
     let handler = prepared.handler;
     let media = prepared.media;
+    // 08: the running manager keeps the window honest between starts (hourly pass).
+    let retention = prepared.service.spawn_retention_sweeper();
     tokio::select! {
         _ = listener.serve(Arc::clone(&handler), Arc::clone(&media)) => {}
         _ = async {
@@ -441,6 +453,7 @@ pub async fn run_until(
         } => {}
         _ = shutdown => {}
     }
+    retention.abort();
     let _ = std::fs::remove_file(&prepared.socket);
     Ok(())
 }

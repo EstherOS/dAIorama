@@ -802,6 +802,30 @@ reads.
 cross-session cursors (a merged ordering over per-session segments needs an index the log does
 not have); fsync per record (the log is an operational aid, not the source of truth).
 
+## P4-RETENTION — the sweep that makes the window real
+
+`history.retention` (default seven days, 04) has its consumer: the manager runs one retention
+pass at startup and once an hour while it serves. A pass scans `<data>/history/`, reads each
+session's `.ended` marker — never mtimes — and on an expired marker removes the whole session:
+persisted media first, then the history directory. Media first is what makes a crash between
+the two removals benign: the marker survives, so the next pass finishes the job; the reverse
+order would strand a media directory with no clock left to age it.
+
+Two kinds of directory are never deleted on a guess. A session the live registry still knows is
+kept even if a marker exists. A directory whose marker is missing or unparsable is kept by the
+pass — but at startup it is first **adopted**: a manager start owns no sessions, so an unmarked
+directory can only be a leftover from a previous manager (a crash, or a shutdown that killed its
+sessions). Stamping `cause=manager_restart` starts its window there instead of leaving it
+unbounded, which is the one cause 08's "however caused" otherwise did not clock.
+
+*Rationale:* one clock (the durable marker), one policy owner (the manager), one bounded pass (a
+directory scan per hour, not a timer per session). The startup lines stay quiet unless the pass
+removed or adopted something.
+*Rejected:* inferring session end from mtimes (copying a directory resets it); a sweep on every
+close (a full scan per close for no timeliness over hourly); deleting an unmarked directory (a
+live session's directory would race the pass); a `retention.sweep` config key (the hour is an
+implementation detail; the window is the contract).
+
 ## P4-ENDPOINT — the manager TCP surface and its gate
 
 `manager.bind` now has its consumer: `serve` binds the unix socket as before and, when the key
