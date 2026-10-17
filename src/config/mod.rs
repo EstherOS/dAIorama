@@ -1516,6 +1516,151 @@ pub fn starter_scope_operator() -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Scope templates (`config scope create`, 04/08; `p5/dashboard` D2)
+// ---------------------------------------------------------------------------
+
+/// The shape a new scope file starts from. `own` (the default) sees only its own sessions;
+/// `all` sees every scope's; `dashboard` is the reserved dashboard identity — all-visibility,
+/// audit off, default rate limit (10, D3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScopeTemplate {
+    Own,
+    All,
+    Dashboard,
+}
+
+impl ScopeTemplate {
+    pub const LITERALS: [&'static str; 3] = ["own", "all", "dashboard"];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Own => "own",
+            Self::All => "all",
+            Self::Dashboard => "dashboard",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Result<Self, ErrorEnvelope> {
+        match raw {
+            "own" => Ok(Self::Own),
+            "all" => Ok(Self::All),
+            "dashboard" => Ok(Self::Dashboard),
+            other => Err(ErrorEnvelope::bad_request(
+                crate::strings::invalid_scope_template(other),
+            )),
+        }
+    }
+}
+
+/// The commented scope file `config scope create` writes (04). Valid by construction: the
+/// caller validates the rendered text before it touches disk.
+pub fn starter_scope(template: ScopeTemplate) -> String {
+    let mut text = String::new();
+    text.push_str(
+        "// daiorama scope definition (RON). One file per scope; the filename is the scope name.\n",
+    );
+    match template {
+        ScopeTemplate::Dashboard => {
+            text.push_str(
+                "// The reserved 'dashboard' identity (10; p5 D2). The dashboard's own\n",
+            );
+            text.push_str(
+                "// calls are reads: status/readiness, list, history, view. The always-on\n",
+            );
+            text.push_str("// session-lifecycle set (05) is available to every scope and is not\n");
+            text.push_str("// narrowed by this file.\n");
+        }
+        ScopeTemplate::Own | ScopeTemplate::All => {
+            text.push_str(
+                "// Deny-by-default: nothing is exposed until a scope grants it. The always-on\n",
+            );
+            text.push_str(
+                "// session-lifecycle set (create_session, close_session, list_sessions,\n",
+            );
+            text.push_str(
+                "// session_status, list_capabilities) is not listed here — it is always available.\n",
+            );
+        }
+    }
+    text.push_str("// Editing this file affects the next call (scopes are read per call).\n");
+    text.push_str("(\n");
+    text.push_str("  sessions: (\n");
+    text.push_str(
+        "    max: None,          // per-scope session quota; unset = global ceiling only\n",
+    );
+    match template {
+        ScopeTemplate::Own => {
+            text.push_str("    visibility: own,    // own: this scope's sessions only (04)\n")
+        }
+        ScopeTemplate::All => {
+            text.push_str("    visibility: all,    // all: every scope's sessions visible (04)\n")
+        }
+        ScopeTemplate::Dashboard => text.push_str(
+            "    visibility: all,    // all: the dashboard reads every scope's sessions (04)\n",
+        ),
+    }
+    text.push_str("  ),\n");
+    text.push_str("  limits: (\n");
+    text.push_str("    rate: (\n");
+    text.push_str("      per_sec: 20,\n");
+    text.push_str("      burst: 40,\n");
+    text.push_str("      mode: pace,      // pace | reject\n");
+    text.push_str("      max_wait_ms: 30000, // pace: refuse a call that would park longer\n");
+    text.push_str("      max_queued: 64,     // pace: refuse when this many already wait\n");
+    text.push_str("    ),\n");
+    text.push_str("  ),\n");
+    text.push_str("  audit: (\n");
+    text.push_str("    store_clips: false,\n");
+    text.push_str("    store_screenshots: false,\n");
+    text.push_str("  ),\n");
+    text.push_str("  grant: (\n");
+    text.push_str("    // Deny-by-default: grant categories or individual tools.\n");
+    text.push_str(&format!(
+        "    categories: [],   // {}\n",
+        known_categories_listing()
+    ));
+    text.push_str("    tools: [],\n");
+    text.push_str("  ),\n");
+    text.push_str(")\n");
+    text
+}
+
+/// Create one scope file at mode 0600 from the first byte, never overwriting: an existing
+/// path (file or directory) answers the pinned `scope "<name>" already exists` (04).
+pub fn write_scope_new(path: &Path, name: &str, text: &str) -> Result<PathBuf, ErrorEnvelope> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| {
+            ErrorEnvelope::bad_request(format!("cannot create {}: {err}", parent.display()))
+        })?;
+    }
+    let mut file = match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(ErrorEnvelope::bad_request(
+                crate::strings::scope_already_exists(name),
+            ));
+        }
+        Err(err) => {
+            return Err(ErrorEnvelope::bad_request(format!(
+                "cannot write {}: {err}",
+                path.display()
+            )));
+        }
+    };
+    file.write_all(text.as_bytes()).map_err(|err| {
+        ErrorEnvelope::bad_request(format!("cannot write {}: {err}", path.display()))
+    })?;
+    Ok(path.to_path_buf())
+}
+
+// ---------------------------------------------------------------------------
 // Effective view (config effective, D4)
 // ---------------------------------------------------------------------------
 
@@ -2154,6 +2299,41 @@ mod tests {
         assert!(
             scope.grant.tools.is_empty(),
             "deny-by-default starter manifest"
+        );
+    }
+
+    #[test]
+    fn scope_templates_render_valid_files() {
+        for (raw, template) in [
+            ("own", ScopeTemplate::Own),
+            ("all", ScopeTemplate::All),
+            ("dashboard", ScopeTemplate::Dashboard),
+        ] {
+            assert_eq!(ScopeTemplate::parse(raw).unwrap(), template);
+            assert_eq!(template.as_str(), raw);
+            let text = starter_scope(template);
+            assert!(text.contains("//"), "{raw} template is commented");
+            let scope = ScopeFile::from_ron(&text).unwrap();
+            assert!(
+                scope.grant.tools.is_empty() && scope.grant.categories.is_empty(),
+                "{raw}: deny-by-default template grants nothing"
+            );
+            assert!(
+                !scope.audit.store_clips && !scope.audit.store_screenshots,
+                "{raw}: audit flags start false"
+            );
+            assert_eq!(scope.limits.rate, RateLimit::default());
+            let expected = match template {
+                ScopeTemplate::Own => Visibility::Own,
+                ScopeTemplate::All | ScopeTemplate::Dashboard => Visibility::All,
+            };
+            assert_eq!(scope.sessions.visibility, expected);
+        }
+        assert_eq!(ScopeTemplate::LITERALS, ["own", "all", "dashboard"]);
+        let err = ScopeTemplate::parse("everything").unwrap_err();
+        assert_eq!(
+            err.message,
+            crate::strings::invalid_scope_template("everything")
         );
     }
 

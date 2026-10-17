@@ -129,6 +129,17 @@ pub fn frame_scope_auth_required(scope: &str) -> String {
 /// (`[a-z0-9][a-z0-9_-]{0,63}`), so path characters can never name a scope (07, 08).
 pub const INVALID_SCOPE_NAME: &str = "invalid scope name";
 
+/// `config scope create --template` got a name outside the pinned set (04, 08). The template
+/// decides visibility and audit defaults, so a typo must refuse rather than fall back.
+pub fn invalid_scope_template(raw: &str) -> String {
+    format!("invalid scope template {raw:?}; expected own, all, or dashboard")
+}
+
+/// `config scope create` never overwrites: an existing scope file refuses (04, 08).
+pub fn scope_already_exists(name: &str) -> String {
+    format!("scope {name:?} already exists")
+}
+
 /// `manager.bind` is a host or host:port; the unix socket has its own key-less transport (04).
 pub const MANAGER_BIND_INVALID: &str = "manager.bind takes a host or host:port address";
 
@@ -489,6 +500,18 @@ mod tests {
             (
                 fill(&bullet("no session specified"), &[]),
                 NO_SESSION_SPECIFIED.to_string(),
+            ),
+            (
+                fill(&bullet("invalid scope name"), &[]),
+                INVALID_SCOPE_NAME.to_string(),
+            ),
+            (
+                fill(&bullet("already exists"), &[("name", "dashboard")]),
+                scope_already_exists("dashboard"),
+            ),
+            (
+                fill(&bullet("invalid scope template"), &[("raw", "dashbord")]),
+                invalid_scope_template("dashbord"),
             ),
         ];
 

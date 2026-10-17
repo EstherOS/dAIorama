@@ -235,7 +235,7 @@ pub enum ConfigAction {
     Reload,
     /// Validate core config and/or scope files.
     Validate { path: Option<PathBuf> },
-    /// Scope definition reads.
+    /// Scope definitions: read them, and create one from a template.
     Scope(ScopeArgs),
     /// Resolved view: which values apply where.
     Effective {
@@ -258,6 +258,13 @@ pub enum ScopeAction {
     Get { name: String },
     /// Validate one scope definition.
     Validate { name: String },
+    /// Write a new scope definition from a template (prints its path).
+    Create {
+        name: String,
+        /// own (default) | all | dashboard
+        #[arg(long, default_value = "own")]
+        template: String,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -1223,6 +1230,21 @@ impl App {
                     "scope {name:?} valid: {}",
                     path.display()
                 )]))
+            }
+            ScopeAction::Create { name, template } => {
+                if !config::valid_scope_name(&name) {
+                    return Err(ErrorEnvelope::bad_request(
+                        crate::strings::INVALID_SCOPE_NAME,
+                    ));
+                }
+                let template = config::ScopeTemplate::parse(&template)?;
+                let path = paths.scope_file(&name);
+                // Render → validate → write: a template that would not load never lands.
+                let text = config::starter_scope(template);
+                ScopeFile::from_ron(&text)?;
+                config::write_scope_new(&path, &name, &text)?;
+                // The path only (04): the file is the answer, not a copy of its contents.
+                Ok(Answer::from_lines(vec![path.display().to_string()]))
             }
         }
     }
