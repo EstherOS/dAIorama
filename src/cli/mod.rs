@@ -1293,7 +1293,7 @@ impl App {
             TokenAction::Show => {
                 let token = config::read_token(&paths)?.ok_or_else(|| {
                     ErrorEnvelope::bad_request_local(format!(
-                        "no token file at {}; it is generated on the first non-loopback bind, or by 'daiorama token rotate'",
+                        "no token file at {}; it is generated on the first network listen bind, or by 'daiorama token rotate'",
                         paths.token_file().display()
                     ))
                 })?;

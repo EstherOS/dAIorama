@@ -438,3 +438,162 @@ fn drain_round_trip() {
     let out = run_binary(&conf, &data, &run, &["daemon", "end", "--instance", "dr"]);
     assert!(out.status.success(), "cleanup end: {out:?}");
 }
+
+// ---------------------------------------------------------------------------
+// Token lifecycle (07 A5, F12): local-only commands, the rotation window's file
+// semantics, and the one printed path+hint (never the value)
+// ---------------------------------------------------------------------------
+
+fn token_root(tmp: &Path) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+    let conf = tmp.join("conf");
+    let data = tmp.join("data");
+    let run = tmp.join("run");
+    let instance_config = conf.join("daiorama").join("dt");
+    std::fs::create_dir_all(&instance_config).unwrap();
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::create_dir_all(&run).unwrap();
+    std::fs::write(
+        instance_config.join("config.ron"),
+        "(version: 1, limits: (mode: off))\n",
+    )
+    .unwrap();
+    (conf, data, run)
+}
+
+#[test]
+fn token_commands_refuse_remote() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let (conf, data, run) = token_root(tmp.path());
+    for args in [
+        [
+            "token",
+            "show",
+            "--remote",
+            "127.0.0.1:8756",
+            "--instance",
+            "dt",
+        ],
+        [
+            "token",
+            "rotate",
+            "--remote",
+            "127.0.0.1:8756",
+            "--instance",
+            "dt",
+        ],
+    ] {
+        let out = run_binary(&conf, &data, &run, &args);
+        assert!(!out.status.success(), "{args:?} must refuse: {out:?}");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            text.contains("local-instance only"),
+            "{args:?} refusal names the rule: {text}"
+        );
+    }
+}
+
+#[test]
+fn token_rotate_writes_0600_and_show_prints_it_locally() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let (conf, data, run) = token_root(tmp.path());
+    let out = run_binary(&conf, &data, &run, &["token", "rotate", "--instance", "dt"]);
+    assert!(out.status.success(), "rotate: {out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let printed = stdout
+        .lines()
+        .next()
+        .expect("a value line")
+        .trim()
+        .to_string();
+    assert_eq!(printed.len(), 32, "a 32-hex id: {printed}");
+    assert!(
+        printed
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()),
+        "lowercase hex: {printed}"
+    );
+    let token_file = data.join("daiorama").join("dt").join("token");
+    let on_disk = std::fs::read_to_string(&token_file).unwrap();
+    assert_eq!(
+        on_disk.trim(),
+        printed,
+        "the file holds what rotate printed"
+    );
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(
+        std::fs::metadata(&token_file).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+
+    let show = run_binary(&conf, &data, &run, &["token", "show", "--instance", "dt"]);
+    assert!(show.status.success(), "show: {show:?}");
+    let shown = String::from_utf8_lossy(&show.stdout).to_string();
+    assert!(
+        shown.contains(&printed),
+        "show prints the value locally: {shown}"
+    );
+    assert!(shown.contains("path:"), "{shown}");
+
+    let show_json = run_binary(
+        &conf,
+        &data,
+        &run,
+        &["token", "show", "--json", "--instance", "dt"],
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&show_json.stdout).expect("json shape");
+    assert_eq!(parsed["token"].as_str(), Some(printed.as_str()));
+    assert!(parsed["path"].as_str().unwrap().ends_with("/token"));
+}
+
+/// F12: the one surface that prints at generation time prints the path and the hint, never the
+/// value; a network listen mints the token when none exists (07 A5).
+#[test]
+fn network_listen_prints_the_path_and_hint_never_the_value() {
+    use std::io::{BufRead, BufReader};
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let (conf, data, run) = token_root(tmp.path());
+    let mut command = Command::new(binary());
+    env_on(&mut command, &conf, &data, &run);
+    command
+        .args(["mcp", "--listen", "127.0.0.1:0", "--instance", "dt"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped());
+    let mut child = command.spawn().expect("bridge spawns");
+    let stderr = child.stderr.take().unwrap();
+    let mut lines = BufReader::new(stderr).lines();
+    let mut seen = Vec::new();
+    for _ in 0..50 {
+        let Some(Ok(line)) = lines.next() else {
+            break;
+        };
+        let listening = line.starts_with("listening on ");
+        seen.push(line);
+        if listening {
+            break;
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    let text = seen.join("\n");
+    assert!(
+        text.contains("(mode 0600)"),
+        "mint names the path and mode: {text}"
+    );
+    assert!(
+        text.contains("'daiorama token show' prints the value"),
+        "mint prints the hint: {text}"
+    );
+    let token = std::fs::read_to_string(data.join("daiorama").join("dt").join("token"))
+        .expect("minted token file");
+    let token = token.trim();
+    assert_eq!(token.len(), 32);
+    assert!(
+        !text.contains(token),
+        "the value never reaches stderr: {text}"
+    );
+}

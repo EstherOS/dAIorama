@@ -738,3 +738,19 @@ in-process front also keeps the gate in the same process that mints the credenti
 *Rejected:* shipping websockify (a second process, second version, second auth story); a
 vendored minimal page (JS supply-chain and review cost for a stopgap); accepting an upgrade
 without `Origin` (a browser always sends it; scripts use the header).
+
+## Token lifecycle: the commands and their prints, and the surface that is still missing
+
+`token show` / `token rotate` are local-instance only (refused with `--remote`), and the one
+generation-time print is the path plus "run `daiorama token show`" — never the value (F12). The
+network listen surface mints the token on its first bind, loopback included, because a network
+listener never runs tokenless (07). `token rotate` writes the new value to the file; a running
+process keeps the value it adopted at start until it restarts, and `config reload` reports
+`token` under `restart_only` (the file no longer matches the adopted value).
+
+**The manager's own TCP surface is not bound yet** — `manager.bind` is a restart-only config key
+with no consumer in `serve`, and the unix socket stays tokenless by rule (07). So today the
+"running manager keeps accepting the old token" clause has nothing to enforce it against: there
+is no server-side token gate, only the client-side `requires_token` check and the bridge's own
+listener gate. Binding the manager TCP surface **with** its token gate is the `P4-ENDPOINT` row;
+until it lands, the rotation window is file semantics, not an enforced contract.
