@@ -830,7 +830,7 @@ async fn a_gate_failure_closes_the_connection() {
     }
     let tail = String::from_utf8_lossy(&tail);
     assert!(
-        tail.contains("scope_auth_required") || tail.contains("token_required"),
+        tail.contains("scope_auth_required"),
         "the refusal body, nothing else: {tail}"
     );
 

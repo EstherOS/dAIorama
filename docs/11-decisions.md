@@ -570,7 +570,7 @@ connection too.
 
 ## A refused request whose body is in flight keeps its refusal
 
-A refusal (`gate` or over-cap size) writes its response, half-closes the write side, then drains
+Every refusal site — gate, over-cap size, malformed head, missing Host, origin, wrong method/target, chunked, duplicate/invalid `Content-Length` — writes its response, half-closes the write side, then drains
 a bounded slice of the body (<= 64 KiB, <= 100 ms) before the connection closes — only when the
 request carried no `Expect: 100-continue` (a client that waited never sent a body). The
 half-close is what makes it reliable: the FIN goes out with the response, so the later close does

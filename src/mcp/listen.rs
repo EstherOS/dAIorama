@@ -256,7 +256,7 @@ async fn serve_connection(network: &Arc<Network>, stream: TcpStream) -> Result<(
             HeadRead::TooLarge => {
                 let reply =
                     envelope_reply(400, ErrorEnvelope::bad_request(strings::HEAD_TOO_LARGE));
-                write_reply(input.get_mut(), &reply).await?;
+                refuse(&mut input, &reply, None).await?;
                 return Ok(());
             }
             HeadRead::Lines(lines) => lines,
@@ -267,13 +267,13 @@ async fn serve_connection(network: &Arc<Network>, stream: TcpStream) -> Result<(
                 400,
                 ErrorEnvelope::bad_request(strings::MALFORMED_HTTP_REQUEST),
             );
-            write_reply(input.get_mut(), &reply).await?;
+            refuse(&mut input, &reply, None).await?;
             return Ok(());
         };
 
         let Some(host) = request.header("host") else {
             let reply = envelope_reply(400, ErrorEnvelope::bad_request(strings::MISSING_HOST));
-            write_reply(input.get_mut(), &reply).await?;
+            refuse(&mut input, &reply, Some(&request)).await?;
             return Ok(());
         };
         if let Some(origin) = request.header("origin")
@@ -283,7 +283,7 @@ async fn serve_connection(network: &Arc<Network>, stream: TcpStream) -> Result<(
                 403,
                 ErrorEnvelope::bad_request(strings::origin_not_allowed(origin)),
             );
-            write_reply(input.get_mut(), &reply).await?;
+            refuse(&mut input, &reply, Some(&request)).await?;
             return Ok(());
         }
         if request.method != "POST" || request.target != "/mcp" {
@@ -292,7 +292,7 @@ async fn serve_connection(network: &Arc<Network>, stream: TcpStream) -> Result<(
                 status,
                 ErrorEnvelope::bad_request(strings::NETWORK_POST_ONLY),
             );
-            write_reply(input.get_mut(), &reply).await?;
+            refuse(&mut input, &reply, Some(&request)).await?;
             return Ok(());
         }
         if request.header("transfer-encoding").is_some() {
@@ -300,7 +300,7 @@ async fn serve_connection(network: &Arc<Network>, stream: TcpStream) -> Result<(
                 400,
                 ErrorEnvelope::bad_request(strings::CHUNKED_UNSUPPORTED),
             );
-            write_reply(input.get_mut(), &reply).await?;
+            refuse(&mut input, &reply, Some(&request)).await?;
             return Ok(());
         }
 
@@ -309,7 +309,7 @@ async fn serve_connection(network: &Arc<Network>, stream: TcpStream) -> Result<(
                 400,
                 ErrorEnvelope::bad_request(strings::DUPLICATE_CONTENT_LENGTH),
             );
-            write_reply(input.get_mut(), &reply).await?;
+            refuse(&mut input, &reply, Some(&request)).await?;
             return Ok(());
         }
 
@@ -317,7 +317,7 @@ async fn serve_connection(network: &Arc<Network>, stream: TcpStream) -> Result<(
             Ok(length) => length,
             Err(message) => {
                 let reply = envelope_reply(400, ErrorEnvelope::bad_request(message));
-                write_reply(input.get_mut(), &reply).await?;
+                refuse(&mut input, &reply, None).await?;
                 return Ok(());
             }
         };
@@ -328,22 +328,10 @@ async fn serve_connection(network: &Arc<Network>, stream: TcpStream) -> Result<(
             Ok(caller) => caller,
             Err(envelope) => {
                 let reply = Reply::refusal(200, json_rpc_envelope_error(None, &envelope));
-                write_reply(input.get_mut(), &reply).await?;
-                // A refused gate closes: answering keep-alive would leave a body this request
-                // never sent — an `Expect: 100-continue` client stops on the refusal — to be
-                // read as the next request's head. Keep-alive after a refused auth buys
-                // nothing; a fresh connection starts clean. A client already bursting a body
-                // gets a bounded drain first, so the refusal is not lost to a reset.
-                // Half-close first: the response is complete, so the FIN goes out before the
-                // close can turn into a reset; the drain keeps the receive queue from filling.
-                input.get_mut().shutdown().await?;
-                if !expects_continue(&request) {
-                    let _ = tokio::time::timeout(
-                        LINGER_WINDOW,
-                        drain_bounded(&mut input, LINGER_BYTES),
-                    )
-                    .await;
-                }
+                // A refused gate closes: keep-alive would leave a body this request never sent
+                // to be read as the next request's head. The refusal half-closes and lingers
+                // (see `refuse`), so a body already in flight does not reset it away.
+                refuse(&mut input, &reply, Some(&request)).await?;
                 return Ok(());
             }
         };
@@ -356,13 +344,7 @@ async fn serve_connection(network: &Arc<Network>, stream: TcpStream) -> Result<(
                     &ErrorEnvelope::bad_request(strings::frame_too_large(MAX_FRAME_BYTES)),
                 ),
             );
-            write_reply(input.get_mut(), &reply).await?;
-            input.get_mut().shutdown().await?;
-            if !expects_continue(&request) {
-                let _ =
-                    tokio::time::timeout(LINGER_WINDOW, drain_bounded(&mut input, LINGER_BYTES))
-                        .await;
-            }
+            refuse(&mut input, &reply, Some(&request)).await?;
             return Ok(());
         }
         if expects_continue(&request) {
@@ -459,6 +441,23 @@ where
             break;
         }
         total += n;
+    }
+    Ok(())
+}
+
+/// Refuse and end the connection: write the reply, half-close so the FIN rides out with the
+/// response, then drain a bounded slice of a body that is already in flight — unless the client
+/// waited on `Expect: 100-continue` (it sent no body). Every refusal site routes through here,
+/// so no refusal loses its body to a reset.
+async fn refuse(
+    input: &mut BufReader<TcpStream>,
+    reply: &Reply,
+    request: Option<&RequestHead>,
+) -> std::io::Result<()> {
+    write_reply(input.get_mut(), reply).await?;
+    input.get_mut().shutdown().await?;
+    if request.is_none_or(|request| !expects_continue(request)) {
+        let _ = tokio::time::timeout(LINGER_WINDOW, drain_bounded(input, LINGER_BYTES)).await;
     }
     Ok(())
 }

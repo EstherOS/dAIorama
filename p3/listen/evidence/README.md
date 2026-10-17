@@ -68,5 +68,22 @@ pending body into a reset and the refusal's body is lost.
 | 1 MiB | 251 bytes, intact | 251 bytes, intact |
 | 4 MiB | head 200, **0 body bytes**, ECONNRESET | 251 bytes, intact (4/4 runs) |
 
-The fix: write the refusal, half-close the write side (the FIN rides out with the response),
-then drain a bounded slice (<= 64 KiB, <= 100 ms) before closing.
+The fix: one `refuse()` helper — write the reply, half-close the write side (the FIN rides out
+with the response), then drain a bounded slice (<= 64 KiB, <= 100 ms) before closing, unless the
+request carried `Expect: 100-continue`. Every refusal site routes through it.
+
+All refusal classes, 4 MiB body in flight (`delivered` = the refusal's JSON body arrived whole):
+
+| Class | Before (`29e0417`) | After |
+|---|---|---|
+| gate (no creds) | 0 bytes | 408 bytes `token_required` |
+| 404 wrong path | 0 | 242 `bad_request` |
+| 405 GET /mcp | 0 | 242 |
+| 400 duplicate Host | 0 | 214 |
+| 400 missing Host | 0 | 208 |
+| 403 origin mismatch | 0 | 256 |
+| 400 chunked | 0 | 250 |
+| 400 duplicate Content-Length | 0 | 218 |
+| 400 invalid Content-Length | 0 | 232 |
+
+Delivered: **0/9 before, 9/9 after**.

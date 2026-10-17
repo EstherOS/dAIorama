@@ -79,11 +79,16 @@ def read_response(sock, limit=10.0):
     return status, body[:length] if length else body
 
 
-def probe(size, port, token, host):
+def head_of(method, path, headers, size, framed=True):
+    lines = [f"{method} {path} HTTP/1.1"] + list(headers)
+    if framed:
+        lines.append(f"Content-Length: {size}")
+    return ("\r\n".join(lines) + "\r\n\r\n").encode()
+
+
+def probe(size, port, head, token=None, host=None):
     body = b"x" * size
     sock = socket.create_connection(("127.0.0.1", port), timeout=10.0)
-    head = (f"POST /mcp HTTP/1.1\r\nHost: {host}\r\nDaiorama-Token: {token}\r\n"
-            f"Content-Length: {size}\r\n\r\n").encode()
     send_error = []
 
     def sender():
@@ -159,8 +164,9 @@ def main():
 
         print("=== a refused request whose body is already in flight ===")
         fails = 0
-        for size, expect_body in ((256 * 1024, True), (1024 * 1024, True), (4 * 1024 * 1024, True)):
-            status, payload, code, sender = probe(size, port, token, host)
+        for size in (256 * 1024, 1024 * 1024, 4 * 1024 * 1024):
+            head = head_of("POST", "/mcp", [f"Host: {host}", f"Daiorama-Token: {token}"], size)
+            status, payload, code, sender = probe(size, port, head)
             ok = ("200" in status) and (len(payload) > 0) and (code in ("token_required",
                                                                        "scope_auth_required"))
             if size == 4 * 1024 * 1024:
@@ -171,6 +177,34 @@ def main():
                       f"body_bytes={len(payload)} code={code!r} sender={sender}")
             if not ok:
                 fails += 1
+        print("\n=== every refusal class, 4 MiB body in flight ===")
+        gate = [f"Host: {host}"]
+        classes = [
+            ("gate (no creds)", "POST", "/mcp", gate),
+            ("404 wrong path", "POST", "/wrongpath", gate),
+            ("405 GET /mcp", "GET", "/mcp", gate),
+            ("400 duplicate Host", "POST", "/mcp", [f"Host: {host}", "Host: evil.example"]),
+            ("400 missing Host", "POST", "/mcp", []),
+            ("403 origin mismatch", "POST", "/mcp", [f"Host: {host}", "Origin: http://evil.example"]),
+            ("400 chunked", "POST", "/mcp", gate + ["Transfer-Encoding: chunked"]),
+            ("400 duplicate Content-Length", "POST", "/mcp",
+             gate + ["Content-Length: 5", "Content-Length: 6"]),
+            ("400 invalid Content-Length", "POST", "/mcp", gate + ["Content-Length: +46"]),
+        ]
+        delivered = 0
+        for label, method, path, headers in classes:
+            framed = not any(h.lower().startswith(("transfer-encoding", "content-length"))
+                             for h in headers)
+            head = head_of(method, path, headers, 4 * 1024 * 1024, framed=framed)
+            status, payload, code, sender = probe(4 * 1024 * 1024, port, head)
+            ok = bool(payload) and code is not None
+            delivered += 1 if ok else 0
+            print(f"[{'PASS' if ok else 'LOST'}] {label} :: {status!r} "
+                  f"body_bytes={len(payload)} code={code!r} sender={sender}")
+            if not ok:
+                fails += 1
+        print(f"delivered={delivered}/{len(classes)}")
+
         print(f"\nFAILS={fails}")
         sys.exit(0 if fails == 0 else 1)
     finally:

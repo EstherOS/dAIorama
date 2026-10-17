@@ -1,9 +1,21 @@
 bin=daiorama label=after
-port=18760 manager_pid=249790 bridge_pid=249796
+port=18760 manager_pid=255354 bridge_pid=255360
 
 === a refused request whose body is already in flight ===
 [INFO] 256 KiB burst :: 'HTTP/1.1 200 OK' body_bytes=251 code='scope_auth_required' sender=clean
 [INFO] 1024 KiB burst :: 'HTTP/1.1 200 OK' body_bytes=251 code='scope_auth_required' sender=clean
 [OK]   4 MiB burst :: 'HTTP/1.1 200 OK' body_bytes=251 code='scope_auth_required' sender=BrokenPipeError
+
+=== every refusal class, 4 MiB body in flight ===
+[PASS] gate (no creds) :: 'HTTP/1.1 200 OK' body_bytes=408 code='token_required' sender=BrokenPipeError
+[PASS] 404 wrong path :: 'HTTP/1.1 404 Not Found' body_bytes=242 code='bad_request' sender=BrokenPipeError
+[PASS] 405 GET /mcp :: 'HTTP/1.1 405 Method Not Allowed' body_bytes=242 code='bad_request' sender=BrokenPipeError
+[PASS] 400 duplicate Host :: 'HTTP/1.1 400 Bad Request' body_bytes=214 code='bad_request' sender=BrokenPipeError
+[PASS] 400 missing Host :: 'HTTP/1.1 400 Bad Request' body_bytes=208 code='bad_request' sender=BrokenPipeError
+[PASS] 403 origin mismatch :: 'HTTP/1.1 403 Forbidden' body_bytes=256 code='bad_request' sender=BrokenPipeError
+[PASS] 400 chunked :: 'HTTP/1.1 400 Bad Request' body_bytes=250 code='bad_request' sender=BrokenPipeError
+[PASS] 400 duplicate Content-Length :: 'HTTP/1.1 400 Bad Request' body_bytes=218 code='bad_request' sender=BrokenPipeError
+[PASS] 400 invalid Content-Length :: 'HTTP/1.1 400 Bad Request' body_bytes=232 code='bad_request' sender=BrokenPipeError
+delivered=9/9
 
 FAILS=0
