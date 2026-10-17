@@ -636,10 +636,11 @@ adversarial pass on the merged shape (`p3/media/evidence/probe-media-stall.py`):
 
 - **Its refusals ride the one `refuse` path.** The first pass wrote media refusals with a
   private writer that flushed and returned, so the close turned into a reset while the client
-  was still bursting a body: on a 4 MiB burst the identity-gate body arrived 0 of 4 runs
-  (status then `401`, since moved to `403` by the id-less-refusal ruling above) and the 405 1 of
-  4. Media refusals are now `Reply`s through the same `refuse` (write → half-close → bounded
-  linger unless `Expect`), and the same burst delivers 4 of 4 for both statuses.
+  was still bursting a body. On the pre-ruling (401-era) tree the identity-gate body arrived
+  0 of 4 runs; on the before tree (`0020763`, 403 by then) the same burst is racy — the 405 1 of
+  4, the 403 3 of 4. Media refusals are now `Reply`s through the same `refuse` (write →
+  half-close → bounded linger unless `Expect`), and the fixed build delivers 4 of 4 for both
+  statuses.
 - **A client that stops reading is cut off.** Streaming wrote with `write_all` and no bound: a
   client that fetched a large artifact and accepted nothing held the task in an unbounded write
   — the read progress bound cannot fire while the task is blocked writing, so the connection

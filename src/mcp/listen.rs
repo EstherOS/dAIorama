@@ -650,14 +650,12 @@ fn media_malformed() -> ErrorEnvelope {
 /// chunks. No whole-body buffering — the manager's single-use lifetime relies on the fetch
 /// completing, not on the bridge hoarding it.
 async fn stream_media(stream: &mut TcpStream, upstream: MediaUpstream) -> std::io::Result<()> {
-    let reason = if upstream.status == 200 {
-        "OK"
-    } else {
-        "Not Found"
-    };
-    let head = format!(
-        "HTTP/1.1 {} {reason}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        upstream.status, upstream.content_type, upstream.length
+    let head = reply_head(
+        upstream.status,
+        &upstream.content_type,
+        upstream.length,
+        true,
+        None,
     );
     write_bounded(stream, head.as_bytes()).await?;
     let MediaUpstream {
@@ -857,7 +855,13 @@ async fn write_reply(stream: &mut TcpStream, reply: &Reply) -> Result<(), std::i
         }
         None => (None, 0),
     };
-    let head = reply_head(reply.status, length, reply.close, reply.allow);
+    let head = reply_head(
+        reply.status,
+        "application/json",
+        length,
+        reply.close,
+        reply.allow,
+    );
     write_bounded(stream, head.as_bytes()).await?;
     if let Some(body) = body {
         write_bounded(stream, &body).await?;
@@ -865,10 +869,16 @@ async fn write_reply(stream: &mut TcpStream, reply: &Reply) -> Result<(), std::i
     stream.flush().await
 }
 
-/// The response head, shared by the MCP target and the media surface so a status, a close and
-/// an `Allow` value cannot drift between them. A 405 names the method it does allow: `POST`
-/// on `/mcp`, `GET` on `/media/<id>`.
-fn reply_head(status: u16, length: usize, close: bool, allow: Option<&str>) -> String {
+/// The response head, shared by every reply on this listener — MCP answers, media successes and
+/// refusals — so a status, a content type, a close and an `Allow` value cannot drift between
+/// them. A 405 names the method it does allow: `POST` on `/mcp`, `GET` on `/media/<id>`.
+fn reply_head(
+    status: u16,
+    content_type: &str,
+    length: usize,
+    close: bool,
+    allow: Option<&str>,
+) -> String {
     let reason = match status {
         200 => "OK",
         202 => "Accepted",
@@ -881,7 +891,7 @@ fn reply_head(status: u16, length: usize, close: bool, allow: Option<&str>) -> S
         _ => "Error",
     };
     let mut head = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {length}\r\n\
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {length}\r\n\
          Connection: {}\r\n",
         if close { "close" } else { "keep-alive" }
     );
@@ -981,7 +991,7 @@ mod tests {
     #[test]
     fn response_heads_share_one_shape_and_name_their_allow() {
         // A 405 names the method the target does serve: POST on `/mcp`, GET on `/media/<id>`.
-        let mcp = reply_head(405, 7, true, Some("POST"));
+        let mcp = reply_head(405, "application/json", 7, true, Some("POST"));
         assert!(mcp.starts_with("HTTP/1.1 405 Method Not Allowed\r\n"));
         assert!(mcp.contains("Allow: POST\r\n"));
         assert!(!mcp.contains("Allow: GET"));
@@ -990,7 +1000,7 @@ mod tests {
             ErrorEnvelope::bad_request("media fetches are GET only"),
             Some("GET"),
         );
-        let head = reply_head(media.status, 2, media.close, media.allow);
+        let head = reply_head(media.status, "image/png", 2, media.close, media.allow);
         assert!(head.contains("Allow: GET\r\n"));
         assert!(head.contains("Connection: close\r\n"));
         // The media statuses carry their own reason phrases and a close; no `Allow` elsewhere.
@@ -998,7 +1008,13 @@ mod tests {
             let reply = media_reply(status, ErrorEnvelope::bad_request("x"), None);
             assert!(reply.close);
             assert!(reply.allow.is_none());
-            let head = reply_head(reply.status, 0, reply.close, reply.allow);
+            let head = reply_head(
+                reply.status,
+                "application/json",
+                0,
+                reply.close,
+                reply.allow,
+            );
             assert!(head.starts_with(&format!("HTTP/1.1 {status} {reason}\r\n")));
             assert!(!head.contains("Allow:"));
         }
