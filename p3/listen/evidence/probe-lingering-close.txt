@@ -1,0 +1,9 @@
+bin=daiorama label=after
+port=18760 manager_pid=249790 bridge_pid=249796
+
+=== a refused request whose body is already in flight ===
+[INFO] 256 KiB burst :: 'HTTP/1.1 200 OK' body_bytes=251 code='scope_auth_required' sender=clean
+[INFO] 1024 KiB burst :: 'HTTP/1.1 200 OK' body_bytes=251 code='scope_auth_required' sender=clean
+[OK]   4 MiB burst :: 'HTTP/1.1 200 OK' body_bytes=251 code='scope_auth_required' sender=BrokenPipeError
+
+FAILS=0

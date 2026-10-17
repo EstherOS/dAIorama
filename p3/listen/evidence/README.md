@@ -56,3 +56,17 @@ byte every 2 s is progress by the per-read bound, so the slot is still held (obs
 A total body deadline was rejected for slow authentic uploads (`docs/11`); the honest state is
 that a trickled body can still hold a slot — recorded so it is a decision, not an oversight.
 
+## probe-lingering-close.txt — a refused burst keeps its refusal
+
+`probe-lingering-close.py` bursts the body on the same connection a refusal is written to. A
+client without `Expect: 100-continue` starts sending immediately; an abrupt close turns the
+pending body into a reset and the refusal's body is lost.
+
+| Burst | Before (`29e0417`) | After |
+|---|---|---|
+| 256 KiB | 251 bytes, intact | 251 bytes, intact |
+| 1 MiB | 251 bytes, intact | 251 bytes, intact |
+| 4 MiB | head 200, **0 body bytes**, ECONNRESET | 251 bytes, intact (4/4 runs) |
+
+The fix: write the refusal, half-close the write side (the FIN rides out with the response),
+then drain a bounded slice (<= 64 KiB, <= 100 ms) before closing.

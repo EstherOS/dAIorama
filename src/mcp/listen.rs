@@ -47,6 +47,11 @@ const HEAD_DEADLINE: Duration = Duration::from_secs(15);
 /// Bound on concurrent connections, so the fd set stays bounded no matter how fast a caller
 /// opens sockets. Over-cap connections are closed on accept.
 const MAX_CONNECTIONS: usize = 64;
+/// After a refusal, a client already sending a body gets a bounded lingering close: the socket
+/// drains a small slice (time-boxed) before the FIN, so the refusal is not lost to a reset. A
+/// client that waited on `Expect: 100-continue` never sent a body and needs no drain.
+const LINGER_BYTES: usize = 64 * 1024;
+const LINGER_WINDOW: Duration = Duration::from_millis(100);
 /// JSON-RPC parse error (malformed JSON), same as the stdio bridge.
 const PARSE_ERROR: i32 = -32700;
 
@@ -327,7 +332,18 @@ async fn serve_connection(network: &Arc<Network>, stream: TcpStream) -> Result<(
                 // A refused gate closes: answering keep-alive would leave a body this request
                 // never sent — an `Expect: 100-continue` client stops on the refusal — to be
                 // read as the next request's head. Keep-alive after a refused auth buys
-                // nothing; a fresh connection starts clean.
+                // nothing; a fresh connection starts clean. A client already bursting a body
+                // gets a bounded drain first, so the refusal is not lost to a reset.
+                // Half-close first: the response is complete, so the FIN goes out before the
+                // close can turn into a reset; the drain keeps the receive queue from filling.
+                input.get_mut().shutdown().await?;
+                if !expects_continue(&request) {
+                    let _ = tokio::time::timeout(
+                        LINGER_WINDOW,
+                        drain_bounded(&mut input, LINGER_BYTES),
+                    )
+                    .await;
+                }
                 return Ok(());
             }
         };
@@ -341,12 +357,15 @@ async fn serve_connection(network: &Arc<Network>, stream: TcpStream) -> Result<(
                 ),
             );
             write_reply(input.get_mut(), &reply).await?;
+            input.get_mut().shutdown().await?;
+            if !expects_continue(&request) {
+                let _ =
+                    tokio::time::timeout(LINGER_WINDOW, drain_bounded(&mut input, LINGER_BYTES))
+                        .await;
+            }
             return Ok(());
         }
-        if request
-            .header("expect")
-            .is_some_and(|value| value.eq_ignore_ascii_case("100-continue"))
-        {
+        if expects_continue(&request) {
             input
                 .get_mut()
                 .write_all(b"HTTP/1.1 100 Continue\r\n\r\n")
@@ -416,6 +435,32 @@ where
         }
     }
     Ok(Some(body))
+}
+
+/// Whether the client asked to hold the body back until a `100 Continue`.
+fn expects_continue(request: &RequestHead) -> bool {
+    request
+        .header("expect")
+        .is_some_and(|value| value.eq_ignore_ascii_case("100-continue"))
+}
+
+/// Read and discard up to `limit` bytes; the caller bounds the time. Errors and EOF end it —
+/// courtesy to a client that is still sending, never a correctness path.
+async fn drain_bounded<R>(input: &mut R, limit: usize) -> std::io::Result<()>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let mut buf = [0u8; 8192];
+    let mut total = 0usize;
+    while total < limit {
+        let want = (limit - total).min(buf.len());
+        let n = input.read(&mut buf[..want]).await?;
+        if n == 0 {
+            break;
+        }
+        total += n;
+    }
+    Ok(())
 }
 
 async fn authenticate(

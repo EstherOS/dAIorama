@@ -567,3 +567,22 @@ request's head, and keep-alive after a refused auth buys nothing. An over-cap bo
 connection too.
 
 *Rejected:* gating only `tools/call` (leaves the parser reachable through other request shapes).
+
+## A refused request whose body is in flight keeps its refusal
+
+A refusal (`gate` or over-cap size) writes its response, half-closes the write side, then drains
+a bounded slice of the body (<= 64 KiB, <= 100 ms) before the connection closes — only when the
+request carried no `Expect: 100-continue` (a client that waited never sent a body). The
+half-close is what makes it reliable: the FIN goes out with the response, so the later close does
+not turn into a reset that discards the refusal's body.
+
+*Rationale:* a client without `Expect` starts bursting the body immediately. On a 4 MiB burst
+the un-drained close loses the refusal's body every time — head arrives, body arrives 0 bytes,
+the client's send hits ECONNRESET (evidence `probe-lingering-close-before.txt`); with the
+half-close + linger the same burst delivers the whole refusal, four runs of four (evidence
+`probe-lingering-close.txt`, `probe-lingering-close.py`). 256 KiB and 1 MiB bursts are intact
+either way — socket buffers absorb them.
+
+*Rejected:* a full drain until EOF (an unauthorised client must not be able to hold a worker by
+sending forever); `so_linger` (bounds the close, not the response's delivery); keep-alive after
+the refusal (the earlier decision stands).

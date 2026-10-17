@@ -33,7 +33,6 @@ are read-when-on pointers)._
   of the L2 image · `/media/*` pass-through on the network listener (rides the
   capture tools, W2) · a body trickled a byte at a time can still hold a
   connection slot (a total-body deadline was rejected for authentic slow
-  uploads; measured as WATCH in `probe-head-deadline.txt`) · a refused request
-  that bursts a large body without `Expect` can lose the refusal's JSON body
-  (4 MiB; 256 KiB/1 MiB intact — bounded lingering close is the follow-up,
-  `P3-TRANSPORT-FU`).
+  uploads; measured as WATCH in `probe-head-deadline.txt`) (a refused
+  request that bursts a large body now keeps its refusal — half-close plus a
+  bounded linger, see `docs/11` and `probe-lingering-close.txt`).

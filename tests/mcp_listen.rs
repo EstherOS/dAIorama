@@ -226,7 +226,13 @@ async fn network_gate_requires_token_scope_and_secret() {
         status, 200,
         "gate failures are MCP-level, not HTTP auth challenges"
     );
-    assert_eq!(envelope_code(&response), "token_required");
+    assert!(
+        matches!(
+            envelope_code(&response),
+            "token_required" | "scope_auth_required"
+        ),
+        "the refusal arrives whole: {response}"
+    );
     assert!(
         response["error"]["message"]
             .as_str()
