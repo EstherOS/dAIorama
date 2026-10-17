@@ -40,6 +40,16 @@ cgroup subtree its per-session limits need (06).
 Sessions do not survive a manager restart or a unit stop. That is the documented
 tradeoff (01, 10), not a fault.
 
+### Headless hosts: enable lingering
+
+A user unit only runs while that user's systemd manager is running. On a headless
+box nobody logs in graphically, so enable lingering once:
+
+    loginctl enable-linger "$USER"
+
+Without it, a reboot starts no user manager and `daiorama@default` stays down
+(and with it every session) until someone logs in.
+
 ### Instances
 
 One unit instance per manager instance:

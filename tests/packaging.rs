@@ -27,6 +27,16 @@ fn unit_sweeps_the_tree_and_delegates_the_cgroup() {
 }
 
 #[test]
+fn the_runbook_mentions_linger_for_headless_hosts() {
+    // 10: a user unit needs the user manager alive; on a headless box that is only
+    // true after `loginctl enable-linger`, so the runbook must not omit it.
+    assert!(
+        README.contains("loginctl enable-linger"),
+        "runbook omits linger"
+    );
+}
+
+#[test]
 fn unit_holds_no_secret_and_creates_no_directories() {
     // 08: the in-binary ensure is the only path that creates the data/runtime dirs.
     assert!(!UNIT.contains("ExecStartPre"), "{UNIT}");
