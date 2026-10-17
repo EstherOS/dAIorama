@@ -22,10 +22,11 @@ the view-port gate had no enforcer).
   the moment anything proxies or publishes a port; the component in front
   enforces per request instead. The unix socket stays tokenless — the same
   reasoning as `/var/run/docker.sock`.
-- **Any non-loopback bind requires the instance token configured.** It is
-  generated automatically the first time a non-loopback bind is requested and
-  none exists; if it cannot be generated (read-only location), startup refuses
-  loud — string in 04. Never a silently open port.
+- **Any network bind requires the instance token configured.** It is
+  generated automatically on the first network listen bind when none exists —
+  loopback included: a network listener never runs tokenless (only the unix
+  socket is tokenless). If it cannot be generated (read-only location), the
+  start refuses loud — string in 04. Never a silently open port.
 - **The view port has a real gate for well-behaved callers (A3).** The
   manager-owned **view front** serves the noVNC static page, checks the
   per-view credential below, and proxies to a loopback wayvnc. Confirmed in
@@ -54,7 +55,7 @@ the view-port gate had no enforcer).
 
 ## Instance token lifecycle (A5 — one rule, no contradiction)
 
-- **Generated on first non-loopback bind** if none exists; written to
+- **Generated on the first network listen bind** if none exists; written to
   `<data>/<instance>/token` (0600, its own file, never in ordinary config);
   at that startup the path is printed **once**, with the reminder to run
   `daiorama token show` — the value itself is never written to logs; it is

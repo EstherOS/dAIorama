@@ -61,8 +61,10 @@ on the shape that matters); per-scope secrets everywhere (local friction,
 no security gain).
 
 ### A5 — Token lifecycle · adopted · home: 07 · **review**
-One rule: generate on first non-loopback bind if absent, print path + value
-once, write 0600; refuse only when generation is impossible. `token show` /
+One rule: generate on the first network listen bind if absent (loopback
+included; only the unix socket stays tokenless), print the path plus the
+`token show` hint once — never the value (F12) — write 0600; refuse only when
+generation is impossible. `token show` /
 `token rotate` named; rotation takes effect at next startup, and the
 drops-sessions consequence is stated in output (the old "no running-state to
 migrate" note missed PDEATHSIG).
