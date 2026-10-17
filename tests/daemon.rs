@@ -217,6 +217,46 @@ fn config_getset_round_trip() {
         "{stdout}"
     );
 
+    // A restart-only key states restart, not reload — both call paths (04/08). The remote
+    // set answers over RPC; the local set probes the socket and takes the same branch.
+    let restart_line = "set manager.bind = 127.0.0.1:9; restart-only: a running manager keeps \
+                        the old value until it restarts ('daiorama config reload' will not apply it)";
+    let out = run_binary(
+        &conf,
+        &data,
+        &run,
+        &[
+            "--instance",
+            "cg",
+            "--remote",
+            socket.as_str(),
+            "config",
+            "set",
+            "manager.bind",
+            "127.0.0.1:9",
+        ],
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(out.status.success(), "remote config set bind: {out:?}");
+    assert!(stdout.contains(restart_line), "{stdout}");
+
+    let out = run_binary(
+        &conf,
+        &data,
+        &run,
+        &[
+            "--instance",
+            "cg",
+            "config",
+            "set",
+            "manager.bind",
+            "127.0.0.1:9",
+        ],
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(out.status.success(), "local config set bind: {out:?}");
+    assert!(stdout.contains(restart_line), "{stdout}");
+
     // Read it back over the socket, and via the cold local read — one file, one answer.
     let out = run_binary(
         &conf,

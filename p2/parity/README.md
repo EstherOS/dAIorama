@@ -51,15 +51,20 @@ test covers all four methods in both directions (refused with a key, accepted wi
 
 ## Observations (open, low severity)
 
-- **O-1 — `config set` on a restart-only key names reload.** With a manager running, `config
-  set manager.bind …` prints "a running manager keeps the old value until 'daiorama config
-  reload' (or restart)", but reload reports `manager.bind` as restart-only and does not apply
-  it. 04 asks the output to state *which of the two* applies; today it always names reload
-  first. Recoverable (reload names the restriction), wording touch on an operator string —
-  left for a deliberate decision rather than folded into this pass.
-- **O-2 — `config.lock` is not in 08's filesystem table.** The config write lock (P2's race
-  fix) leaves a sibling `<config>.lock` file beside `config.ron`. 08's "exact paths" table
-  does not mention it. One line in 08 at the next docs touch.
+- **O-1 (fixed) — `config set` on a restart-only key named reload.** With a manager running,
+  `config set manager.bind …` printed "a running manager keeps the old value until 'daiorama
+  config reload' (or restart)", but reload reports `manager.bind` as restart-only and does not
+  apply it. 04 asks the output to state *which of the two* applies. Now: restart-only keys
+  answer `restart-only: a running manager keeps the old value until it restarts ('daiorama
+  config reload' will not apply it)` on both call paths (local probe and `--remote`); reloadable
+  keys keep the reload line. Unit + daemon tests cover both branches.
+- **O-2 (fixed) — `config.lock` is not in 08's filesystem table.** The config write lock (P2's
+  race fix) leaves a zero-length sibling `<config>.lock` beside `config.ron`. 08's "exact
+  paths" table now names `${XDG_CONFIG_HOME:-~/.config}/daiorama/<instance>/config.lock`.
+- **O-4 (fixed) — the human `config reload` line did not name applied keys.** The manager
+  returns `reloaded`, and `--json` carried it, but the human line said only "config reloaded"
+  — a reload that applied changes read exactly like a no-op (found while proving O-1 live).
+  Now `config reloaded: sessions.max_global`; the empty form stays `config reloaded`.
 - **O-3 — unbuilt methods answer `internal` before validating params.** `daemon_end` with a
   stray key answers `internal` (`not implemented yet`), not `bad_request`: the method's pinned
   parameter surface does not exist yet, so there is nothing to validate against. Revisit when

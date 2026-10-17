@@ -859,23 +859,22 @@ impl App {
     ) -> Result<Answer, ErrorEnvelope> {
         let spec = config::key_spec(&key)?;
         let value = parse_value(&key, &raw)?;
+        let rendered = value.to_grammar();
+        let restart_only = config::RESTART_ONLY_KEYS.contains(&spec.path);
         if self.remote.is_some() {
             if spec.authority == config::Authority::ClientLocal {
                 return Err(ErrorEnvelope::bad_request(format!(
                     "key {key:?} is client-local; it does not exist on a remote manager"
                 )));
             }
-            let params = json!({"key": key, "value": value.to_grammar()});
+            let params = json!({"key": key, "value": rendered.clone()});
             return match self
                 .call(Class::Cold, methods::CONFIG_SET, Some(params))
                 .await?
             {
                 Some(result) => Ok(Answer::new(
                     result,
-                    vec![format!(
-                        "set {key} = {}; a running manager keeps the old value until 'daiorama config reload' (or restart)",
-                        value.to_grammar()
-                    )],
+                    vec![config_set_line(&key, &rendered, true, restart_only)],
                 )),
                 None => Ok(Answer::cold_no_manager()),
             };
@@ -890,17 +889,7 @@ impl App {
         let env = EnvView::from_process();
         let address = Address::Unix(env.socket_path(&self.instance));
         let running = Client::probe(&address, Duration::from_millis(200)).await;
-        let line = if running {
-            format!(
-                "set {key} = {}; a running manager keeps the old value until 'daiorama config reload' (or restart)",
-                value.to_grammar()
-            )
-        } else {
-            format!(
-                "set {key} = {}; takes effect at next manager start",
-                value.to_grammar()
-            )
-        };
+        let line = config_set_line(&key, &rendered, running, restart_only);
         Ok(Answer::from_lines(vec![line]))
     }
 
@@ -991,7 +980,7 @@ impl App {
         // Cold class: RPCs a running manager, never starts one (04).
         match self.call(Class::Cold, methods::CONFIG_RELOAD, None).await? {
             Some(result) => {
-                let mut human = vec!["config reloaded".to_string()];
+                let mut human = vec![config_reload_line(&result)];
                 if let Some(restart_only) = result.get("restart_only").and_then(Value::as_array) {
                     let names: Vec<String> = restart_only
                         .iter()
@@ -1250,6 +1239,35 @@ impl App {
 
 fn on_off(value: bool) -> &'static str {
     if value { "on" } else { "off" }
+}
+
+/// 04/08: the `config set` line states which applies — a reload, or a restart.
+fn config_set_line(key: &str, rendered: &str, running: bool, restart_only: bool) -> String {
+    if !running {
+        return format!("set {key} = {rendered}; takes effect at next manager start");
+    }
+    if restart_only {
+        return format!(
+            "set {key} = {rendered}; restart-only: a running manager keeps the old value until it restarts ('daiorama config reload' will not apply it)"
+        );
+    }
+    format!(
+        "set {key} = {rendered}; a running manager keeps the old value until 'daiorama config reload' (or restart)"
+    )
+}
+
+/// 04/08: name the keys a reload applied — a bare "config reloaded" reads as a no-op.
+fn config_reload_line(result: &Value) -> String {
+    let names: Vec<&str> = result
+        .get("reloaded")
+        .and_then(Value::as_array)
+        .map(|list| list.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    if names.is_empty() {
+        "config reloaded".to_string()
+    } else {
+        format!("config reloaded: {}", names.join(", "))
+    }
 }
 
 /// Generic object rendering: `key: value` per field, nested values as compact JSON.
@@ -1736,6 +1754,41 @@ mod tests {
                 .is_some_and(|name| name.to_string_lossy().contains("daiorama")),
             "unexpected program {}",
             program.display()
+        );
+    }
+
+    #[test]
+    fn config_set_line_states_reload_or_restart() {
+        // 04/08: the line states which of the two applies — never both for a restart-only key.
+        assert_eq!(
+            config_set_line("sessions.max_global", "25", true, false),
+            "set sessions.max_global = 25; a running manager keeps the old value until \
+             'daiorama config reload' (or restart)"
+        );
+        assert_eq!(
+            config_set_line("manager.bind", "127.0.0.1:9", true, true),
+            "set manager.bind = 127.0.0.1:9; restart-only: a running manager keeps the old \
+             value until it restarts ('daiorama config reload' will not apply it)"
+        );
+        assert_eq!(
+            config_set_line("manager.bind", "", false, true),
+            "set manager.bind = ; takes effect at next manager start"
+        );
+    }
+
+    #[test]
+    fn config_reload_line_names_applied_keys() {
+        assert_eq!(
+            config_reload_line(&json!({"reloaded": [], "restart_only": []})),
+            "config reloaded"
+        );
+        assert_eq!(
+            config_reload_line(&json!({"reloaded": ["sessions.max_global"]})),
+            "config reloaded: sessions.max_global"
+        );
+        assert_eq!(
+            config_reload_line(&json!({"reloaded": ["a", "b"]})),
+            "config reloaded: a, b"
         );
     }
 }

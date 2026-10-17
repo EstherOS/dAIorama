@@ -1,0 +1,32 @@
+# config set — reload vs restart wording (04/08), live against a real manager
+# binary: p2/parity-followups-esther; fresh XDG root; instance pl
+
+## cold: no manager yet
+$ daiorama --instance pl config set limits.mode off
+set limits.mode = off; takes effect at next manager start
+
+## start the manager
+$ daiorama --instance pl daemon start
+started manager (mode=background, pid=125082) socket=<scratch>/run/daiorama/pl/manager.sock
+
+## reloadable key (sessions.max_global) — reload applies
+$ daiorama --instance pl config set sessions.max_global 30
+set sessions.max_global = 30; a running manager keeps the old value until 'daiorama config reload' (or restart)
+
+## restart-only key (manager.bind) — local path, manager running
+$ daiorama --instance pl config set manager.bind 127.0.0.1:9
+set manager.bind = 127.0.0.1:9; restart-only: a running manager keeps the old value until it restarts ('daiorama config reload' will not apply it)
+
+## restart-only key (manager.bind) — --remote path
+$ daiorama --instance pl --remote <scratch>/run/daiorama/pl/manager.sock config set manager.bind 127.0.0.1:9
+set manager.bind = 127.0.0.1:9; restart-only: a running manager keeps the old value until it restarts ('daiorama config reload' will not apply it)
+
+## the manager agrees at reload: bind stays restart-only
+$ daiorama --instance pl config reload
+config reloaded: sessions.max_global
+restart-only (takes effect at next manager start): manager.bind
+
+## cleanup
+$ daiorama --instance pl daemon end
+stopped manager (pid 125082)
+

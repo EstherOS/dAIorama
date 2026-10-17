@@ -9,6 +9,7 @@ without colliding token/history paths. `--instance <name>` selects; default
 | kind | path | notes |
 |------|------|-------|
 | core config | `${XDG_CONFIG_HOME:-~/.config}/daiorama/<instance>/config.ron` | dot-path keys, one nesting level max |
+| config write lock | `${XDG_CONFIG_HOME:-~/.config}/daiorama/<instance>/config.lock` | zero-length flock target, mode 0600; serializes config writers (08 reload rules) |
 | scope defs | `${XDG_CONFIG_HOME:-~/.config}/daiorama/<instance>/scopes/<scope>.ron` | one file per scope, filename = scope name |
 | data root | `${XDG_DATA_HOME:-~/.local/share}/daiorama/<instance>/` | persistent; survives restarts |
 | token | `<data root>/token` | mode 0600, own file (07) |
