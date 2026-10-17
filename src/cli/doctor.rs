@@ -51,6 +51,9 @@ const PROBE_POLL: Duration = Duration::from_millis(20);
 struct ToolFacts {
     path: PathBuf,
     version: Option<String>,
+    /// Why an existing binary could not be executed (N1): a capability/bounding-set refusal
+    /// reads as a permission error, not as an unknown version.
+    exec_error: Option<String>,
 }
 
 /// `XDG_RUNTIME_DIR` facts: unset, or set with its writability.
@@ -114,12 +117,20 @@ impl DoctorFacts {
     /// `--instance` selects the tree the matching manager would serve.
     fn gather(instance: &str) -> Self {
         let hyprland = find_tool("Hyprland").map(|path| {
-            let version = hyprland_version(&path, find_tool("hyprctl").as_deref());
-            ToolFacts { path, version }
+            let (version, exec_error) = hyprland_status(&path, find_tool("hyprctl").as_deref());
+            ToolFacts {
+                path,
+                version,
+                exec_error,
+            }
         });
         let wayvnc = find_tool("wayvnc").map(|path| {
             let version = probe_output(&path, &["--version"]).and_then(|t| first_version_token(&t));
-            ToolFacts { path, version }
+            ToolFacts {
+                path,
+                version,
+                exec_error: None,
+            }
         });
         let wayland_display = std::env::var("WAYLAND_DISPLAY")
             .ok()
@@ -166,27 +177,37 @@ fn find_tool(name: &str) -> Option<PathBuf> {
 }
 
 /// Hyprland's version: `Hyprland --version` (the binary flag), falling back to
-/// `hyprctl version` — the read P1 practiced inside a live instance.
-fn hyprland_version(hyprland: &Path, hyprctl: Option<&Path>) -> Option<String> {
-    probe_output(hyprland, &["--version"])
-        .and_then(|text| first_version_token(&text))
-        .or_else(|| {
+/// `hyprctl version` — the read P1 practiced inside a live instance. A binary that exists but
+/// cannot be executed yields the error instead of "unknown" (N1): in a rootless container that
+/// is usually file capabilities (cap_sys_nice) outside the bounding set.
+fn hyprland_status(hyprland: &Path, hyprctl: Option<&Path>) -> (Option<String>, Option<String>) {
+    match probe_output_result(hyprland, &["--version"]) {
+        Ok(text) => (first_version_token(&text), None),
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            (None, Some(format!("{error}")))
+        }
+        Err(_) => (
             hyprctl
                 .and_then(|ctl| probe_output(ctl, &["version"]))
-                .and_then(|text| first_version_token(&text))
-        })
+                .and_then(|text| first_version_token(&text)),
+            None,
+        ),
+    }
 }
 
 /// Run one bounded probe and return its combined output as text. Spawn failure or timeout is
 /// `None`; a version tool that exits non-zero but prints anyway still yields its output.
 fn probe_output(bin: &Path, args: &[&str]) -> Option<String> {
+    probe_output_result(bin, args).ok()
+}
+
+fn probe_output_result(bin: &Path, args: &[&str]) -> std::io::Result<String> {
     let mut child = Command::new(bin)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
-        .ok()?;
+        .spawn()?;
     let deadline = Instant::now() + PROBE_TIMEOUT;
     loop {
         match child.try_wait() {
@@ -195,7 +216,10 @@ fn probe_output(bin: &Path, args: &[&str]) -> Option<String> {
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return None;
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "probe timed out",
+                ));
             }
         }
     }
@@ -206,7 +230,7 @@ fn probe_output(bin: &Path, args: &[&str]) -> Option<String> {
     if let Some(stderr) = child.stderr.take() {
         text.push_str(&read_pipe(stderr));
     }
-    Some(text)
+    Ok(text)
 }
 
 fn read_pipe(pipe: impl Read) -> String {
@@ -367,6 +391,10 @@ fn tools_lines(facts: &DoctorFacts) -> Vec<String> {
                     )),
                     _ => lines.push(format!("  hyprland: {version} ({path})")),
                 },
+                None if tool.exec_error.is_some() => lines.push(format!(
+                    "  hyprland: cannot execute: {} ({path})",
+                    tool.exec_error.as_deref().unwrap_or_default()
+                )),
                 None => lines.push(format!("  hyprland: version unknown ({path})")),
             }
         }
@@ -498,6 +526,7 @@ mod tests {
 
     fn tool(path: &str, version: Option<&str>) -> Option<ToolFacts> {
         Some(ToolFacts {
+            exec_error: None,
             path: PathBuf::from(path),
             version: version.map(str::to_string),
         })
@@ -622,6 +651,35 @@ mod tests {
         );
         assert_eq!(answer.payload["assets"]["installed"], json!(true));
         assert_eq!(answer.payload["assets"]["install"], Value::Null);
+    }
+
+    #[test]
+    fn hyprland_cannot_execute_is_not_a_version_unknown() {
+        // N1: an existing binary refused by the container (file caps outside the bounding set)
+        // must read as an exec failure, not as an unknown version.
+        let mut facts = base_facts();
+        facts.hyprland = Some(ToolFacts {
+            path: PathBuf::from("/usr/bin/Hyprland"),
+            version: None,
+            exec_error: Some("Operation not permitted (os error 1)".to_string()),
+        });
+        let answer = render(&facts);
+        assert!(
+            answer
+                .human
+                .iter()
+                .any(|line| line.contains("hyprland: cannot execute:")),
+            "{:?}",
+            answer.human
+        );
+        assert!(
+            !answer
+                .human
+                .iter()
+                .any(|line| line.contains("hyprland: version unknown")),
+            "{:?}",
+            answer.human
+        );
     }
 
     #[test]

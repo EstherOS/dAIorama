@@ -111,6 +111,14 @@ harness's stand-ins and do not ship. The binary is built from source in a builde
 copied into the pinned base — the image builds the binary directly, it does not download a
 release artifact (channel table, above).
 
+The core image's "no default command" is a property of the artifact, not of the
+Containerfile text: the base image ships `CMD ["bash"]`, so the build ends with an
+explicit `CMD []` and `packaging/container/verify-image.sh` checks `podman inspect`
+plus a real `Hyprland --version` exec. Debian's Hyprland carries `cap_sys_nice=ep`;
+a rootless container cannot gain that capability, so the image strips the file
+capability — the compositor runs without RT scheduling, and `--cap-add=SYS_NICE` is
+not an option.
+
 Container assets live beside the docs: `packaging/container/Containerfile.core` (the core
 artifact), `packaging/compose/*.yml` (one file per shape named above) and
 `packaging/quadlet/daiorama.container` (the supervised container channel). The desktop

@@ -14,6 +14,8 @@ const SPEC_09: &str = include_str!("../docs/09-packaging.md");
 const SPEC_10: &str = include_str!("../docs/10-operations.md");
 const IMAGE_NOTE: &str = include_str!("../p5/image/README.md");
 const ENTRYPOINT: &str = include_str!("../packaging/container/entrypoint.sh");
+const CORE_IMAGE: &str = include_str!("../packaging/container/Containerfile.core");
+const IMAGE_VERIFY: &str = include_str!("../packaging/container/verify-image.sh");
 const COREFILE: &str = include_str!("../packaging/container/Containerfile.core");
 const COMPOSE_MANAGER_ONLY: &str = include_str!("../packaging/compose/manager-only.yml");
 const COMPOSE_MANAGER_AND_BRIDGE: &str =
@@ -332,8 +334,14 @@ fn code_only(text: &str) -> String {
 fn core_image_is_a_substrate_with_no_default_command() {
     // 09: the no-default-CMD rule is scoped to the core image, and the image is substrate.
     let code = code_only(COREFILE);
-    assert!(
-        !code.contains("CMD "),
+    // F1: `CMD []` is the only command allowed — it cancels the base image's `CMD ["bash"]`.
+    let cmds: Vec<&str> = code
+        .lines()
+        .filter(|line| line.trim_start().starts_with("CMD"))
+        .collect();
+    assert_eq!(
+        cmds,
+        vec!["CMD []"],
         "the core image carries a default command"
     );
     assert!(
@@ -489,4 +497,20 @@ fn docs_and_runbook_name_the_shipped_container_assets() {
     ] {
         assert!(README.contains(needle), "runbook lost {needle}");
     }
+}
+
+#[test]
+fn the_core_image_pins_an_empty_command_and_strips_hyprland_caps() {
+    // F1/F2: the base ships `CMD ["bash"]` and Debian sets cap_sys_nice on Hyprland; both are
+    // properties of the artifact, so the Containerfile fixes them and the verify script checks
+    // the artifact itself.
+    assert!(CORE_IMAGE.contains("CMD []"), "no explicit empty command");
+    assert!(
+        CORE_IMAGE.contains("setcap -r /usr/bin/Hyprland"),
+        "Hyprland file capabilities are stripped"
+    );
+    assert!(
+        IMAGE_VERIFY.contains("Config.Cmd") && IMAGE_VERIFY.contains("podman inspect"),
+        "the verify script inspects the built artifact"
+    );
 }

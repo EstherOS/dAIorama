@@ -26,17 +26,27 @@ ENV DEBIAN_FRONTEND=noninteractive
 # wtype/wlrctl — those are the L1 harness's stand-ins, not the product's input path.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        hyprland mutter wayvnc grim wf-recorder \
+        hyprland mutter wayvnc grim wf-recorder libcap2-bin \
         libgl1-mesa-dri libegl1 libgles2 libgbm1 wayland-utils \
         xwayland dbus seatd fontconfig fonts-dejavu-core ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /src/target/release/daiorama /usr/local/bin/daiorama
 
+# Debian's Hyprland carries file capabilities (cap_sys_nice=ep) for RT scheduling. A rootless
+# container's bounding set has no SYS_NICE and cannot gain it, so the exec fails with
+# "Operation not permitted" and no session can start. Strip the capability in the image: the
+# compositor runs without RT scheduling; `--cap-add=SYS_NICE` is not an option (rootless).
+RUN [ "$(getcap /usr/bin/Hyprland)" = "" ] || setcap -r /usr/bin/Hyprland \
+    && [ "$(getcap /usr/bin/Hyprland)" = "" ]
+
 # One path set for the manager, the CLI and the compose mounts (08, 09).
 ENV XDG_DATA_HOME=/data \
     XDG_CONFIG_HOME=/config \
     XDG_RUNTIME_DIR=/run
+# The base image ships `CMD ["bash"]`; an explicit empty CMD makes "no default command" true
+# of the artifact, not just of this file (09). `podman inspect` is the check that sees it.
+CMD []
 
-# No CMD and no ENTRYPOINT: the core image is a substrate and the operator's command is
-# the contract (09). The desktop image is the one artifact with a default command.
+# No ENTRYPOINT: the core image is a substrate and the operator's command is the contract
+# (09). The desktop image is the one artifact with a default command.
