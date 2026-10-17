@@ -1,0 +1,7 @@
+bin=daiorama-tip port=18782
+[FAIL] a 405 media refusal survives a body already in flight :: 1/4 delivered
+   last: 'HTTP/1.1 405 Method Not Allowed' body=b''
+[FAIL] a 403 media refusal survives a body already in flight :: 0/4 delivered
+   last: 'HTTP/1.1 403 Forbidden' body=b''
+[FAIL] a client that stops reading is cut off, not waited out :: head='HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: 67108864\r\nConnection: close' after 20 s silent: received=33869720 of 67108864 closed=False
+FAILS=3

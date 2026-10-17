@@ -218,11 +218,13 @@ where
     }
 }
 
-/// One HTTP response: a status, an optional JSON-RPC body, and whether the connection ends.
+/// One HTTP response: a status, an optional JSON-RPC body, whether the connection ends, and
+/// the `Allow` value a 405 carries (`POST` on the MCP target, `GET` on the media surface).
 struct Reply {
     status: u16,
     body: Option<serde_json::Value>,
     close: bool,
+    allow: Option<&'static str>,
 }
 
 impl Reply {
@@ -231,6 +233,7 @@ impl Reply {
             status: 200,
             body: Some(body),
             close: false,
+            allow: None,
         }
     }
 
@@ -239,7 +242,13 @@ impl Reply {
             status,
             body: Some(body),
             close: true,
+            allow: None,
         }
+    }
+
+    fn with_allow(mut self, allow: &'static str) -> Self {
+        self.allow = Some(allow);
+        self
     }
 
     fn accepted() -> Self {
@@ -247,6 +256,7 @@ impl Reply {
             status: 202,
             body: None,
             close: false,
+            allow: None,
         }
     }
 }
@@ -301,15 +311,18 @@ async fn serve_connection(network: &Arc<Network>, stream: TcpStream) -> Result<(
         // It carries no body and closes after one fetch. The MCP target below stays
         // `POST /mcp` only.
         if request.target == "/media" || request.target.starts_with(MEDIA_PREFIX) {
-            serve_media(network, &request, input.get_mut()).await?;
+            serve_media(network, &request, &mut input).await?;
             return Ok(());
         }
         if request.method != "POST" || request.target != "/mcp" {
             let status = if request.target == "/mcp" { 405 } else { 404 };
-            let reply = envelope_reply(
+            let mut reply = envelope_reply(
                 status,
                 ErrorEnvelope::bad_request(strings::NETWORK_POST_ONLY),
             );
+            if status == 405 {
+                reply = reply.with_allow("POST");
+            }
             refuse(&mut input, &reply, Some(&request)).await?;
             return Ok(());
         }
@@ -496,33 +509,31 @@ async fn refuse(
 async fn serve_media(
     network: &Network,
     request: &RequestHead,
-    stream: &mut TcpStream,
+    input: &mut BufReader<TcpStream>,
 ) -> std::io::Result<()> {
     if request.method != "GET" {
-        return media_refusal(
-            stream,
+        let reply = media_reply(
             405,
-            &ErrorEnvelope::bad_request(strings::MEDIA_GET_ONLY),
-            true,
-        )
-        .await;
+            ErrorEnvelope::bad_request(strings::MEDIA_GET_ONLY),
+            Some("GET"),
+        );
+        return refuse(input, &reply, Some(request)).await;
     }
     let Some(id) = media_id(&request.target) else {
-        return media_refusal(stream, 404, &ErrorEnvelope::media_expired(), false).await;
+        let reply = media_reply(404, ErrorEnvelope::media_expired(), None);
+        return refuse(input, &reply, Some(request)).await;
     };
     let presented = request.header("daiorama-token").unwrap_or_default();
     if !secret_matches(presented, &network.token) {
-        return media_refusal(
-            stream,
-            403,
-            &ErrorEnvelope::token_required(&network.display),
-            false,
-        )
-        .await;
+        let reply = media_reply(403, ErrorEnvelope::token_required(&network.display), None);
+        return refuse(input, &reply, Some(request)).await;
     }
     match fetch_media(network, id).await {
-        Ok(upstream) => stream_media(stream, upstream).await,
-        Err(envelope) => media_refusal(stream, 502, &envelope, false).await,
+        Ok(upstream) => stream_media(input.get_mut(), upstream).await,
+        Err(envelope) => {
+            let reply = media_reply(502, envelope, None);
+            refuse(input, &reply, Some(request)).await
+        }
     }
 }
 
@@ -540,34 +551,16 @@ fn media_id(target: &str) -> Option<&str> {
     }
 }
 
-/// A media response body is the canonical envelope; statuses carry HTTP reason phrases so a
-/// plain HTTP client reads them as ordinary answers (the MCP target keeps the 200-envelope
-/// rule; a media fetch is not a JSON-RPC request).
-async fn media_refusal(
-    stream: &mut TcpStream,
-    status: u16,
-    envelope: &ErrorEnvelope,
-    allow_get: bool,
-) -> std::io::Result<()> {
-    let body = serde_json::to_vec(envelope).expect("media envelopes serialize");
-    let reason = match status {
-        403 => "Forbidden",
-        404 => "Not Found",
-        405 => "Method Not Allowed",
-        502 => "Bad Gateway",
-        _ => "Error",
-    };
-    let mut head = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n",
-        body.len()
-    );
-    if allow_get {
-        head.push_str("Allow: GET\r\n");
+/// A media refusal is a `Reply` like every other: the body is the canonical envelope (a media
+/// fetch is a plain HTTP GET, not a JSON-RPC request) and the close rides the one `refuse`
+/// path, so a request whose body is already in flight does not lose the refusal to a reset.
+fn media_reply(status: u16, envelope: ErrorEnvelope, allow: Option<&'static str>) -> Reply {
+    let body = serde_json::to_value(&envelope).expect("media envelopes serialize");
+    let reply = Reply::refusal(status, body);
+    match allow {
+        Some(allow) => reply.with_allow(allow),
+        None => reply,
     }
-    head.push_str("\r\n");
-    stream.write_all(head.as_bytes()).await?;
-    stream.write_all(&body).await?;
-    stream.flush().await
 }
 
 /// A manager media answer, already validated: a 200 or 404 with a declared length.
@@ -666,7 +659,7 @@ async fn stream_media(stream: &mut TcpStream, upstream: MediaUpstream) -> std::i
         "HTTP/1.1 {} {reason}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         upstream.status, upstream.content_type, upstream.length
     );
-    stream.write_all(head.as_bytes()).await?;
+    write_bounded(stream, head.as_bytes()).await?;
     let MediaUpstream {
         length, mut reader, ..
     } = upstream;
@@ -683,7 +676,7 @@ async fn stream_media(stream: &mut TcpStream, upstream: MediaUpstream) -> std::i
                 // repair for a truncated artifact (the manager owns its lifetime).
                 Err(_) => break,
             };
-        stream.write_all(&buffer[..read]).await?;
+        write_bounded(stream, &buffer[..read]).await?;
         remaining -= read;
     }
     stream.flush().await
@@ -833,6 +826,28 @@ impl RequestHead {
     }
 }
 
+/// A media answer is streamed to a client that keeps reading; a client that accepts nothing
+/// for `PROGRESS_TIMEOUT` is gone, not slow, and is cut off — the same progress bound the read
+/// side runs on. Without it the task sits in an unbounded write and the slot is held for as
+/// long as the client stays silent (`p3/media/evidence/probe-media-stall.py`, leg C).
+async fn write_bounded<W>(writer: &mut W, bytes: &[u8]) -> std::io::Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let mut written = 0;
+    while written < bytes.len() {
+        let progress =
+            match tokio::time::timeout(PROGRESS_TIMEOUT, writer.write(&bytes[written..])).await {
+                Ok(Ok(0)) => return Err(std::io::Error::from(std::io::ErrorKind::WriteZero)),
+                Ok(Ok(progress)) => progress,
+                Ok(Err(err)) => return Err(err),
+                Err(_) => return Err(std::io::Error::from(std::io::ErrorKind::TimedOut)),
+            };
+        written += progress;
+    }
+    Ok(())
+}
+
 async fn write_reply(stream: &mut TcpStream, reply: &Reply) -> Result<(), std::io::Error> {
     let (body, length) = match &reply.body {
         Some(value) => {
@@ -842,7 +857,19 @@ async fn write_reply(stream: &mut TcpStream, reply: &Reply) -> Result<(), std::i
         }
         None => (None, 0),
     };
-    let reason = match reply.status {
+    let head = reply_head(reply.status, length, reply.close, reply.allow);
+    write_bounded(stream, head.as_bytes()).await?;
+    if let Some(body) = body {
+        write_bounded(stream, &body).await?;
+    }
+    stream.flush().await
+}
+
+/// The response head, shared by the MCP target and the media surface so a status, a close and
+/// an `Allow` value cannot drift between them. A 405 names the method it does allow: `POST`
+/// on `/mcp`, `GET` on `/media/<id>`.
+fn reply_head(status: u16, length: usize, close: bool, allow: Option<&str>) -> String {
+    let reason = match status {
         200 => "OK",
         202 => "Accepted",
         400 => "Bad Request",
@@ -850,23 +877,19 @@ async fn write_reply(stream: &mut TcpStream, reply: &Reply) -> Result<(), std::i
         404 => "Not Found",
         405 => "Method Not Allowed",
         413 => "Payload Too Large",
+        502 => "Bad Gateway",
         _ => "Error",
     };
     let mut head = format!(
-        "HTTP/1.1 {} {reason}\r\nContent-Type: application/json\r\nContent-Length: {length}\r\n\
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {length}\r\n\
          Connection: {}\r\n",
-        reply.status,
-        if reply.close { "close" } else { "keep-alive" }
+        if close { "close" } else { "keep-alive" }
     );
-    if reply.status == 405 {
-        head.push_str("Allow: POST\r\n");
+    if let Some(allow) = allow {
+        head.push_str(&format!("Allow: {allow}\r\n"));
     }
     head.push_str("\r\n");
-    stream.write_all(head.as_bytes()).await?;
-    if let Some(body) = body {
-        stream.write_all(&body).await?;
-    }
-    stream.flush().await
+    head
 }
 
 #[cfg(test)]
@@ -874,6 +897,112 @@ mod tests {
     use super::*;
 
     const README: &str = include_str!("../../fixtures/README.md");
+
+    /// A writer that accepts nothing: the response bound must cut it, not wait it out.
+    struct Stalled;
+
+    impl tokio::io::AsyncWrite for Stalled {
+        fn poll_write(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            _buf: &[u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            std::task::Poll::Pending
+        }
+
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    /// A writer that takes one byte per call: slow, but every call makes progress.
+    struct Trickle(usize);
+
+    impl tokio::io::AsyncWrite for Trickle {
+        fn poll_write(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            buf: &[u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            assert!(
+                !buf.is_empty(),
+                "a bounded write never passes an empty slice"
+            );
+            self.get_mut().0 += 1;
+            std::task::Poll::Ready(Ok(1))
+        }
+
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    /// The write side gets the read side's bound: a media client that stops reading is cut
+    /// off, so it cannot pin a connection slot by staying silent.
+    #[tokio::test(start_paused = true)]
+    async fn a_stalled_writer_is_cut_at_the_progress_bound() {
+        let started = tokio::time::Instant::now();
+        let error = write_bounded(&mut Stalled, b"0123456789")
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert_eq!(started.elapsed(), PROGRESS_TIMEOUT);
+    }
+
+    /// The bound is per write, not a total-transfer deadline: a client that keeps taking
+    /// bytes finishes the body however long it takes.
+    #[tokio::test(start_paused = true)]
+    async fn a_slow_writer_still_finishes_the_body() {
+        let mut trickle = Trickle(0);
+        write_bounded(&mut trickle, b"0123456789").await.unwrap();
+        assert_eq!(trickle.0, 10);
+    }
+
+    #[test]
+    fn response_heads_share_one_shape_and_name_their_allow() {
+        // A 405 names the method the target does serve: POST on `/mcp`, GET on `/media/<id>`.
+        let mcp = reply_head(405, 7, true, Some("POST"));
+        assert!(mcp.starts_with("HTTP/1.1 405 Method Not Allowed\r\n"));
+        assert!(mcp.contains("Allow: POST\r\n"));
+        assert!(!mcp.contains("Allow: GET"));
+        let media = media_reply(
+            405,
+            ErrorEnvelope::bad_request("media fetches are GET only"),
+            Some("GET"),
+        );
+        let head = reply_head(media.status, 2, media.close, media.allow);
+        assert!(head.contains("Allow: GET\r\n"));
+        assert!(head.contains("Connection: close\r\n"));
+        // The media statuses carry their own reason phrases and a close; no `Allow` elsewhere.
+        for (status, reason) in [(403, "Forbidden"), (404, "Not Found"), (502, "Bad Gateway")] {
+            let reply = media_reply(status, ErrorEnvelope::bad_request("x"), None);
+            assert!(reply.close);
+            assert!(reply.allow.is_none());
+            let head = reply_head(reply.status, 0, reply.close, reply.allow);
+            assert!(head.starts_with(&format!("HTTP/1.1 {status} {reason}\r\n")));
+            assert!(!head.contains("Allow:"));
+        }
+    }
 
     #[test]
     fn network_refusals_are_pinned_in_the_fixture_readme() {

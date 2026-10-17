@@ -572,11 +572,14 @@ connection too.
 
 ## A refused request whose body is in flight keeps its refusal
 
-Every refusal site — gate, over-cap size, malformed head, missing Host, origin, wrong method/target, chunked, duplicate/invalid `Content-Length` — writes its response, half-closes the write side, then drains
+Every refusal site — gate, over-cap size, malformed head, missing Host, origin, wrong method/target, chunked, duplicate/invalid `Content-Length`, and the media surface's 403/404/405/502 — writes its response, half-closes the write side, then drains
 a bounded slice of the body (<= 64 KiB, <= 100 ms) before the connection closes — only when the
 request carried no `Expect: 100-continue` (a client that waited never sent a body). The
 half-close is what makes it reliable: the FIN goes out with the response, so the later close does
-not turn into a reset that discards the refusal's body.
+not turn into a reset that discards the refusal's body. The media surface writes its refusals as
+the same `Reply` through the same `refuse` path: its first pass had a private writer that closed
+without the half-close, and a body in flight ate the identity-gate body in four runs of four (evidence
+`p3/media/evidence/probe-media-stall-before.txt`; with one path, four of four delivered).
 
 *Rationale:* a client without `Expect` starts bursting the body immediately. On a 4 MiB burst
 the un-drained close loses the refusal's body every time — head arrives, body arrives 0 bytes,
@@ -625,3 +628,29 @@ server. Media fetches keep the same rule (`403` + `token_required`).
 *Rejected:* 401 (OAuth discovery), keep-alive after an id-less refusal (the body was never
 read), making every refusal a JSON-RPC error with a synthetic id (the client would treat it as
 an answer to a request it never made).
+
+## The media surface's own bounds: one refusal close, and a write bound
+
+Two transport properties the media surface inherited by not being written yet, found by an
+adversarial pass on the merged shape (`p3/media/evidence/probe-media-stall.py`):
+
+- **Its refusals ride the one `refuse` path.** The first pass wrote media refusals with a
+  private writer that flushed and returned, so the close turned into a reset while the client
+  was still bursting a body: on a 4 MiB burst the identity-gate body arrived 0 of 4 runs
+  (status then `401`, since moved to `403` by the id-less-refusal ruling above) and the 405 1 of
+  4. Media refusals are now `Reply`s through the same `refuse` (write → half-close → bounded
+  linger unless `Expect`), and the same burst delivers 4 of 4 for both statuses.
+- **A client that stops reading is cut off.** Streaming wrote with `write_all` and no bound: a
+  client that fetched a large artifact and accepted nothing held the task in an unbounded write
+  — the read progress bound cannot fire while the task is blocked writing, so the connection
+  (and its slot) stayed open for as long as the client kept quiet. Measured after 20 s of
+  silence: the bridge was still streaming (31.8 MB drained, no close) and would have resumed the
+  whole body. Each write now carries the same 10 s progress bound the read side does: the same
+  stall closes after a bounded prefix (2.1 MB in the run) instead of waiting.
+  A slow-but-progressing reader is untouched — the bound is per write, not a total-transfer
+  deadline (the same posture as the body-trickle WATCH).
+
+*Rationale:* a progress bound only means something if every path carries it; the media surface
+was written after the transport fixes and quietly reintroduced both classes.
+*Rejected:* a total-response deadline (kills authentic slow downloads, and the trickle WATCH
+already records that a byte-at-a-time client is allowed).

@@ -1,0 +1,7 @@
+bin=daiorama port=18783
+[PASS] a 405 media refusal survives a body already in flight :: 4/4 delivered
+   last: 'HTTP/1.1 405 Method Not Allowed' body=b'{"code":"bad_request","hint":"check the request against \'dai'
+[PASS] a 403 media refusal survives a body already in flight :: 4/4 delivered
+   last: 'HTTP/1.1 403 Forbidden' body=b'{"code":"token_required","hint":"run \'daiorama token show\' o'
+[PASS] a client that stops reading is cut off, not waited out :: head='HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: 67108864\r\nConnection: close' after 20 s silent: received=2138112 of 67108864 closed=True
+FAILS=0

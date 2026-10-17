@@ -20,19 +20,21 @@ are read-when-on pointers)._
   (`p3/bridge/*` → `spec/v1 @ d7fe685`).
 - **Repo target:** fork workflow (`EstherOS/dAIorama`); upstream
   `ygypt/dAIorama` takes our PRs post-sign-off.
-- **Last green:** W1b + transport tree — 165 (+5 ignored) unit · 4 daemon ·
-  2 doctor · 27 fixtures · 7 mcp · 14 mcp_listen, fmt/clippy clean; raw-HTTP
-  battery green (`p3/listen/evidence/probe-http.txt`), transport-limit drill green
-  (`p3/listen/evidence/probe-timeout.txt`), head-deadline drill green
-  (`p3/listen/evidence/probe-head-deadline.txt`).
+- **Last green:** media bounds tree — 168 (+5 ignored) unit · 4 daemon ·
+  2 doctor · 27 fixtures · 7 mcp · 22 mcp_listen, fmt/clippy clean; media-stall
+  battery both ways (`p3/media/evidence/probe-media-stall.txt` /
+  `-before.txt`).
 - **Next:** W2 media/runtime calls (runtime side) and the capture tools on the
   bridge surface; the `/media/<id>` network pass-through landed (design note +
-  relay, `p3/media/`), waiting only on the capture tools that mint ids.
+  relay, `p3/media/`), waiting only on the capture tools that mint ids; the
+  manager-side media store (TTL 600, fetch-once) is the runtime half's slice.
 - **Open (tracked, not omitted):** L3 llvmpipe lane (waits on the operator's
   workflow token scope) · L2 NVIDIA/CDI (operator's call) · rate-limit numbers
   → P4 · per-family GPU recipes · resize/scale path · renderer re-verification
   of the L2 image · a body trickled a byte at a time can still hold a
   connection slot (a total-body deadline was rejected for authentic slow
-  uploads; measured as WATCH in `probe-head-deadline.txt`) (a refused
-  request that bursts a large body now keeps its refusal — half-close plus a
-  bounded linger, see `docs/11` and `probe-lingering-close.txt`).
+  uploads; measured as WATCH in `probe-head-deadline.txt`). Refusal closes and
+  the media write bound are no longer open: every refusal site — the media
+  surface included — rides one half-close + bounded linger, and a media client
+  that accepts no bytes is cut off at the write progress bound
+  (`probe-media-stall.txt`).

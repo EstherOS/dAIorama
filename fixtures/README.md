@@ -279,6 +279,11 @@ request target is never logged.
   upstream answer (no length, or chunked); the bridge does not guess where the body ends.
 - A `404` from the manager passes through with its `media_expired` body. `Range` is not
   supported: a ranged request receives the full `200` body.
+- Every media refusal closes like every other refusal on this listener — response, half-close,
+  then a bounded drain when the request carried no `Expect` — so a body already in flight does
+  not reset the refusal away (`p3/media/evidence/probe-media-stall.py`).
+- A client that accepts no bytes for 10 s is cut off mid-stream; a slow reader that keeps
+  taking bytes is not (the bound is per write, not a total-transfer deadline).
 
 ## Spawner parameters
 
