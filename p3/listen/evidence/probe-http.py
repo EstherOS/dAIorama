@@ -160,7 +160,7 @@ def main():
         host = f"127.0.0.1:{port}"
         auth = [("Daiorama-Token", token), ("Daiorama-Scope", "operator"),
                 ("Daiorama-Scope-Token", secret)]
-        print(f"bin={binary}\nport={port} manager_pid={mgr.pid} bridge_pid={br.pid}\n")
+        print(f"bin={os.path.basename(binary)}\nport={port} manager_pid={mgr.pid} bridge_pid={br.pid}\n")
 
         print("=== baseline ===")
         show("valid POST /mcp initialize",

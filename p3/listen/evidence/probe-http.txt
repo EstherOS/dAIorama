@@ -1,4 +1,4 @@
-bin=/home/agent/workspace/dAIorama/p2fix/target/debug/daiorama
+bin=daiorama
 port=35941 manager_pid=215506 bridge_pid=215512
 
 === baseline ===
