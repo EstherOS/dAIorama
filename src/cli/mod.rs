@@ -594,9 +594,11 @@ impl App {
             },
             Command::Doctor => Ok(doctor::report()),
             Command::Mcp(args) => match args.listen {
-                // Network mode is its own slice (P4 transport auth): the typed surface is
-                // pinned, the long-lived service is not built yet.
-                Some(_) => Err(ErrorEnvelope::not_implemented()),
+                Some(addr) => {
+                    crate::mcp::listen::run_listen(&self.instance, &addr, self.remote.clone())
+                        .await?;
+                    Ok(Answer::from_lines(Vec::new()))
+                }
                 None => {
                     crate::mcp::server::run_stdio(&self.instance, self.remote.clone()).await?;
                     Ok(Answer::from_lines(Vec::new()))
@@ -979,6 +981,18 @@ impl App {
                 ErrorEnvelope::bad_request(format!("cannot write {}: {err}", scope.display()))
             })?;
             lines.push(format!("wrote {}", scope.display()));
+        }
+        // Scope secrets make a scope network-usable (07); the starter scope gets one here so
+        // the first network bridge start does not have to mint its own.
+        for name in paths.scope_names() {
+            if config::read_scope_token(paths, &name)?.is_none() {
+                let secret = config::generate_token();
+                let path = config::write_scope_token(paths, &name, &secret)?;
+                lines.push(format!(
+                    "wrote {} (scope secret, mode 0600)",
+                    path.display()
+                ));
+            }
         }
         lines.push(
             "next: 'daiorama doctor' for the environment check, then 'daiorama new'".to_string(),

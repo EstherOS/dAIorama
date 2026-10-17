@@ -1,0 +1,70 @@
+
+=== bin: /home/agent/workspace/dAIorama/p2fix/target/debug/daiorama ===
+daiorama 0.1.0
+
+=== config setup ===
+wrote /tmp/dlnet.W4BKGb/config/daiorama/default/config.ron
+wrote /tmp/dlnet.W4BKGb/config/daiorama/default/scopes/operator.ron
+wrote /tmp/dlnet.W4BKGb/data/daiorama/default/scope-tokens/operator (scope secret, mode 0600)
+next: 'daiorama doctor' for the environment check, then 'daiorama new'
+set limits.mode = off; takes effect at next manager start
+
+=== manager: serve (off-mode) ===
+manager up (pid 192516)
+
+=== bridge: mcp --listen 127.0.0.1:18757 ===
+wrote /tmp/dlnet.W4BKGb/data/daiorama/default/token (mode 0600); 'daiorama token show' prints the value
+listening on 127.0.0.1:18757
+
+=== gate: no token ===
+{"error":{"code":-32600,"data":{"code":"token_required","hint":"run 'daiorama token show' on the manager host and set DAIORAMA_TOKEN","message":"token required for 127.0.0.1:18757: set DAIORAMA_TOKEN (value from 'daiorama token show' on the manager host)."},"message":"token required for 127.0.0.1:18757: set DAIORAMA_TOKEN (value from 'daiorama token show' on the manager host)."},"id":1,"jsonrpc":"2.0"}
+[HTTP 200]
+
+=== gate: token, no scope ===
+{"error":{"code":-32600,"data":{"code":"scope_auth_required","message":"scope required: send Daiorama-Scope and Daiorama-Scope-Token headers"},"message":"scope required: send Daiorama-Scope and Daiorama-Scope-Token headers"},"id":2,"jsonrpc":"2.0"}
+[HTTP 200]
+
+=== gate: token + scope, no secret ===
+{"error":{"code":-32600,"data":{"code":"scope_auth_required","message":"scope \"operator\" requires its scope secret (Daiorama-Scope-Token header)"},"message":"scope \"operator\" requires its scope secret (Daiorama-Scope-Token header)"},"id":3,"jsonrpc":"2.0"}
+[HTTP 200]
+
+=== gate: wrong secret ===
+{"error":{"code":-32600,"data":{"code":"scope_auth_required","message":"scope \"operator\" requires its scope secret (Daiorama-Scope-Token header)"},"message":"scope \"operator\" requires its scope secret (Daiorama-Scope-Token header)"},"id":4,"jsonrpc":"2.0"}
+[HTTP 200]
+
+=== origin mismatch ===
+{"error":{"code":-32600,"data":{"code":"bad_request","hint":"check the request against 'daiorama <command> --help'","message":"origin not allowed: \"http://evil.example\""},"message":"origin not allowed: \"http://evil.example\""},"id":null,"jsonrpc":"2.0"}
+[HTTP 403]
+
+=== GET /mcp ===
+{"error":{"code":-32600,"data":{"code":"bad_request","hint":"check the request against 'daiorama <command> --help'","message":"network bridge serves POST /mcp only"},"message":"network bridge serves POST /mcp only"},"id":null,"jsonrpc":"2.0"}
+[HTTP 405]
+
+=== authenticated: initialize ===
+{"id":6,"jsonrpc":"2.0","result":{"capabilities":{"tools":{"listChanged":false}},"instructions":"dAIorama desktop sessions. Call list_capabilities to see this scope's tools.","protocolVersion":"2026-07-28","serverInfo":{"name":"daiorama","version":"0.1.0"}}}
+[HTTP 200]
+
+=== authenticated: tools/list ===
+{"id":7,"jsonrpc":"2.0","result":{"tools":[{"description":"Create a session and return its id.","inputSchema":{"additionalProperties":false,"properties":{"backend":{"default":"headless","enum":["headless","nested","host"],"type":"string"},"idempotency_key":{"maxLength":64,"type":"string"},"label":{"type":"string"},"resolution":{"default":"1920x1080","type":"string"},"scale":{"default":1.0,"type":"number"},"view":{"default":false,"type":"boolean"}},"required":[],"type":"object"},"name":"create_session"},{"description":"Explicit teardown of a session. Always explicit; never a side effect.","inputSchema":{"additionalProperties":false,"properties":{"session_id":{"type":"string"}},"required":["session_id"],"type":"object"},"name":"close_session"},{"description":"List sessions visible to the caller's scope.","inputSchema":{"additionalProperties":false,"properties":{"cursor":{"type":"string"},"limit":{"type":"integer"}},"required":[],"type":"object"},"name":"list_sessions"},{"description":"Detail for one session: state, view state, address, idle-since, versions.","inputSchema":{"additionalProperties":false,"properties":{"session_id":{"type":"string"}},"required":["session_id"],"type":"object"},"name":"session_status"},{"description":"What this scope may call, plus its effective quotas and audit flags.","inputSchema":{"additionalProperties":false,"properties":{"cursor":{"type":"string"},"limit":{"type":"integer"}},"required":[],"type":"object"},"name":"list_capabilities"}]}}
+[HTTP 200]
+
+=== relay: list_capabilities (manager live count) ===
+{"id":8,"jsonrpc":"2.0","result":{"content":[],"structuredContent":{"always_on":["create_session","close_session","list_sessions","session_status","list_capabilities"],"audit":{"store_clips":false,"store_screenshots":false},"categories":[],"quotas":{"sessions":{"live":0,"max":null}},"tools":["create_session","close_session","list_sessions","session_status","list_capabilities"]}}}
+[HTTP 200]
+
+=== relay: list_sessions ===
+{"id":9,"jsonrpc":"2.0","result":{"content":[],"structuredContent":{"sessions":[]}}}
+[HTTP 200]
+
+=== relay: unknown tool ===
+{"id":10,"jsonrpc":"2.0","result":{"content":[{"text":"unknown tool \"nope\"","type":"text"}],"isError":true,"structuredContent":{"code":"bad_request","hint":"check the request against 'daiorama <command> --help'","message":"unknown tool \"nope\""}}}
+[HTTP 200]
+
+=== notification (no id): accepted, never executed ===
+
+[HTTP 202]
+
+=== after: session count unchanged ===
+{"sessions":[]}
+
+=== done ===

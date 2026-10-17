@@ -82,29 +82,49 @@ pub async fn run_stdio(instance: &str, remote: Option<String>) -> Result<(), Err
         Some(raw) => Some(Address::parse(&raw)?),
         None => None,
     };
-    let mut bridge = Bridge {
-        instance: instance.to_string(),
-        scope,
-        definition,
-        address,
-        client: None,
-    };
+    let mut bridge = Bridge::new(instance, scope, definition, address);
+    let mut client = None;
     bridge
-        .serve(BufReader::new(tokio::io::stdin()), tokio::io::stdout())
+        .serve(
+            BufReader::new(tokio::io::stdin()),
+            tokio::io::stdout(),
+            &mut client,
+        )
         .await
 }
 
-/// One bridge process: scope, manifest, and (lazily) the manager connection.
-struct Bridge {
+/// One bridge instance: scope, manifest, and (lazily) the manager connection. The connection
+/// lives with the caller so the network mode can share one link across requests.
+pub(crate) struct Bridge {
     instance: String,
     scope: String,
     definition: ScopeFile,
     address: Option<Address>,
-    client: Option<Client>,
 }
 
 impl Bridge {
-    async fn serve<R, W>(&mut self, mut input: R, mut output: W) -> Result<(), ErrorEnvelope>
+    /// A bridge bound to one caller scope (stdio: from the spawn environment; network: from
+    /// the request's authenticated headers).
+    pub(crate) fn new(
+        instance: &str,
+        scope: String,
+        definition: ScopeFile,
+        address: Option<Address>,
+    ) -> Self {
+        Self {
+            instance: instance.to_string(),
+            scope,
+            definition,
+            address,
+        }
+    }
+
+    async fn serve<R, W>(
+        &mut self,
+        mut input: R,
+        mut output: W,
+        client: &mut Option<Client>,
+    ) -> Result<(), ErrorEnvelope>
     where
         R: AsyncBufRead + Unpin,
         W: AsyncWrite + Unpin,
@@ -141,7 +161,7 @@ impl Bridge {
             if line.is_empty() {
                 continue;
             }
-            let response = self.handle_line(line).await;
+            let response = self.handle_line(line, client).await;
             if let Some(response) = response {
                 write_line(&mut output, &response).await?;
             }
@@ -149,7 +169,7 @@ impl Bridge {
     }
 
     /// One request line in, at most one response line out (notifications answer nothing).
-    async fn handle_line(&mut self, line: &str) -> Option<Value> {
+    async fn handle_line(&mut self, line: &str, client: &mut Option<Client>) -> Option<Value> {
         let request: JsonRpcRequest = match serde_json::from_str(line) {
             Ok(request) => request,
             Err(err) => {
@@ -163,8 +183,18 @@ impl Bridge {
         // A notification carries no `id` and never gets a response (JSON-RPC); nothing is
         // executed for one — MCP's only notifications are `notifications/*`, and an action
         // smuggled into one is ignored rather than run without an answer.
+        request.id.as_ref()?;
+        self.handle_request(request, client).await
+    }
+
+    /// One parsed request in, at most one response out. Shared by stdio and the network
+    /// bridge; the caller has already bound this `Bridge` to the caller's scope.
+    pub(crate) async fn handle_request(
+        &mut self,
+        request: JsonRpcRequest,
+        client: &mut Option<Client>,
+    ) -> Option<Value> {
         let id = match request.id.clone() {
-            None => return None,
             // `"id": null` is not a notification: it is an invalid request that still owes an
             // answer. Staying silent here hangs the caller exactly like a dropped frame.
             Some(Value::Null) => {
@@ -175,6 +205,7 @@ impl Bridge {
                 ));
             }
             Some(id) => id,
+            None => return None,
         };
 
         let declared = declared_revision(request.params.as_ref());
@@ -194,7 +225,7 @@ impl Bridge {
             "server/discover" => Ok(discover_payload()),
             "tools/list" => Ok(json!({ "tools": self.tool_listing() })),
             "ping" => Ok(json!({})),
-            "tools/call" => self.tool_call(request.params.as_ref()).await,
+            "tools/call" => self.tool_call(request.params.as_ref(), client).await,
             other => Err(ErrorEnvelope::bad_request(format!(
                 "unknown method {other:?}"
             ))),
@@ -233,7 +264,11 @@ impl Bridge {
     /// `tools/call`: gate the name against the exposed manifest, then relay. `list_capabilities`
     /// is answered locally (it describes the scope, not a session); every other name goes to
     /// the manager with the caller identity already on the connection.
-    async fn tool_call(&mut self, params: Option<&Value>) -> Result<Value, ErrorEnvelope> {
+    async fn tool_call(
+        &mut self,
+        params: Option<&Value>,
+        client: &mut Option<Client>,
+    ) -> Result<Value, ErrorEnvelope> {
         let params = params.and_then(Value::as_object).ok_or_else(|| {
             ErrorEnvelope::bad_request("tools/call params must be an object with a name")
         })?;
@@ -256,11 +291,11 @@ impl Bridge {
             return Err(ErrorEnvelope::tool_not_granted(name, &self.scope));
         }
         if name == "list_capabilities" {
-            return self.list_capabilities(arguments.as_ref()).await;
+            return self.list_capabilities(arguments.as_ref(), client).await;
         }
 
         let (params, idempotency_key) = split_create_arguments(name, arguments);
-        match self.relay(name, params, idempotency_key).await {
+        match self.relay(client, name, params, idempotency_key).await {
             Ok(value) => Ok(serde_json::to_value(ToolResult::ok(value)).expect("tool result")),
             Err(envelope) => {
                 Ok(serde_json::to_value(ToolResult::tool_error(&envelope)).expect("tool result"))
@@ -274,6 +309,7 @@ impl Bridge {
     async fn list_capabilities(
         &mut self,
         arguments: Option<&Value>,
+        client: &mut Option<Client>,
     ) -> Result<Value, ErrorEnvelope> {
         let limit = arguments
             .and_then(|args| args.get("limit"))
@@ -288,7 +324,7 @@ impl Bridge {
             .map_err(|_| ErrorEnvelope::bad_request("invalid cursor"))?
             .unwrap_or(0);
 
-        let live = self.scope_live_count().await?;
+        let live = self.scope_live_count(client).await?;
         let definitions = exposed_tools(&self.definition);
         let start = cursor.min(definitions.len());
         let end = start.saturating_add(limit).min(definitions.len());
@@ -323,15 +359,23 @@ impl Bridge {
         Ok(serde_json::to_value(ToolResult::ok(payload)).expect("tool result"))
     }
 
-    /// Live sessions in the caller's scope, from the manager's own filtered listing.
-    async fn scope_live_count(&mut self) -> Result<u32, ErrorEnvelope> {
-        let listing = self.relay_read("list_sessions").await.map_err(|envelope| {
-            if envelope.code == ErrorCode::ManagerUnreachable {
-                ErrorEnvelope::no_manager_running()
-            } else {
-                envelope
-            }
-        })?;
+    /// Live sessions in the caller's scope, from the manager's own filtered listing. A read,
+    /// so it takes the replay-once path: the harness polls this call every turn, and a
+    /// manager restart between polls must not leave it serving a stale link.
+    async fn scope_live_count(
+        &mut self,
+        client: &mut Option<Client>,
+    ) -> Result<u32, ErrorEnvelope> {
+        let listing = self
+            .relay_read(client, "list_sessions")
+            .await
+            .map_err(|envelope| {
+                if envelope.code == ErrorCode::ManagerUnreachable {
+                    ErrorEnvelope::no_manager_running()
+                } else {
+                    envelope
+                }
+            })?;
         Ok(listing["sessions"]
             .as_array()
             .map(|sessions| {
@@ -346,43 +390,14 @@ impl Bridge {
             .unwrap_or(0))
     }
 
-    /// One relayed request over the cached manager link. A transport failure means the link
-    /// died with the manager it talked to (a crash or a restart between calls): evict it so the
-    /// next call reconnects, and surface the reachability envelope for this call.
-    async fn relay(
-        &mut self,
-        method: &str,
-        params: Option<Value>,
-        idempotency_key: Option<String>,
-    ) -> Result<Value, ErrorEnvelope> {
-        let result = {
-            let client = self.client().await?;
-            client.request(method, params, idempotency_key).await
-        };
-        if matches!(&result, Err(envelope) if envelope.code == ErrorCode::ManagerUnreachable) {
-            self.client = None;
-        }
-        result
-    }
-
-    /// A relayed read. Unlike a tool call it is safe to replay, so a cached link that turned
-    /// out dead is replaced once and the read retried: a harness polling this call across a
-    /// manager restart sees an answer, not a stale-connection error. A manager that is
-    /// genuinely down is not retried (there was no cached link to evict).
-    async fn relay_read(&mut self, method: &str) -> Result<Value, ErrorEnvelope> {
-        let had_link = self.client.is_some();
-        match self.relay(method, None, None).await {
-            Err(envelope) if had_link && envelope.code == ErrorCode::ManagerUnreachable => {
-                self.relay(method, None, None).await
-            }
-            other => other,
-        }
-    }
-
     /// The manager connection, connected and handshaken on first use. Transport failures are
-    /// surfaced as the shared reachability envelope, never a raw connection error.
-    async fn client(&mut self) -> Result<&mut Client, ErrorEnvelope> {
-        if self.client.is_none() {
+    /// surfaced as the shared reachability envelope, never a raw connection error. The slot
+    /// is caller-owned so stdio and the network bridge can share one link.
+    async fn link<'a>(
+        &self,
+        slot: &'a mut Option<Client>,
+    ) -> Result<&'a mut Client, ErrorEnvelope> {
+        if slot.is_none() {
             let token = std::env::var("DAIORAMA_TOKEN")
                 .ok()
                 .filter(|value| !value.is_empty());
@@ -396,9 +411,47 @@ impl Bridge {
             // rides every call after it (05 A7, 07).
             client.handshake().await?;
             client.set_caller(Some(self.scope.clone()), Some("mcp".to_string()));
-            self.client = Some(client);
+            *slot = Some(client);
         }
-        Ok(self.client.as_mut().expect("client set above"))
+        Ok(slot.as_mut().expect("client set above"))
+    }
+
+    /// One relayed request over the shared manager slot. A transport failure means the link
+    /// died with the manager it talked to (a crash or a restart between calls): evict it so
+    /// the next call reconnects, and surface the reachability envelope for this call.
+    async fn relay(
+        &self,
+        slot: &mut Option<Client>,
+        method: &str,
+        params: Option<Value>,
+        idempotency_key: Option<String>,
+    ) -> Result<Value, ErrorEnvelope> {
+        let result = {
+            let client = self.link(slot).await?;
+            client.request(method, params, idempotency_key).await
+        };
+        if matches!(&result, Err(envelope) if envelope.code == ErrorCode::ManagerUnreachable) {
+            *slot = None;
+        }
+        result
+    }
+
+    /// A relayed read. Unlike a tool call it is safe to replay, so a cached link that turned
+    /// out dead is replaced once and the read retried: a harness polling this call across a
+    /// manager restart sees an answer, not a stale-connection error. A manager that is
+    /// genuinely down is not retried (there was no cached link to evict).
+    async fn relay_read(
+        &self,
+        slot: &mut Option<Client>,
+        method: &str,
+    ) -> Result<Value, ErrorEnvelope> {
+        let had_link = slot.is_some();
+        match self.relay(slot, method, None, None).await {
+            Err(envelope) if had_link && envelope.code == ErrorCode::ManagerUnreachable => {
+                self.relay(slot, method, None, None).await
+            }
+            other => other,
+        }
     }
 }
 
@@ -487,7 +540,7 @@ fn stamp_modern_envelope(method: &str, result: &mut Value) {
     }
 }
 
-fn json_rpc_error(id: Value, code: i32, message: &str) -> Value {
+pub(crate) fn json_rpc_error(id: Value, code: i32, message: &str) -> Value {
     json!({
         "jsonrpc": "2.0",
         "id": id,
@@ -496,8 +549,9 @@ fn json_rpc_error(id: Value, code: i32, message: &str) -> Value {
 }
 
 /// A protocol error whose envelope is version_incompatible (`-32022`): both pairs in the
-/// message (05), the canonical code in `data`.
-fn json_rpc_envelope_error(id: Option<Value>, envelope: &ErrorEnvelope) -> Value {
+/// message (05), the canonical code in `data`. Every other envelope (auth and gate refusals
+/// included) is a `-32600` invalid request carrying its `{code, message, hint?}` in `data`.
+pub(crate) fn json_rpc_envelope_error(id: Option<Value>, envelope: &ErrorEnvelope) -> Value {
     let code = if envelope.code == ErrorCode::VersionIncompatible {
         UNSUPPORTED_PROTOCOL_VERSION_ERROR
     } else {

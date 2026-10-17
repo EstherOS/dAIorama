@@ -13,6 +13,7 @@ without colliding token/history paths. `--instance <name>` selects; default
 | scope defs | `${XDG_CONFIG_HOME:-~/.config}/daiorama/<instance>/scopes/<scope>.ron` | one file per scope, filename = scope name |
 | data root | `${XDG_DATA_HOME:-~/.local/share}/daiorama/<instance>/` | persistent; survives restarts |
 | token | `<data root>/token` | mode 0600, own file (07) |
+| scope secrets | `<data root>/scope-tokens/<scope>` | mode 0600, filename = scope name; presence = network-usable (07) |
 | history | `<data root>/history/` | per-session segments (below) |
 | media | `<data root>/media/` | persisted artifacts (`audit.store_*`); cap 128 MiB per session, oldest-first eviction; same retention as history |
 | modules | `<data root>/modules/` | dashboard module installs (09) |

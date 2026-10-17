@@ -218,6 +218,36 @@ Provisional shapes (mine to pin, additive-only afterwards, flagged in the P2 rep
 history read shape (`{records: [{at, event, session_id, scope, origin, cause?}], next_cursor}`),
 the human renderings, and the `bad_request` messages that 04/05 do not spell out.
 
+## Network bridge (`daiorama mcp --listen`, P3 W1b)
+
+The network mode serves the same MCP surface on one HTTP endpoint: **`POST /mcp`**, JSON-RPC
+body, `Content-Length` (no chunked bodies), keep-alive. `GET`/any other path is refused. `Host`
+is required, and an `Origin` header (when present) must name the same authority as `Host`.
+Bodies are bounded exactly like a stdio frame — `MAX_FRAME_BYTES` (8 MiB), over-cap refused
+with the same `bad_request` string and the connection ends.
+
+Every request authenticates itself with the pinned headers (05/07): `Daiorama-Token` (the
+instance token, checked first), `Daiorama-Scope`, `Daiorama-Scope-Token` (that scope's secret).
+No anonymous calls, no default scope. A scope is network-usable only while it has a secret file
+(`<data root>/scope-tokens/<scope>`, 0600 — 08). Gate failures are MCP-level errors: HTTP 200
+with a JSON-RPC error whose `data` carries the canonical envelope — never an HTTP auth
+challenge or discovery metadata. A notification (no `id`) passes the gate, executes nothing,
+and answers `202` with an empty body.
+
+Refusal strings (pinned; `{scope}` and `{origin}` are the observed values, quoted as JSON):
+
+- `scope required: send Daiorama-Scope and Daiorama-Scope-Token headers` — `scope_auth_required`
+- `scope {scope} requires its scope secret (Daiorama-Scope-Token header)` — `scope_auth_required`
+- `scope {scope} has no secret; it cannot be used over the network` — `scope_auth_required`
+- `origin not allowed: {origin}` — `bad_request`
+- `network bridge serves POST /mcp only` — `bad_request`
+- `network mode serves the local instance; use stdio for a remote manager (--remote)` — `bad_request`
+- `missing Host header` — `bad_request`
+- `chunked request bodies are not supported` — `bad_request`
+
+A wrong or missing `Daiorama-Token` answers `token_required` with the 04 client string (the
+gate does not distinguish missing from wrong); an unknown scope answers `scope_unknown`.
+
 ## Spawner parameters
 
 What the fixtures pin is the **frame** contract: `create_session` carries the requested

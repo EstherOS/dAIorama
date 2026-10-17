@@ -1,8 +1,10 @@
-//! MCP bridge: the shared contract shapes, plus the live stdio bridge in [`server`] (P3 W1).
+//! MCP bridge: the shared contract shapes, the live stdio bridge in [`server`], and the
+//! network bridge in [`listen`] (P3 W1).
 //!
 //! [`server`] implements `daiorama mcp` over stdio — framing, both handshake paths, the
-//! scope's exposed manifest and the relay to the manager. The network mode (`--listen`) stays
-//! a typed surface until its slice lands.
+//! scope's exposed manifest and the relay to the manager. [`listen`] serves the same surface
+//! over HTTP for `--listen <addr>`, authenticating every request with the pinned headers
+//! (05/07).
 //!
 //! This file ships the contract shapes a bridge implementation needs — the MCP revision,
 //! JSON-RPC framing, the content-type rule for capture results, the tool registry the exposed
@@ -13,6 +15,7 @@
 //! that reason in mind.
 #![allow(dead_code)]
 
+pub mod listen;
 pub mod server;
 
 use serde::{Deserialize, Serialize};

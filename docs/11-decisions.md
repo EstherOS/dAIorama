@@ -469,3 +469,31 @@ and the no-params gate would refuse it); bridge-local enforcement only (the mana
 quotas/visibility would keep answering for `operator` — a lie the bridge cannot fix); deriving
 the scope from the unix socket's filesystem permissions (local trust is already cooperative, 07,
 and a shared network surface needs the claim on the call itself).
+
+### Bridge network mode — request-time gate, scope-secret files · adopted · home: 05, 07, 08
+
+`daiorama mcp --listen <addr>` serves MCP over HTTP on one endpoint, `POST /mcp`. Every request
+carries its own credentials (`Daiorama-Token`, `Daiorama-Scope`, `Daiorama-Scope-Token`) and is
+gated in that order before dispatch; there is no anonymous call and no default scope. The
+network bridge authenticates **per request**, not per connection: the bridge is stateless, and
+HTTP connections are pooled and reused by clients, so a connection has no identity of its own —
+binding one to the first request's scope would let a later request inherit the wrong identity.
+Scope secrets are files, one per scope, at `<data root>/scope-tokens/<scope>` (0600, filename =
+scope name): presence is what makes a scope network-usable, and a scope without one is refused
+`scope_auth_required` (05/07). `config setup` mints the starter scope's secret; `--listen`
+mints any missing secret for an existing scope file at startup, announced on stderr, and ensures
+the instance token exists even for a loopback bind — a network surface never runs tokenless.
+Gate failures are MCP-level errors (HTTP 200, JSON-RPC error, canonical envelope in `data`),
+never an HTTP auth challenge; bodies are bounded by `MAX_FRAME_BYTES` like a stdio frame, and a
+notification answers `202` without executing.
+
+*Rationale:* found by building W1b against 05/07: the docs named the headers and the "scope
+without a secret is unusable" rule but no storage path or generation point, so every
+implementation would invent one. Data-root secrets mirror the instance token (never in the
+reviewable config tree, never echoed by `config scope get`); per-request auth matches the
+stateless bridge and pooled HTTP. `config setup`/first-listen generation keeps "no anonymous
+calls" from degrading into "no usable caller".
+*Rejected:* a `secret` field inside `scopes/<scope>.ron` (config tools are readable/scriptable
+and would echo it; secrets do not belong in the reviewable file); sticky per-connection scope
+(the confused-deputy above); OAuth challenge/discovery metadata (harnesses without custom
+headers use the stdio client-only install, 05); bind-address gating (07's request-time rule).

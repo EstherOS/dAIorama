@@ -100,6 +100,16 @@ impl Paths {
         self.data_dir.join("token")
     }
 
+    /// `<data-root>/scope-tokens/` — per-scope network secrets (07).
+    pub fn scope_tokens_dir(&self) -> PathBuf {
+        self.data_dir.join("scope-tokens")
+    }
+
+    /// `<data-root>/scope-tokens/<scope>` — mode 0600, filename = scope name (07).
+    pub fn scope_token_file(&self, scope: &str) -> PathBuf {
+        self.scope_tokens_dir().join(scope)
+    }
+
     /// `<data-root>/history/`
     pub fn history_dir(&self) -> PathBuf {
         self.data_dir.join("history")
@@ -1462,6 +1472,46 @@ pub fn token_file_mode(paths: &Paths) -> Option<u32> {
         .map(|metadata| metadata.permissions().mode() & 0o777)
 }
 
+/// Read a scope's network secret; `None` when the scope has none (07: a scope without a
+/// secret cannot be used over the network).
+pub fn read_scope_token(paths: &Paths, scope: &str) -> Result<Option<String>, ErrorEnvelope> {
+    let path = paths.scope_token_file(scope);
+    match std::fs::read_to_string(&path) {
+        Ok(text) => Ok(Some(text.trim().to_string())),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(ErrorEnvelope::bad_request(format!(
+            "cannot read {}: {err}",
+            path.display()
+        ))),
+    }
+}
+
+/// Write a scope's network secret at mode 0600 (one file per scope, filename = scope name).
+pub fn write_scope_token(
+    paths: &Paths,
+    scope: &str,
+    secret: &str,
+) -> Result<PathBuf, ErrorEnvelope> {
+    write_secret(&paths.scope_token_file(scope), secret)
+}
+
+/// Write one 0600 secret file, creating its directory.
+fn write_secret(path: &Path, value: &str) -> Result<PathBuf, ErrorEnvelope> {
+    use std::os::unix::fs::PermissionsExt;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| {
+            ErrorEnvelope::bad_request(format!("cannot create {}: {err}", parent.display()))
+        })?;
+    }
+    std::fs::write(path, format!("{value}\n")).map_err(|err| {
+        ErrorEnvelope::bad_request(format!("cannot write {}: {err}", path.display()))
+    })?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|err| {
+        ErrorEnvelope::bad_request(format!("cannot set mode on {}: {err}", path.display()))
+    })?;
+    Ok(path.to_path_buf())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1840,6 +1890,28 @@ mod tests {
             read_token(&paths).unwrap().as_deref(),
             Some(rotated.as_str())
         );
+    }
+
+    #[test]
+    fn scope_secrets_are_per_scope_files_at_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let paths = paths_in(root.path());
+        assert_eq!(read_scope_token(&paths, "agent1").unwrap(), None);
+
+        let secret = generate_token();
+        let path = write_scope_token(&paths, "agent1", &secret).unwrap();
+        assert_eq!(path, paths.scope_token_file("agent1"));
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            read_scope_token(&paths, "agent1").unwrap().as_deref(),
+            Some(secret.as_str())
+        );
+        // A second scope has its own file: one secret never covers another.
+        assert_eq!(read_scope_token(&paths, "agent2").unwrap(), None);
     }
 
     #[test]

@@ -11,9 +11,12 @@ every harness config points at (pinned).
   bridge started without a scope refuses to run: `scope required: set
   DAIORAMA_SCOPE`.
 - **network service** (`--listen <addr>`): one long-lived bridge, many
-  connections. Scope is authenticated **per connection**; no anonymous calls;
-  no default scope. Scopes without a secret are usable via stdio only (07
-  states the model; rationale in 11).
+  connections, one HTTP endpoint (`POST /mcp`). Scope is authenticated **per
+  request** from the pinned credential headers — a connection carries no
+  identity of its own, so a pooled client can multiplex scopes safely; no
+  anonymous calls; no default scope. Scopes without a secret are usable via
+  stdio only (07 states the model; rationale in 11). Network mode serves the
+  local instance; a remote manager stays the stdio bridge's shape (`--remote`).
 - **network credentials (pinned):** a network MCP endpoint carries credentials
   as request headers — `Daiorama-Token` (instance token), `Daiorama-Scope`,
   `Daiorama-Scope-Token`. The bridge relays them unmodified — it is a
@@ -70,6 +73,16 @@ manifest locally, and relays everything else:
   live}}, audit}`, paginated over `tools` with `next_cursor` (cursor/limit per
   §List, history, and retries).
 - A notification (no `id`) never executes and never gets a response.
+
+**Network conformance surface (P3 W1).** `--listen` serves the same surface over HTTP on one
+endpoint, `POST /mcp`; bodies are `Content-Length`-delimited and bounded by `MAX_FRAME_BYTES`
+exactly like a stdio frame (over-cap: `bad_request`, connection ends). `Host` is required and
+an `Origin` (when present) must name the same authority as `Host`. Each request carries its
+own credentials (`Daiorama-Token`, `Daiorama-Scope`, `Daiorama-Scope-Token`); the gates run in
+that order before dispatch. Gate failures are MCP-level errors — HTTP 200 with a JSON-RPC error
+whose `data` is the canonical envelope — never an OAuth challenge. A notification that passes
+the gate executes nothing and answers `202` with an empty body. The refusal strings are pinned
+in `fixtures/README.md`'s network contract.
 
 ## Scope and origin carriage on the RPC
 

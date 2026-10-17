@@ -10,7 +10,7 @@ the view-port gate had no enforcer).
 | surface | default | when exposed beyond loopback |
 |---------|---------|------------------------------|
 | manager RPC | unix socket, zero-config, tokenless | TCP bind requires instance token, always |
-| MCP bridge, network mode | loopback (`127.0.0.1:8757`) | instance token **and** per-connection scope auth (below) |
+| MCP bridge, network mode | loopback (`127.0.0.1:8757`) | instance token **and** per-request scope auth (below) |
 | view front (noVNC + proxy to wayvnc) | loopback | per-view credential derived from the instance token (HMAC, below), enforced by the front itself |
 | dashboard | loopback | **v1 refuses non-loopback binds** (remote humans use SSH forwarding or an overlay network); its manager connections carry per-connection tokens |
 | media endpoint (`/media/<id>`) | on the manager surface; the bridge relays `/media/*` pass-through for network-bridge calls | the 128-bit opaque id **is** the credential (capability URL); ids never logged |
@@ -82,7 +82,7 @@ enforces quotas and tool manifests against it regardless of transport.
 - **stdio bridge:** scope set once via `DAIORAMA_SCOPE` (+ `DAIORAMA_SCOPE_TOKEN`
   when the scope has a secret) in the harness's own MCP client config. Process
   environment is the authentication; nobody else can set it for that process.
-- **network bridge:** per-connection authentication — a network MCP endpoint
+- **network bridge:** per-request authentication — a network MCP endpoint
   carries credentials as request headers: `Daiorama-Token` (instance token),
   `Daiorama-Scope`, `Daiorama-Scope-Token`; the bridge relays them unmodified
   and the manager validates on every call — the same presentation path as the
@@ -90,6 +90,14 @@ enforces quotas and tool manifests against it regardless of transport.
   same credential presentation (same names; carriage per transport). **A
   claimed string is never authentication**; a
   scope without a secret cannot be used over the network.
+- **Scope secrets (pinned):** one file per scope at `<data root>/scope-tokens/<scope>`
+  (mode 0600, filename = scope name; 08). Presence is what makes a scope network-usable:
+  a scope with no secret file answers `scope_auth_required` on the network and stays
+  stdio-only. `config setup` mints the starter scope's secret; `daiorama mcp --listen`
+  mints any scope file's missing secret at startup (announced on stderr, written 0600), so
+  the first network start cannot leave a silent dead end. The instance token is likewise
+  ensured at `--listen` startup, for loopback binds too — a network surface never runs
+  tokenless.
 - **local unix socket:** scope claims are cooperative and documented as such.
   The socket is filesystem-gated, and anything with code execution on the same
   host can bypass config-level restrictions anyway (01, principle 5) — local
@@ -103,8 +111,8 @@ enforces quotas and tool manifests against it regardless of transport.
   `operator` with that scope's secret (`DAIORAMA_SCOPE_TOKEN`; scope fixed
   `operator`; `scope_auth_required` when absent). The starter scope set
   includes `operator` and `dashboard`; scope secrets are generated 0600 at
-  `config setup` / first non-loopback bind, and `token show` prints the
-  reminder that network callers need them. MCP callers default to
+  `config setup` / the first `daiorama mcp --listen` startup, and `token show`
+  prints the reminder that network callers need them. MCP callers default to
   own-sessions-only; broader visibility is per-scope config
   (`sessions.visibility`, scope files 08), never default.
 - Scope definitions (quotas, manifests, audit flags) are files — see 08.

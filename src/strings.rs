@@ -96,6 +96,41 @@ pub fn token_required(addr: &str) -> String {
     )
 }
 
+// ---------------------------------------------------------------------------
+// Network bridge (05/07; pinned in fixtures/README's network contract)
+// ---------------------------------------------------------------------------
+
+/// A network bridge call with no `Daiorama-Scope` header: no anonymous calls, no default
+/// scope (05, 07).
+pub const NETWORK_SCOPE_REQUIRED: &str =
+    "scope required: send Daiorama-Scope and Daiorama-Scope-Token headers";
+
+/// A network call presents a scope whose secret does not match (07).
+pub fn network_scope_auth_required(scope: &str) -> String {
+    format!("scope {scope:?} requires its scope secret (Daiorama-Scope-Token header)")
+}
+
+/// A scope has no secret file, so it cannot be used over the network at all (07).
+pub fn scope_has_no_secret(scope: &str) -> String {
+    format!("scope {scope:?} has no secret; it cannot be used over the network")
+}
+
+/// Browser-shaped requests are validated: an `Origin` must match the `Host` it was sent to
+/// (07's exposure rule).
+pub fn origin_not_allowed(origin: &str) -> String {
+    format!("origin not allowed: {origin:?}")
+}
+
+/// The network bridge serves one endpoint; MCP over HTTP is POST (05).
+pub const NETWORK_POST_ONLY: &str = "network bridge serves POST /mcp only";
+/// Network mode serves the local instance; a remote manager is the stdio bridge's shape.
+pub const NETWORK_LOCAL_ONLY: &str =
+    "network mode serves the local instance; use stdio for a remote manager (--remote)";
+/// HTTP/1.1 requires Host, and the bridge's Origin check compares against it.
+pub const MISSING_HOST: &str = "missing Host header";
+/// The HTTP body is length-delimited exactly like a stdio frame.
+pub const CHUNKED_UNSUPPORTED: &str = "chunked request bodies are not supported";
+
 /// 04: scope + global session quota exhausted (05 `quota_exceeded`).
 pub fn session_limit_reached(
     scope: &str,
