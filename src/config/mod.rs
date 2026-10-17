@@ -1495,20 +1495,29 @@ pub fn write_scope_token(
     write_secret(&paths.scope_token_file(scope), secret)
 }
 
-/// Write one 0600 secret file, creating its directory.
+/// Write one 0600 secret file, creating its directory. The file is created with its final
+/// mode from the first syscall — no window where a fresh secret is group/other-readable.
 fn write_secret(path: &Path, value: &str) -> Result<PathBuf, ErrorEnvelope> {
-    use std::os::unix::fs::PermissionsExt;
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|err| {
             ErrorEnvelope::bad_request(format!("cannot create {}: {err}", parent.display()))
         })?;
     }
-    std::fs::write(path, format!("{value}\n")).map_err(|err| {
-        ErrorEnvelope::bad_request(format!("cannot write {}: {err}", path.display()))
-    })?;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|err| {
-        ErrorEnvelope::bad_request(format!("cannot set mode on {}: {err}", path.display()))
-    })?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|err| {
+            ErrorEnvelope::bad_request(format!("cannot write {}: {err}", path.display()))
+        })?;
+    file.write_all(format!("{value}\n").as_bytes())
+        .map_err(|err| {
+            ErrorEnvelope::bad_request(format!("cannot write {}: {err}", path.display()))
+        })?;
     Ok(path.to_path_buf())
 }
 

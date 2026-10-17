@@ -1,5 +1,5 @@
 
-=== bin: /home/agent/workspace/dAIorama/p2fix/target/debug/daiorama ===
+=== bin: <checkout>/target/debug/daiorama ===
 daiorama 0.1.0
 
 === config setup ===

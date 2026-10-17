@@ -131,6 +131,14 @@ pub const MISSING_HOST: &str = "missing Host header";
 /// The HTTP body is length-delimited exactly like a stdio frame.
 pub const CHUNKED_UNSUPPORTED: &str = "chunked request bodies are not supported";
 
+/// 05 §The bridge: HTTP transport refusals, pinned so a harness sees stable text.
+pub const HEAD_TOO_LARGE: &str = "request head too large";
+pub const MALFORMED_HTTP_REQUEST: &str = "malformed HTTP request";
+pub const DUPLICATE_CONTENT_LENGTH: &str = "duplicate Content-Length";
+pub fn invalid_content_length(raw: &str) -> String {
+    format!("invalid Content-Length: {raw:?}")
+}
+
 /// 04: scope + global session quota exhausted (05 `quota_exceeded`).
 pub fn session_limit_reached(
     scope: &str,

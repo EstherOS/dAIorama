@@ -31,6 +31,7 @@ impl Bridge {
             "(grant: (categories: [\"input\"]))",
         )
         .unwrap();
+        std::fs::write(scopes.join("agent2.ron"), "(grant: (categories: []))").unwrap();
         std::fs::create_dir_all(root.path().join("data")).unwrap();
         std::fs::create_dir_all(root.path().join("runtime")).unwrap();
         std::fs::create_dir_all(root.path().join("tmp")).unwrap();
@@ -99,6 +100,13 @@ impl Bridge {
 
     async fn connection(&self) -> Conn {
         Conn::connect(self.port).await
+    }
+
+    /// The local manager socket the bridge connects to lazily (04/08 path rule).
+    fn manager_socket(&self) -> PathBuf {
+        self.root
+            .path()
+            .join("runtime/daiorama/default/manager.sock")
     }
 }
 
@@ -536,5 +544,120 @@ async fn a_relative_config_root_is_not_written_outside_the_temp_root() {
     assert_eq!(
         std::fs::metadata(&secret).unwrap().permissions().mode() & 0o777,
         0o600
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The shared manager link re-stamps the caller identity on EVERY relayed call
+// ---------------------------------------------------------------------------
+
+/// A fake manager on the bridge's local socket: captures every frame, answers `handshake`
+/// and `list_sessions` — enough for the scope probe (the same shape as tests/mcp.rs's sink).
+struct FrameSink {
+    frames: std::sync::Arc<std::sync::Mutex<Vec<Value>>>,
+}
+
+impl FrameSink {
+    fn serve(socket: PathBuf) -> Self {
+        std::fs::create_dir_all(socket.parent().unwrap()).unwrap();
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let listener = tokio::net::UnixListener::from_std(listener).unwrap();
+        let frames = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = std::sync::Arc::clone(&frames);
+        tokio::spawn(async move {
+            loop {
+                let Ok((stream, _)) = listener.accept().await else {
+                    return;
+                };
+                let frames = std::sync::Arc::clone(&captured);
+                tokio::spawn(async move {
+                    let _ = sink_connection(stream, frames).await;
+                });
+            }
+        });
+        Self { frames }
+    }
+}
+
+async fn sink_connection(
+    stream: tokio::net::UnixStream,
+    frames: std::sync::Arc<std::sync::Mutex<Vec<Value>>>,
+) -> std::io::Result<()> {
+    let (read, mut write) = stream.into_split();
+    let mut reader = BufReader::new(read);
+    let mut line = String::new();
+    loop {
+        line.clear();
+        if reader.read_line(&mut line).await? == 0 {
+            return Ok(());
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let request: Value = serde_json::from_str(trimmed)?;
+        frames.lock().unwrap().push(request.clone());
+        let result = match request["method"].as_str().unwrap_or_default() {
+            "handshake" => json!({
+                "protocol_version": "0.1.0",
+                "min_supported": "0.1.0",
+                "instance_id": "11111111-1111-4111-8111-111111111111",
+            }),
+            "list_sessions" => json!({ "sessions": [] }),
+            _ => json!({}),
+        };
+        let mut response = json!({ "result": result });
+        if let Some(id) = request.get("id") {
+            response["id"] = id.clone();
+        }
+        write.write_all(format!("{response}\n").as_bytes()).await?;
+        write.flush().await?;
+    }
+}
+
+/// One bridge process, one shared manager link, two authenticated scopes on ONE keep-alive
+/// connection: every relayed call must carry the scope of its own caller — a create-only
+/// stamp would pin the first caller's identity onto every later request (confused deputy).
+#[tokio::test]
+async fn each_relayed_call_carries_its_own_scope() {
+    let bridge = Bridge::start().await;
+    let sink = FrameSink::serve(bridge.manager_socket());
+    let host = format!("127.0.0.1:{}", bridge.port);
+    let agent1 = [
+        ("Host", host.as_str()),
+        ("Daiorama-Token", &bridge.token()),
+        ("Daiorama-Scope", "agent1"),
+        ("Daiorama-Scope-Token", &bridge.scope_secret("agent1")),
+    ];
+    let agent2 = [
+        ("Host", host.as_str()),
+        ("Daiorama-Token", &bridge.token()),
+        ("Daiorama-Scope", "agent2"),
+        ("Daiorama-Scope-Token", &bridge.scope_secret("agent2")),
+    ];
+    let mut conn = bridge.connection().await;
+    for (headers, id) in [(&agent1, 1), (&agent2, 2)] {
+        let (status, _, response) = conn
+            .mcp(
+                headers,
+                json!({"jsonrpc": "2.0", "id": id, "method": "tools/call",
+                       "params": {"name": "list_capabilities"}}),
+            )
+            .await;
+        assert_eq!(status, 200, "relayed call {id}: {response}");
+    }
+    let scopes: Vec<String> = sink
+        .frames
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|frame| frame["method"] == "list_sessions")
+        .map(|frame| frame["scope"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(
+        scopes,
+        vec!["agent1".to_string(), "agent2".to_string()],
+        "each relayed call carries its own caller's scope"
     );
 }

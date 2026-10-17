@@ -413,7 +413,13 @@ impl Bridge {
             client.set_caller(Some(self.scope.clone()), Some("mcp".to_string()));
             *slot = Some(client);
         }
-        Ok(slot.as_mut().expect("client set above"))
+        let client = slot.as_mut().expect("client set above");
+        // The caller identity rides EVERY relayed call, not just the create (05 A7): the link
+        // is shared across requests — and, on the network bridge, across scopes — so a
+        // create-only stamp would pin the first caller's scope onto every later request: the
+        // confused deputy the per-request gate exists to prevent.
+        client.set_caller(Some(self.scope.clone()), Some("mcp".to_string()));
+        Ok(client)
     }
 
     /// One relayed request over the shared manager slot. A transport failure means the link

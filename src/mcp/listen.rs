@@ -203,7 +203,7 @@ async fn serve_connection(network: &Arc<Network>, stream: TcpStream) -> Result<(
             HeadRead::Eof => return Ok(()),
             HeadRead::TooLarge => {
                 let reply =
-                    envelope_reply(400, ErrorEnvelope::bad_request("request head too large"));
+                    envelope_reply(400, ErrorEnvelope::bad_request(strings::HEAD_TOO_LARGE));
                 write_reply(input.get_mut(), &reply).await?;
                 return Ok(());
             }
@@ -211,7 +211,10 @@ async fn serve_connection(network: &Arc<Network>, stream: TcpStream) -> Result<(
         };
 
         let Some(request) = RequestHead::parse(&head) else {
-            let reply = envelope_reply(400, ErrorEnvelope::bad_request("malformed HTTP request"));
+            let reply = envelope_reply(
+                400,
+                ErrorEnvelope::bad_request(strings::MALFORMED_HTTP_REQUEST),
+            );
             write_reply(input.get_mut(), &reply).await?;
             return Ok(());
         };
@@ -244,6 +247,15 @@ async fn serve_connection(network: &Arc<Network>, stream: TcpStream) -> Result<(
             let reply = envelope_reply(
                 400,
                 ErrorEnvelope::bad_request(strings::CHUNKED_UNSUPPORTED),
+            );
+            write_reply(input.get_mut(), &reply).await?;
+            return Ok(());
+        }
+
+        if request.duplicate_content_length {
+            let reply = envelope_reply(
+                400,
+                ErrorEnvelope::bad_request(strings::DUPLICATE_CONTENT_LENGTH),
             );
             write_reply(input.get_mut(), &reply).await?;
             return Ok(());
@@ -404,6 +416,10 @@ struct RequestHead {
     method: String,
     target: String,
     headers: HashMap<String, String>,
+    /// More than one `Content-Length` header: last-wins would let the two lines disagree
+    /// about the body size (a request-smuggling shape), so the request is refused like the
+    /// chunked form (05 §The bridge).
+    duplicate_content_length: bool,
 }
 
 impl RequestHead {
@@ -421,11 +437,15 @@ impl RequestHead {
             (method, target)
         };
         let mut headers = HashMap::new();
+        let mut duplicate_content_length = false;
         for line in lines {
             let (name, value) = line.split_once(':')?;
             let name = name.trim().to_ascii_lowercase();
             if name.is_empty() {
                 return None;
+            }
+            if name == "content-length" && headers.contains_key("content-length") {
+                duplicate_content_length = true;
             }
             headers.insert(name, value.trim().to_string());
         }
@@ -433,6 +453,7 @@ impl RequestHead {
             method,
             target,
             headers,
+            duplicate_content_length,
         })
     }
 
@@ -445,7 +466,7 @@ impl RequestHead {
             None => Ok(0),
             Some(raw) => raw
                 .parse::<usize>()
-                .map_err(|_| format!("invalid Content-Length: {raw:?}")),
+                .map_err(|_| strings::invalid_content_length(raw)),
         }
     }
 }
@@ -531,6 +552,21 @@ mod tests {
         assert!(!origin_matches("http://evil.example", "127.0.0.1:8757"));
         assert!(!origin_matches("null", "127.0.0.1:8757"));
         assert!(!origin_matches("http://127.0.0.1:9999", "127.0.0.1:8757"));
+    }
+
+    /// 05 §The bridge: the HTTP transport refusals are pinned — a harness can assert them.
+    #[test]
+    fn transport_refusals_are_pinned() {
+        assert_eq!(strings::HEAD_TOO_LARGE, "request head too large");
+        assert_eq!(strings::MALFORMED_HTTP_REQUEST, "malformed HTTP request");
+        assert_eq!(
+            strings::DUPLICATE_CONTENT_LENGTH,
+            "duplicate Content-Length"
+        );
+        assert_eq!(
+            strings::invalid_content_length("abc"),
+            "invalid Content-Length: \"abc\""
+        );
     }
 
     #[test]
