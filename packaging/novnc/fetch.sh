@@ -2,7 +2,7 @@
 # Stage the pinned noVNC tree into <dest> (asset root: <data>/novnc).
 # Usage: fetch.sh [dest] [tarball]
 set -eu
-DEST=${1:-./novnc}
+DEST=${1-./novnc}
 TARBALL=${2:-}
 PIN_SHA256=b1003a11b6e6e8d8f7f5e5586daae7f8ca651d8aee0aa155ff9ac841c48f52c6
 URL=https://codeload.github.com/novnc/noVNC/tar.gz/refs/tags/v1.7.0
@@ -46,6 +46,9 @@ for f in vnc.html LICENSE.txt docs/LICENSE.MPL-2.0 docs/LICENSE.OFL-1.1 \
          docs/LICENSE.BSD-2-Clause vendor/pako/LICENSE app/styles/base.css core/rfb.js; do
     [ -e "$STAGE/$f" ] || { echo "refusing: staged tree is missing $f" >&2; exit 1; }
 done
+# The installer creates its own target parent: staging precedes the first run (10), so the
+# data root may not exist yet. The binary's own ensure is still the only manager-side creator.
+mkdir -p "$(dirname "$DEST")"
 rm -rf "$DEST"
 mv "$STAGE" "$DEST"
 echo "staged noVNC 1.7.0 at $DEST ($(find "$DEST" -type f | wc -l) files)"

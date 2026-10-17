@@ -7,6 +7,8 @@
 const UNIT: &str = include_str!("../packaging/systemd/daiorama@.service");
 const README: &str = include_str!("../packaging/README.md");
 const STRINGS: &str = include_str!("../src/strings.rs");
+const NOVNC_FETCH: &str = include_str!("../packaging/novnc/fetch.sh");
+const NOVNC_NOTE: &str = include_str!("../p5/novnc/README.md");
 
 #[test]
 fn unit_is_a_user_service_that_runs_serve_for_the_instance() {
@@ -72,4 +74,58 @@ fn runbook_quotes_the_pinned_view_assets_refusal() {
         README.contains(pinned),
         "runbook must quote the pinned refusal"
     );
+}
+
+#[test]
+fn novnc_installer_and_sourcing_note_carry_one_pin() {
+    // Two records, one artifact: the sourcing note and the shipped installer must agree.
+    let sha = "b1003a11b6e6e8d8f7f5e5586daae7f8ca651d8aee0aa155ff9ac841c48f52c6";
+    assert!(NOVNC_FETCH.contains(sha), "installer pin drifted");
+    assert!(
+        NOVNC_NOTE.contains(sha),
+        "note pin drifted from the installer"
+    );
+    assert!(NOVNC_FETCH.contains("refs/tags/v1.7.0"), "{NOVNC_FETCH}");
+    // 09 assigns the install to packaging; doctor prints the same path (strings.rs).
+    assert!(README.contains("packaging/novnc/fetch.sh"), "{README}");
+    assert!(STRINGS.contains("packaging/novnc/fetch.sh"), "{STRINGS}");
+    // Staging precedes the first run (10), so the target's parent may not exist yet: the
+    // installer creates it rather than relying on a data root the binary has not made.
+    assert!(
+        NOVNC_FETCH.contains("mkdir -p \"$(dirname \"$DEST\")\""),
+        "{NOVNC_FETCH}"
+    );
+}
+
+#[test]
+fn novnc_installer_refuses_unsafe_destinations_before_downloading() {
+    // These refusals run before the pinned URL is touched, so the test needs no network.
+    let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("packaging/novnc/fetch.sh");
+    for dest in ["/", ".", "..", ""] {
+        let out = std::process::Command::new("sh")
+            .arg(&script)
+            .arg(dest)
+            .output()
+            .expect("script runs");
+        assert!(
+            !out.status.success(),
+            "dest {dest:?} must be refused: {out:?}"
+        );
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("refusing"), "dest {dest:?}: {err}");
+    }
+
+    // An existing non-tree directory is refused with its contents intact.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let keep = tmp.path().join("keep");
+    std::fs::create_dir_all(&keep).unwrap();
+    std::fs::write(keep.join("keep.txt"), "x").unwrap();
+    let out = std::process::Command::new("sh")
+        .arg(&script)
+        .arg(&keep)
+        .output()
+        .expect("script runs");
+    assert!(!out.status.success(), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not a noVNC tree"));
+    assert_eq!(std::fs::read_to_string(keep.join("keep.txt")).unwrap(), "x");
 }

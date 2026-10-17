@@ -55,7 +55,7 @@ creation/usage options in place (D1). Read commands accept `--json`.
 - `daiorama mcp [--listen <addr>]` — run the bridge. Default: stdio, targeting the local manager (`--remote` picks another — one flag, one meaning, everywhere). `--listen` runs it as a network service (auth rules in 07). This is the entry every harness config points at.
 
 **Diagnostics and packaging:**
-- `daiorama doctor` — host-runnable environment check: GPU family + exact next step, Hyprland/wayvnc presence and versions, Wayland, cgroups v2 delegation, package-manager-specific install commands. In-container it verifies the actual renderer and fails loud rather than diagnosing blindly (09).
+- `daiorama doctor` — host-runnable environment check: GPU family + exact next step, Hyprland/wayvnc presence and versions, Wayland, cgroups v2 delegation, the view asset tree, package-manager-specific install commands. In-container it verifies the actual renderer and fails loud rather than diagnosing blindly (09).
 - `daiorama dashboard serve` — serve the dashboard (module must be installed).
 - `daiorama dashboard install [--version <v>] [--from <path|url>]` — install the dashboard module (mechanism: 09).
 - `daiorama dashboard connect <address>` / `dashboard connections list|remove <name>` — dashboard-side manager connections (D3; flows in 10).
