@@ -79,7 +79,10 @@ image is the better path for that user.
 The view front serves a static noVNC tree from `<data>/novnc`; until that tree
 exists every view answers `view_unavailable` with `view assets not installed
 (expected <data>/novnc)` (07). Staging is one command per instance, run once
-(the image build runs it at build time into the persisted `/data` mount):
+(the desktop image pre-seeds the volume instead: it carries a read-only copy at
+`/usr/share/daiorama/novnc` and `packaging/container/entrypoint.sh` copies it
+into `<data>/novnc` only when the entry point is absent — an image may pre-seed
+the volume, never serve an ephemeral layer):
 
     packaging/novnc/fetch.sh <data root>/novnc
 

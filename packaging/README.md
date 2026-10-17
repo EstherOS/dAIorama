@@ -1,8 +1,9 @@
 # Packaging — bare-host install and runbook
 
-Assets for the bare-host shape (09): the manager as a systemd **user** service.
-Container assets (image, Quadlet unit, compose snippets) are the next packaging
-slice; 09 carries their design.
+Assets for two channels (09): the bare-host shape — the manager as a systemd **user** service —
+and the container shape, whose split, package set and seeding rule are pinned in 09 and
+`p5/image/README.md`. The unit below is the bare-host channel; the image `CMD` is the container
+channel, not a replacement for it.
 
 ## Install the binary
 
@@ -131,6 +132,23 @@ the front's refusal plus this command. The tree is data, not a build input: it
 survives upgrades and belongs in a backup (above), and a container needs it
 staged into the persisted `/data` mount, not baked into an ephemeral layer.
 
+## Container images
+
+Two artifacts (09, *Image split*): **`daiorama`** — core substrate, no default command — and
+**`daiorama-desktop`** — core plus pinned Chromium, the session launcher at
+`/usr/local/bin/daiorama-browser`, and `CMD ["daiorama","serve"]`. The Containerfiles build on
+the reference box; CI here has no podman, so their PR carries the build and the live legs.
+
+The desktop image carries the pinned noVNC tree once at `/usr/share/daiorama/novnc`.
+`packaging/container/entrypoint.sh` seeds it into `<data root>/novnc` only when `vnc.html` is
+absent, then `exec`s the command — the tree stays on the persisted volume, and an image upgrade
+never swaps it under a session. Mount `/data` and `/config` at 08's container equivalents; the
+token and scope secrets live in `/data`, so back that volume up like a credential.
+
+The Containerfiles, the Quadlet unit and the compose snippets are the next packaging slice;
+this section fixes the contract they have to implement, and the entrypoint is tested here so a
+broken seed rule fails before an image exists.
+
 ## Troubleshooting
 
 | symptom | check |
@@ -139,7 +157,7 @@ staged into the persisted `/data` mount, not baked into an ephemeral layer.
 | `Hyprland {found} is outside the supported range {min}-{max}.` | install a supported Hyprland; `doctor` names the package (09, C5) |
 | sessions die immediately | `daiorama doctor` — a session needs a working renderer and wayvnc, not just Hyprland |
 | cgroup limits refused | the user manager must delegate controllers; if the host cannot, `config set limits.mode off` (06) and the manager reports limits off |
-Installer prerequisites: `curl` (download path only), `tar`, `sha256sum`. A missing tool is refused up front, not mid-run.
-
 | view answers `view assets not installed (expected <data>/novnc)` | the noVNC tree is missing at `<data root>/novnc`; stage it once with `packaging/novnc/fetch.sh` (*View assets*) |
 | another manager answers | sockets are per instance under `$XDG_RUNTIME_DIR/daiorama/<instance>/`; `daiorama status` prints the path it used |
+
+Installer prerequisites: `curl` (download path only), `tar`, `sha256sum`. A missing tool is refused up front, not mid-run.

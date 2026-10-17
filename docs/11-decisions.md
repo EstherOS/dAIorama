@@ -215,12 +215,17 @@ in-container startup only verifies the actual renderer and fails loud.
 *Rejected:* in-container diagnosis of passthrough (cannot see host state).
 
 ### C5 — Bare-host deps + capture decision · adopted · home: 09 · **review**
-Dependency/version table per shape; **capture decided in-binary** (screencopy
-protocol client — static-binary claim survives, no grim); **browser provider
-named** (bare host: the user's; image: ships Chromium); wayvnc version check;
-noVNC assets embedded; clipboard check.
-*Rejected:* external capture tool (breaks static claim); unnamed browser
-provider (the audit's complaint).
+Dependency/version table per shape; **browser provider named** (bare host: the
+user's; image: ships Chromium); wayvnc version check; clipboard check.
+*Erratum 2026-10-17 (code wins):* two clauses of the original entry described a
+surface that did not ship. Capture is an **argv-configured external command** —
+`capture.screenshot_command` / `capture.clip_command` default to `grim -t png` /
+`wf-recorder --no-damage -f` (`src/runtime/capture.rs`, 08) — so the image carries both tools;
+the in-binary screencopy client is not built and its static-binary argument is recorded here
+as a rejected direction, not a property. The noVNC tree is **staged data** at `<data>/novnc`,
+not embedded (P5-NOVNC below).
+*Rejected:* external capture tool (breaks static claim — the shipped build took this direction
+instead, pending a Wayland client dependency); unnamed browser provider (the audit's complaint).
 
 ### C6 — cgroups v2 containment · adopted · home: 06
 Preconditions stated; startup detects effective delegation, fails loud with the
@@ -942,3 +947,41 @@ script is the mechanism, and releases will carry its hash in the manifest).
 *Open:* whether the signed release manifest carries the noVNC tarball hash as its own row
 or the installer re-derives it from the core manifest. Nothing in this slice depends on the
 answer: the script's pin is fixed, and releases do not exist yet.
+
+## P5-IMAGE — two image artifacts, and the seed rule
+
+Two Containerfiles, one artifact each: `daiorama` (core — compositor stack, the binary,
+capture/view tools, fonts, D-Bus/Xwayland; **no `CMD`**) and `daiorama-desktop` (core + pinned
+Chromium + the session launcher at `/usr/local/bin/daiorama-browser`, `CMD ["daiorama","serve"]`).
+09's no-default-`CMD` rule is scoped to the core image; the desktop image's `CMD` is the
+documented exception. The base is `debian:sid-slim` pinned by digest (trixie carries no
+Hyprland; sid carries 0.56.2, inside 04's range), and the core package set follows what the
+binary actually executes — `wayvnc`, `grim`, `wf-recorder`, Mesa userspace, `xwayland`, `dbus`,
+`seatd`, fonts — not the in-binary capture direction C5 originally recorded (see its erratum).
+The bare-host systemd unit and the image `CMD` are two channels, stated as such so neither
+reads as the other's leftover.
+
+The noVNC tree stays data: the desktop image carries one read-only seed at
+`/usr/share/daiorama/novnc`, and `packaging/container/entrypoint.sh` copies it into
+`<data root>/novnc` only when `vnc.html` is absent, then `exec`s the command. That is the
+"pre-seed the volume, never bake an ephemeral layer" ruling in executable form; it is the one
+directory the entrypoint creates, because 08's runtime-dir ensure stays in-binary.
+
+*Rationale:* the split exists because a prebuilt download cannot shrink — an operator running
+only the bridge should not pull a browser and a terminal, while the desktop shape wants a
+run-it-now command. Deriving the package list from the shipped defaults keeps the image honest
+about what the code runs: capture and view are configured argv commands, so an image without
+`grim`/`wf-recorder`/`wayvnc` starts green and fails at the first capture. The seed copy keeps
+one persisted path for the front (`<data>/novnc`) and makes an image bump unable to change what
+the front serves mid-session; serving a `/usr/share` layer directly would do exactly that.
+
+*Rejected:* one monolith image (download size, no functional gain); a terminal in core (an app,
+not substrate — a `-debug` variant or sidecar is the documented route); baking the noVNC tree
+into a served layer (recreate loses it or an image bump swaps it under a live session); Firefox
+ESR as the desktop browser (withdrawn 2026-10-17: a spec change plus a manifest fact, not an
+implementation swap).
+
+*Open:* the sid digest's path into the Containerfile (build-arg with a checked-in default vs. a
+release-time bump); `doctor` does not yet check `mutter`/`grim`/`wf-recorder`/the browser (a
+diagnostics slice); image size recorded after the first build; the launcher's implementation and
+the browser-side check file name stay runtime-side (06).

@@ -87,6 +87,30 @@ agent's own container), and this is its named delivery (C2).
 - Crash handling: no auto-restart of the compositor; dead session + explicit
   fresh `new` (06).
 
+### Image split — core and desktop (P5)
+
+Two artifacts, one Containerfile each (pre-read and rationale: `p5/image/README.md`):
+
+| artifact | carries | `CMD` |
+|----------|---------|-------|
+| `daiorama` (core) | compositor stack (Hyprland + the `mutter` parent), the binary, capture/view tools, fonts/locale, D-Bus/Xwayland | none |
+| `daiorama-desktop` | core + pinned Chromium + the session launcher | `["daiorama","serve"]` |
+
+The desktop image's `CMD` is the **documented exception** to the no-default-CMD rule above; the
+rule is scoped to the core image. The systemd unit in `packaging/systemd/` is the bare-host
+channel, the image `CMD` is the container channel — two channels, not alternatives.
+
+The base is `debian:sid-slim`, pinned by digest at build (trixie carries no Hyprland; sid
+carries 0.56.2, inside 04's supported range). The core package set follows what the binary
+actually runs: `wayvnc` (`view.wayvnc_command`), `grim` and `wf-recorder` (`capture.*` defaults),
+the Mesa userspace, `xwayland`, `dbus`, `seatd`, `fontconfig` + `fonts-dejavu-core`. No terminal,
+no app suite, no browser in core; `wtype`/`wlrctl` are the L1 harness's stand-ins and do not ship.
+
+**The noVNC tree stays data.** The desktop image carries one read-only seed at
+`/usr/share/daiorama/novnc`; `packaging/container/entrypoint.sh` copies it into
+`<data root>/novnc` only when `vnc.html` is absent, then `exec`s the command. A recreate keeps
+the volume's tree and an image bump never changes what the front serves mid-session.
+
 ## Bare-host dependencies and version checks (C5)
 
 | dependency | check | on failure |

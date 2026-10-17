@@ -25,11 +25,12 @@ lanes only.
 If the renderer cannot be verified at creation time, creation proceeds with an
 explicit warning and the session is marked `renderer: unverified`. The
 compositor-side check is primary; the browser-side re-check has an executor:
-browser launches go through the session launcher (shipped in the image at a
-fixed path; the documented launch route), which captures the browser's own
-rendered-GL renderer string from its logging channel into a manager-readable
-file in the session runtime dir; the manager reads it, and a software result
-marks the session `renderer: software` and raises the unmissable warning.
+browser launches go through the session launcher (shipped in the desktop image at
+`/usr/local/bin/daiorama-browser`; 09 — the documented launch route), which
+captures the browser's own rendered-GL renderer string from its logging channel
+into a manager-readable file in the session runtime dir; the manager reads it,
+and a software result marks the session `renderer: software` and raises the
+unmissable warning.
 Where the browser bypasses the launcher (a bare-host browser that was never
 routed through it), the session stays `renderer: unverified` — it is never
 silently marked verified. Quiet degradation into a fingerprinted session is

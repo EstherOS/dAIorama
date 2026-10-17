@@ -9,6 +9,11 @@ const README: &str = include_str!("../packaging/README.md");
 const STRINGS: &str = include_str!("../src/strings.rs");
 const NOVNC_FETCH: &str = include_str!("../packaging/novnc/fetch.sh");
 const NOVNC_NOTE: &str = include_str!("../p5/novnc/README.md");
+const SPEC_06: &str = include_str!("../docs/06-sessions-views.md");
+const SPEC_09: &str = include_str!("../docs/09-packaging.md");
+const SPEC_10: &str = include_str!("../docs/10-operations.md");
+const IMAGE_NOTE: &str = include_str!("../p5/image/README.md");
+const ENTRYPOINT: &str = include_str!("../packaging/container/entrypoint.sh");
 
 #[test]
 fn unit_is_a_user_service_that_runs_serve_for_the_instance() {
@@ -148,5 +153,136 @@ fn the_installer_names_and_checks_its_prerequisites() {
     assert!(
         README.contains("Installer prerequisites"),
         "runbook states the prerequisites"
+    );
+}
+
+#[test]
+fn image_split_is_pinned_across_the_docs_and_the_runbook() {
+    // 09 pins the two artifacts and scopes the no-default-CMD rule to the core image.
+    assert!(
+        SPEC_09.contains("| `daiorama-desktop` |"),
+        "09 lost the desktop artifact row"
+    );
+    assert!(
+        SPEC_09.contains("documented exception"),
+        "09 lost the scoped CMD exception"
+    );
+    assert!(
+        SPEC_09.contains("/usr/share/daiorama/novnc"),
+        "09 lost the seed path"
+    );
+    // 06 names the launcher instead of "a fixed path".
+    assert!(
+        SPEC_06.contains("/usr/local/bin/daiorama-browser"),
+        "06 does not name the launcher path"
+    );
+    // 10's staging note must describe the seed copy, not a build-time stage into /data.
+    assert!(
+        SPEC_10.contains("pre-seeds the volume"),
+        "10 still describes build-time staging"
+    );
+    assert!(
+        !SPEC_10.contains("runs it at build time into the persisted"),
+        "10 kept the impossible build-time stage"
+    );
+    // One entrypoint, named by the spec, the runbook and the pre-read.
+    for doc in [SPEC_09, README, IMAGE_NOTE] {
+        assert!(
+            doc.contains("packaging/container/entrypoint.sh"),
+            "a doc stopped naming the entrypoint"
+        );
+    }
+}
+
+/// Run the shipped entrypoint with a seeded tree and a data home, returning its output.
+fn run_entrypoint(
+    seed: &std::path::Path,
+    data: &std::path::Path,
+    argv: &[&str],
+) -> std::process::Output {
+    let script =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("packaging/container/entrypoint.sh");
+    std::process::Command::new("sh")
+        .arg(&script)
+        .args(argv)
+        .env("DAIORAMA_NOVNC_SEED", seed)
+        .env("XDG_DATA_HOME", data)
+        .env("DAIORAMA_INSTANCE", "test")
+        .output()
+        .expect("entrypoint runs")
+}
+
+#[test]
+fn entrypoint_seeds_once_and_never_overwrites_a_staged_tree() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let seed = tmp.path().join("seed");
+    std::fs::create_dir_all(&seed).unwrap();
+    std::fs::write(seed.join("vnc.html"), "seed").unwrap();
+    let data = tmp.path().join("data");
+    let dest = data.join("daiorama/test/novnc");
+
+    // Absent entry point: copied, and the command runs (its exit code proves the exec).
+    let out = run_entrypoint(&seed, &data, &["sh", "-c", "echo ran; exit 7"]);
+    assert_eq!(out.status.code(), Some(7), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("ran"),
+        "{out:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dest.join("vnc.html")).unwrap(),
+        "seed"
+    );
+
+    // Present: untouched — an operator's restage or newer tree is not clobbered on recreate.
+    std::fs::write(dest.join("vnc.html"), "operator").unwrap();
+    let out = run_entrypoint(&seed, &data, &["true"]);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        std::fs::read_to_string(dest.join("vnc.html")).unwrap(),
+        "operator"
+    );
+
+    // No seed in the image: one line, then exec — a missing view tree must not stop the manager.
+    let empty = tmp.path().join("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    let out = run_entrypoint(&empty, &data, &["sh", "-c", "exit 3"]);
+    assert_eq!(out.status.code(), Some(3), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("no seeded view assets"),
+        "{out:?}"
+    );
+}
+
+#[test]
+fn entrypoint_refuses_to_run_without_a_command() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let out = run_entrypoint(tmp.path(), tmp.path(), &[]);
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("usage:"),
+        "{out:?}"
+    );
+}
+
+#[test]
+fn the_entrypoint_creates_only_the_asset_tree() {
+    // 08: directory creation stays in the binary; the seed copy is the one exception, and it
+    // must not pre-create the runtime dir or a data tree beyond the asset path.
+    assert_eq!(
+        ENTRYPOINT.matches("mkdir").count(),
+        1,
+        "exactly one directory is created: the asset tree"
+    );
+    assert!(
+        ENTRYPOINT.contains("mkdir -p \"$DEST\""),
+        "the asset tree is the one directory created"
+    );
+    assert!(
+        !ENTRYPOINT.contains("XDG_RUNTIME_DIR"),
+        "the entrypoint must not pre-create the runtime dir"
+    );
+    assert!(
+        !ENTRYPOINT.contains("DAIORAMA_TOKEN"),
+        "the entrypoint holds no secret"
     );
 }
