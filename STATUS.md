@@ -21,7 +21,7 @@ are read-when-on pointers)._
 - **Last green:** P3 W1b tree — 160 (+5 ignored) unit · 4 daemon · 2 doctor ·
   27 fixtures · 6 mcp · 9 mcp_listen, fmt/clippy clean; network live drill
   green (`p3/listen/evidence/network-live.txt`).
-- **Next:** cross-verify of W1b, then W2 media/runtime calls (Blingus) and the
+- **Next:** cross-verify of W1b, then W2 media/runtime calls (runtime side) and the
   capture tools on the bridge surface.
 - **Open (tracked, not omitted):** L3 llvmpipe lane (waits on the operator's
   workflow token scope) · L2 NVIDIA/CDI (operator's call) · rate-limit numbers
