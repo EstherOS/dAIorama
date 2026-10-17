@@ -1,0 +1,8 @@
+# BEFORE (tip 9aaffd1): no-parameter methods, request params -> response class
+status         {"bogus": 1}       -> ok           (result)
+readiness      {"bogus": 1}       -> ok           (result)
+config_reload  {"bogus": 1}       -> ok           (result)
+drain          {"wait": true}     -> ok           (result)
+drain          {"timeout": 5}     -> ok           (result)
+status         null               -> ok           (result)
+readiness      {}                 -> ok           (result)

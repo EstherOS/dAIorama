@@ -1,0 +1,36 @@
+(
+    version: 1,
+    remote: (
+        default: None,
+    ),
+    manager: (
+        start_mode: auto,
+        bind: None,
+    ),
+    sessions: (
+        max_global: 12,
+    ),
+    view: (
+        port_base: 6080,
+        advertise_base: None,
+    ),
+    reaper: (
+        idle: off,
+        view_idle: off,
+        sweep_dead: on,
+    ),
+    history: (
+        segments: 8,
+        segment_size: 4194304,
+        retention: 604800,
+    ),
+    media: (
+        ttl: 600,
+    ),
+    limits: (
+        mode: off,
+    ),
+    renderer: (
+        allow_software: off,
+    ),
+)

@@ -1,0 +1,8 @@
+# status --json (05 pinned instance-status shape)
+{"drain":{"active":false,"remaining":0},"instance_id":"c71c76ad-da47-431c-bdf4-81d2b9aec2ce","mode":"background","pid":109807,"sessions":{"dead":0,"running":0},"socket":"<scratch>/run/daiorama/shapes/manager.sock","state":"running","versions":{"binary":"0.1.0","min_supported":"0.1.0","protocol":"0.1.0"}}
+
+# list --json, empty instance (05 list page; 04: next_cursor only when a page truncates)
+{"sessions":[]}
+
+# version --json
+{"binary":"0.1.0","min_supported":"0.1.0","protocol":"0.1.0"}
