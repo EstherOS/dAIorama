@@ -13,8 +13,9 @@
 //!
 //! Commands whose behaviour needs the runtime: `serve` and `daemon start|end` are live (W3) —
 //! the real manager behind the pinned surface; `doctor` is live (W3, `doctor` module: the
-//! host-runnable environment check, 04); `mcp` and `dashboard *` still answer the
-//! not-implemented envelope until their slices land.
+//! host-runnable environment check, 04); `mcp` (stdio) is live (P3 W1: `mcp::server`), and
+//! `mcp --listen` plus `dashboard *` answer the not-implemented envelope until their slices
+//! land.
 
 use std::path::PathBuf;
 use std::process::{ExitCode, Stdio};
@@ -592,7 +593,16 @@ impl App {
                 DaemonAction::End { force } => daemon::end(self, force).await,
             },
             Command::Doctor => Ok(doctor::report()),
-            Command::Mcp(_) | Command::Dashboard(_) => Err(ErrorEnvelope::not_implemented()),
+            Command::Mcp(args) => match args.listen {
+                // Network mode is its own slice (P4 transport auth): the typed surface is
+                // pinned, the long-lived service is not built yet.
+                Some(_) => Err(ErrorEnvelope::not_implemented()),
+                None => {
+                    crate::mcp::server::run_stdio(&self.instance, self.remote.clone()).await?;
+                    Ok(Answer::from_lines(Vec::new()))
+                }
+            },
+            Command::Dashboard(_) => Err(ErrorEnvelope::not_implemented()),
         }
     }
 

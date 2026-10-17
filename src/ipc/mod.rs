@@ -571,13 +571,22 @@ impl ErrorEnvelope {
 // Frames
 // ---------------------------------------------------------------------------
 
-/// The request frame: `{"method", "params": {...}|null, "idempotency_key": "..."|omitted}`.
+/// The request frame: `{"method", "params": {...}|null, "idempotency_key": "..."|omitted,
+/// "scope": "..."|omitted}`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Request {
     pub method: String,
     pub params: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
+    /// The application-layer identity carried on every call (05, 07). Absent = `operator`
+    /// (the CLI's local path). Additive frame field: a manager that predates it ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// Where the call came from (06 B8): `shell` | `mcp`. Absent = `shell`. The bridge sets
+    /// `mcp`; it rides the session record, never the tool surface.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
 }
 
 /// 05: `idempotency_key` — string ≤ 64 chars, unique per (scope, logical operation).
@@ -589,11 +598,23 @@ impl Request {
             method: method.into(),
             params,
             idempotency_key: None,
+            scope: None,
+            origin: None,
         }
     }
 
     pub fn with_idempotency_key(mut self, key: Option<String>) -> Self {
         self.idempotency_key = key;
+        self
+    }
+
+    pub fn with_scope(mut self, scope: Option<String>) -> Self {
+        self.scope = scope;
+        self
+    }
+
+    pub fn with_origin(mut self, origin: Option<String>) -> Self {
+        self.origin = origin;
         self
     }
 
@@ -923,6 +944,10 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 pub struct Client {
     reader: BufReader<Box<dyn StreamHandle>>,
     address: String,
+    /// The caller identity every request on this connection carries (05/07): the bridge sets
+    /// these from its own scope; the CLI leaves them absent (operator / shell).
+    scope: Option<String>,
+    origin: Option<String>,
 }
 
 impl fmt::Debug for Client {
@@ -958,6 +983,8 @@ impl Client {
                 Ok(Self {
                     reader: BufReader::new(Box::new(stream)),
                     address: display,
+                    scope: None,
+                    origin: None,
                 })
             }
             Address::Tcp { host, port } => {
@@ -971,6 +998,8 @@ impl Client {
                 Ok(Self {
                     reader: BufReader::new(Box::new(stream)),
                     address: display,
+                    scope: None,
+                    origin: None,
                 })
             }
         }
@@ -1006,6 +1035,13 @@ impl Client {
 
     pub fn address(&self) -> &str {
         &self.address
+    }
+
+    /// Set the caller identity every request on this connection carries (05/07). The bridge
+    /// uses this; the CLI leaves it unset (absent = operator / shell).
+    pub fn set_caller(&mut self, scope: Option<String>, origin: Option<String>) {
+        self.scope = scope;
+        self.origin = origin;
     }
 
     /// The first call on every connection: `handshake`, always, tokenless (05 A7). Applies
@@ -1051,7 +1087,10 @@ impl Client {
         params: Option<Value>,
         idempotency_key: Option<String>,
     ) -> Result<Value, ErrorEnvelope> {
-        let request = Request::new(method, params).with_idempotency_key(idempotency_key);
+        let request = Request::new(method, params)
+            .with_idempotency_key(idempotency_key)
+            .with_scope(self.scope.clone())
+            .with_origin(self.origin.clone());
         request.validate()?;
         write_frame(&mut self.reader, &request)
             .await

@@ -237,6 +237,17 @@ pub fn unknown_method(method: &str) -> String {
     format!("unknown method {method:?}")
 }
 
+/// An MCP tool name outside the registry: the tool-surface form of `unknown_method` — a
+/// client-side refusal, dispatch-level (the connection continues).
+pub fn unknown_tool(tool: &str) -> String {
+    format!("unknown tool {tool:?}")
+}
+
+/// A request frame's `origin` outside `shell` | `mcp` (05 §Scope and origin carriage).
+pub fn invalid_origin(raw: &str) -> String {
+    format!("invalid origin {raw:?}; expected one of: shell, mcp")
+}
+
 /// A pinned-surface method this build does not implement yet (views/query methods, control
 /// tools). `internal`: the call is valid, the build is what is missing; no hint — there is no
 /// corrective step.

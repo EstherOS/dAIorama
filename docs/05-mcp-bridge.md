@@ -37,6 +37,47 @@ every harness config points at (pinned).
   `server/discover` first. `UnsupportedProtocolVersionError` (-32022) maps to
   `version_incompatible` with both pairs in the message.
 
+**Stdio conformance surface (P3 W1).** The bridge answers the handshake paths and the
+manifest locally, and relays everything else:
+
+- `server/discover` and `initialize` answer
+  `{protocolVersion: "2026-07-28", capabilities: {tools: {listChanged: false}},
+  serverInfo: {name: "daiorama", version: <binary version>}}`. Neither authorizes
+  anything.
+- `tools/list` answers `{tools: [{name, description, inputSchema}]}` — exactly the
+  caller scope's exposed manifest (the always-on set plus grants), never the whole
+  registry.
+- `tools/call` gates the name first: a name outside the registry is `bad_request`
+  (`unknown tool "<name>"`); a known name the scope does not hold is
+  `tool_not_granted`; a granted name is relayed to the manager. Tool failures are
+  MCP tool-execution results (`isError: true`, envelope in `structuredContent`);
+  JSON-RPC errors are reserved for malformed MCP requests.
+- `list_capabilities` is answered from the scope file plus the manager's own
+  filtered listing: `{tools, categories, always_on, quotas: {sessions: {max,
+  live}}, audit}`, paginated over `tools` with `next_cursor` (cursor/limit per
+  §List, history, and retries).
+- A notification (no `id`) never executes and never gets a response.
+
+## Scope and origin carriage on the RPC
+
+Every manager request may carry two additive frame fields beside
+`method`/`params`/`idempotency_key`:
+
+- `scope` — the caller's application-layer identity (07). Absent means
+  `operator`, the CLI's local path. The manager records it on sessions it
+  creates, enforces that scope's `sessions.max` (scope files, 08 D4, read per
+  call), and filters `list_sessions` by its `sessions.visibility` (`own` sees
+  only its own sessions; `all` is operator-wide). A session outside the
+  caller's visibility answers `session_not_found` from
+  `session_status`/`close_session` — existence is not leaked.
+- `origin` — `shell` | `mcp`, where the call came from (06 B8). Absent means
+  `shell`; anything else is a malformed request.
+
+Scopes with no file keep the pinned defaults: `operator` reads operator-wide,
+every other scope is own-sessions-only with no quota override. The handshake
+stays tokenless and carries neither field; the bridge sets both on every call
+after it.
+
 ## Tool exposure model
 
 Two questions, kept separate in design and code:

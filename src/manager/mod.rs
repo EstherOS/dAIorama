@@ -178,6 +178,15 @@ impl Origin {
             Self::Mcp => "mcp",
         }
     }
+
+    /// The frame's `origin` values (06 B8); anything else is a malformed request.
+    pub fn parse(raw: &str) -> Result<Self, ErrorEnvelope> {
+        match raw {
+            "shell" => Ok(Self::Shell),
+            "mcp" => Ok(Self::Mcp),
+            other => Err(ErrorEnvelope::bad_request(strings::invalid_origin(other))),
+        }
+    }
 }
 
 /// The renderer mark a session record carries (06 D6): never silently `verified`.
@@ -572,6 +581,7 @@ impl Registry {
     /// Quota check for a create: scope-local and global, with the pinned 04 message.
     pub fn quota_check(
         &self,
+        scope: &str,
         scope_live: u32,
         scope_max: u32,
         global_max: u32,
@@ -579,7 +589,7 @@ impl Registry {
         let global_live = self.live_count();
         if scope_live >= scope_max || global_live >= global_max {
             return Err(ErrorEnvelope::quota_exceeded(
-                "operator",
+                scope,
                 scope_live,
                 scope_max,
                 global_live,
@@ -759,9 +769,21 @@ pub trait Handler: Send + Sync {
     /// authorizes nothing. The skeleton answers it itself.
     fn handshake_result(&self) -> HandshakeResult;
 
-    /// Everything after the handshake.
-    fn dispatch(&self, method: &str, params: Option<&Value>) -> Response;
+    /// Everything after the handshake. `scope` is the request's application-layer identity
+    /// and `origin` where it came from (05, 06 B8): the frame's fields, or `operator` /
+    /// `shell` when absent.
+    fn dispatch(
+        &self,
+        scope: &str,
+        origin: Origin,
+        method: &str,
+        params: Option<&Value>,
+    ) -> Response;
 }
+
+/// The reserved scope every CLI call runs as (04, 07); a request without a `scope` field is
+/// the CLI's local path and carries it. Sessions created under it are operator-wide.
+pub const OPERATOR_SCOPE: &str = "operator";
 
 /// The skeleton handler: serves the read shapes that need no runtime (`status`, `readiness`)
 /// and answers the not-implemented envelope for everything else — for it, every non-read
@@ -783,7 +805,13 @@ impl Handler for SkeletonHandler {
         }
     }
 
-    fn dispatch(&self, method: &str, _params: Option<&Value>) -> Response {
+    fn dispatch(
+        &self,
+        _scope: &str,
+        _origin: Origin,
+        method: &str,
+        _params: Option<&Value>,
+    ) -> Response {
         match method {
             methods::STATUS => Response::Result(
                 serde_json::to_value(&self.status).expect("instance status serializes"),
@@ -917,7 +945,24 @@ async fn serve_connection(stream: UnixStream, handler: Arc<dyn Handler>) -> std:
             write_response(&mut reader, &response).await?;
             return Ok(());
         }
-        let response = handler.dispatch(&request.method, request.params.as_ref());
+        let origin = match request.origin.as_deref() {
+            None => Origin::Shell,
+            Some(raw) => match Origin::parse(raw) {
+                Ok(origin) => origin,
+                Err(envelope) => {
+                    // A malformed frame field refuses like any other malformed request; the
+                    // connection continues (dispatch-level class).
+                    write_response(&mut reader, &Response::Error(envelope)).await?;
+                    continue;
+                }
+            },
+        };
+        let response = handler.dispatch(
+            request.scope.as_deref().unwrap_or(OPERATOR_SCOPE),
+            origin,
+            &request.method,
+            request.params.as_ref(),
+        );
         write_response(&mut reader, &response).await?;
     }
 }
@@ -1110,7 +1155,7 @@ mod tests {
         );
 
         // With a global ceiling of 1 and one live session, the next create is refused.
-        let err = registry.quota_check(1, 4, 1).unwrap_err();
+        let err = registry.quota_check("operator", 1, 4, 1).unwrap_err();
         assert_eq!(err.code, crate::ipc::ErrorCode::QuotaExceeded);
         assert_eq!(
             err.message,
@@ -1691,6 +1736,8 @@ mod tests {
             strings::DUPLICATE_HANDSHAKE.to_string(),
             strings::NOT_IMPLEMENTED_MESSAGE.to_string(),
             strings::unknown_method("foo"),
+            strings::unknown_tool("x"),
+            strings::invalid_origin("x"),
             strings::takes_no_parameters("bogus"),
         ] {
             assert!(

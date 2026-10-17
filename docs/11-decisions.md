@@ -447,3 +447,25 @@ unreadable core config blocks every later read and write, sessions included, unt
 an `O_EXCL` lockfile (stale after a crash — the reason the runtime lock is flock, 10);
 treating parse errors as transient and retrying (the race heals as data loss, and corruption
 does not heal at all).
+
+## P3 bridge (2026-10-17)
+
+### Bridge — scope and origin ride the request frame · adopted · home: 05
+
+The manager RPC carries the caller's `scope` (absent = `operator`, the CLI path) and `origin`
+(absent = `shell`; `mcp` from the bridge) as additive frame fields. The manager records them on
+created sessions, reads `sessions.max` and `sessions.visibility` per call from that scope's file,
+and answers `session_not_found` for a session outside the caller's visibility. The bridge loads
+the same scope file for its exposed manifest (`tools/list`, `tools/call` gating) and sets both
+fields on every call after its handshake.
+
+*Rationale:* 05/07 make scope "the application-layer identity carried on every call"; without a
+carriage the stdio bridge could only pretend — every MCP-created session would record `operator`
+and callers would see each other's sessions. Frame fields keep params clean (the no-parameter
+methods have nothing to refuse), stay additive for older managers (serde ignores unknown keys),
+and leave the handshake tokenless and scope-free as 05 A7 requires.
+*Rejected:* injecting `scope` into each method's params (pollutes every pinned argument surface,
+and the no-params gate would refuse it); bridge-local enforcement only (the manager's own
+quotas/visibility would keep answering for `operator` — a lie the bridge cannot fix); deriving
+the scope from the unix socket's filesystem permissions (local trust is already cooperative, 07,
+and a shared network surface needs the claim on the call itself).

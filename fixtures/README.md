@@ -114,6 +114,11 @@ and every run**.
   `bad_request` (`unknown parameter "bogus"; this method takes no parameters`). All are
   dispatch-level refusals: unlike the frame- and gate-level refusals above, the connection
   continues.
+- **Scope and origin ride the frame, not the params.** A request may carry `scope` (absent =
+  `operator`) and `origin` (absent = `shell`); an `origin` outside `shell` | `mcp` is refused
+  with `bad_request` (`invalid origin "x"; expected one of: shell, mcp`). The MCP bridge's
+  tool surface uses the same class: a tool name outside the registry is `bad_request`
+  (`unknown tool "x"`), a known but ungranted name is `tool_not_granted`.
 - `expect.method` must match exactly. Methods mirror MCP tool names where they exist
   (`create_session`, `close_session`, `list_sessions`, `session_status`, `get_view`,
   `stop_view`, `list_history`, and the control tools by their own names) and are RPC-only

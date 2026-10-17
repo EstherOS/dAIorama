@@ -1,18 +1,19 @@
-//! MCP bridge: **types only** until the bridge lands (P3).
+//! MCP bridge: the shared contract shapes, plus the live stdio bridge in [`server`] (P3 W1).
 //!
-//! The bridge itself (`daiorama mcp`, stdio and `--listen`) is P3: this layer ships the
-//! contract shapes a bridge implementation needs — the MCP revision, JSON-RPC framing, the
-//! content-type rule for capture results, the tool registry the exposed manifests are written
-//! against, and the error mapping (05 §Errors, §Tool exposure model). `daiorama mcp` exists in
-//! the CLI surface and answers the not-implemented envelope.
+//! [`server`] implements `daiorama mcp` over stdio — framing, both handshake paths, the
+//! scope's exposed manifest and the relay to the manager. The network mode (`--listen`) stays
+//! a typed surface until its slice lands.
 //!
-//! No JSON-RPC behavior lives here on purpose: no socket, no transport, no call
-//! dispatch.
+//! This file ships the contract shapes a bridge implementation needs — the MCP revision,
+//! JSON-RPC framing, the content-type rule for capture results, the tool registry the exposed
+//! manifests are written against, and the error mapping (05 §Errors, §Tool exposure model).
 //!
-//! Note on lints: this module is **types only by design** — the bridge that
-//! constructs most of these values is P3, and the types are exercised by the unit tests below
-//! until then. `dead_code` is allowed module-wide with that reason in mind.
+//! Note on lints: the types below are exercised by the unit tests here and by `server`; the
+//! capture and media types land with their slices, so `dead_code` is allowed module-wide with
+//! that reason in mind.
 #![allow(dead_code)]
+
+pub mod server;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -264,7 +265,13 @@ pub fn input_schema_for(name: &str) -> Value {
             }),
             &[],
         ),
-        "list_capabilities" => schema(json!({}), &[]),
+        "list_capabilities" => schema(
+            json!({
+                "limit": {"type": "integer"},
+                "cursor": {"type": "string"},
+            }),
+            &[],
+        ),
         "screenshot" => schema(json!({"session_id": {"type": "string"}}), &[]),
         "clip_video" => schema(json!({"session_id": {"type": "string"}}), &[]),
         "clip_audio" => schema(json!({"session_id": {"type": "string"}}), &[]),

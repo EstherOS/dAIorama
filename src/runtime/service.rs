@@ -30,22 +30,20 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::{Map, Value, json};
 
 use crate::config::{
-    Authority, CoreConfig, Paths, RESTART_ONLY_KEYS, ScopeFile, is_known_tool_name, key_spec,
-    parse_value, read_token,
+    Authority, CoreConfig, Paths, RESTART_ONLY_KEYS, ScopeFile, ScopeSessions, Visibility,
+    is_known_tool_name, key_spec, parse_value, read_token,
 };
 use crate::ipc::{
     ErrorCode, ErrorEnvelope, HandshakeResult, MIN_SUPPORTED, PROTOCOL_VERSION, Response, methods,
 };
 use crate::manager::{
-    Backend, DrainState, Handler, InstanceMode, InstanceState, InstanceStatus, Origin, Registry,
-    Resolution, SessionRecord, SessionSpawner, SessionSpec, SessionState, VersionInfo,
+    Backend, DrainState, Handler, InstanceMode, InstanceState, InstanceStatus, OPERATOR_SCOPE,
+    Origin, Registry, Resolution, SessionRecord, SessionSpawner, SessionSpec, SessionState,
+    VersionInfo,
 };
 
 /// `list_sessions` page size when the caller sends no `limit` (provisional; additive).
 pub const DEFAULT_LIST_LIMIT: u64 = 100;
-
-/// The implicit scope every CLI call runs as (04).
-pub const OPERATOR_SCOPE: &str = "operator";
 
 /// What the service needs to run: identity, its socket, the config, the path contract.
 #[derive(Debug, Clone)]
@@ -151,7 +149,12 @@ impl RuntimeService {
     // Lifecycle verbs
     // -----------------------------------------------------------------------
 
-    fn create_session(&self, params: Option<&Value>) -> Result<Value, ErrorEnvelope> {
+    fn create_session(
+        &self,
+        scope: &str,
+        origin: Origin,
+        params: Option<&Value>,
+    ) -> Result<Value, ErrorEnvelope> {
         // 04/10: while draining, new sessions are refused before anything else — the manager
         // is on its way down and no spawn may start.
         let drain = self.drain_state();
@@ -213,7 +216,7 @@ impl RuntimeService {
         if drain.active {
             return Err(ErrorEnvelope::draining(drain.remaining));
         }
-        let scope_max = self.scope_max()?;
+        let scope_max = self.scope_max(scope)?;
         let global_max = self.config.read().expect("config lock").sessions.max_global;
         let instance_id;
         {
@@ -221,11 +224,11 @@ impl RuntimeService {
             let scope_live = registry
                 .list()
                 .iter()
-                .filter(|record| record.scope == OPERATOR_SCOPE && record.state.is_live())
+                .filter(|record| record.scope == scope && record.state.is_live())
                 .count() as u32;
             match scope_max {
-                Some(max) => registry.quota_check(scope_live, max, global_max)?,
-                None => registry.quota_check(scope_live, global_max, global_max)?,
+                Some(max) => registry.quota_check(scope, scope_live, max, global_max)?,
+                None => registry.quota_check(scope, scope_live, global_max, global_max)?,
             }
             instance_id = registry.instance_id.clone();
         }
@@ -247,8 +250,8 @@ impl RuntimeService {
             backend,
             resolution,
             scale,
-            scope: OPERATOR_SCOPE.to_string(),
-            origin: Origin::Shell,
+            scope: scope.to_string(),
+            origin,
             idle_since: utc_now_rfc3339(),
             view: None,
             instance_id,
@@ -262,7 +265,7 @@ impl RuntimeService {
         Ok(value)
     }
 
-    fn list_sessions(&self, params: Option<&Value>) -> Result<Value, ErrorEnvelope> {
+    fn list_sessions(&self, scope: &str, params: Option<&Value>) -> Result<Value, ErrorEnvelope> {
         let map = params_object(params)?;
         unknown_params(&map, &["limit", "cursor"])?;
         let limit = match map.get("limit") {
@@ -297,7 +300,14 @@ impl RuntimeService {
         };
 
         let registry = self.registry();
-        let all = registry.list();
+        // 07: scopes constrain listing — `own` sees only its own sessions, `all` is
+        // operator-wide. Visibility is read per call (scope files, 08 D4).
+        let visibility = self.scope_definition(scope)?.sessions.visibility;
+        let all: Vec<&SessionRecord> = registry
+            .list()
+            .into_iter()
+            .filter(|record| visibility == Visibility::All || record.scope == scope)
+            .collect();
         let start = start.min(all.len());
         let end = start.saturating_add(limit as usize).min(all.len());
         let sessions: Vec<Value> = all[start..end]
@@ -311,14 +321,19 @@ impl RuntimeService {
         Ok(out)
     }
 
-    fn session_status(&self, params: Option<&Value>) -> Result<Value, ErrorEnvelope> {
+    fn session_status(&self, scope: &str, params: Option<&Value>) -> Result<Value, ErrorEnvelope> {
         let id = required_session_id(params)?;
         let registry = self.registry();
         let record = registry.call_gate(&id)?;
+        if !self.visible(scope, record)? {
+            // 07: scopes constrain control; a session outside visibility does not exist for
+            // this caller — existence is not leaked.
+            return Err(ErrorEnvelope::session_not_found());
+        }
         Ok(record.to_json())
     }
 
-    fn close_session(&self, params: Option<&Value>) -> Result<Value, ErrorEnvelope> {
+    fn close_session(&self, scope: &str, params: Option<&Value>) -> Result<Value, ErrorEnvelope> {
         let id = required_session_id(params)?;
         {
             let registry = self.registry();
@@ -327,7 +342,11 @@ impl RuntimeService {
                 Some(record) if record.state == SessionState::Closed => {
                     return Err(ErrorEnvelope::session_closed());
                 }
-                Some(_) => {}
+                Some(record) => {
+                    if !self.visible(scope, record)? {
+                        return Err(ErrorEnvelope::session_not_found());
+                    }
+                }
             }
         }
         // Completion guarantee: the tree dies before the entry is removed. A session the
@@ -443,14 +462,40 @@ impl RuntimeService {
     // Helpers
     // -----------------------------------------------------------------------
 
-    /// The operator scope's quota, read per call (08 D4). A missing scope file means "no
-    /// scope quota"; an unreadable or invalid one is a load error, surfaced as itself.
-    fn scope_max(&self) -> Result<Option<u32>, ErrorEnvelope> {
-        let path = self.paths.scope_file(OPERATOR_SCOPE);
+    /// The caller scope's definition, read per call (08 D4). A missing file means the pinned
+    /// defaults: `operator` reads operator-wide (07), every other scope is own-sessions-only
+    /// with no quota override. An unreadable or invalid file is a load error, surfaced as
+    /// itself.
+    fn scope_definition(&self, scope: &str) -> Result<ScopeFile, ErrorEnvelope> {
+        let path = self.paths.scope_file(scope);
         if !path.exists() {
-            return Ok(None);
+            return Ok(ScopeFile {
+                sessions: ScopeSessions {
+                    max: None,
+                    visibility: if scope == OPERATOR_SCOPE {
+                        Visibility::All
+                    } else {
+                        Visibility::Own
+                    },
+                },
+                ..ScopeFile::default()
+            });
         }
-        Ok(ScopeFile::load(&path)?.sessions.max)
+        ScopeFile::load(&path)
+    }
+
+    /// The per-scope session quota (08 D4: read per call).
+    fn scope_max(&self, scope: &str) -> Result<Option<u32>, ErrorEnvelope> {
+        Ok(self.scope_definition(scope)?.sessions.max)
+    }
+
+    /// Is this session inside the caller's visibility? (07: scopes constrain listing and
+    /// control; a session outside it does not exist for that caller.)
+    fn visible(&self, scope: &str, record: &SessionRecord) -> Result<bool, ErrorEnvelope> {
+        Ok(
+            self.scope_definition(scope)?.sessions.visibility == Visibility::All
+                || record.scope == scope,
+        )
     }
 }
 
@@ -463,7 +508,13 @@ impl Handler for RuntimeService {
         }
     }
 
-    fn dispatch(&self, method: &str, params: Option<&Value>) -> Response {
+    fn dispatch(
+        &self,
+        scope: &str,
+        origin: Origin,
+        method: &str,
+        params: Option<&Value>,
+    ) -> Response {
         let outcome: Result<Value, ErrorEnvelope> = match method {
             // Instance reads and the two management verbs take no parameters: a stray key is a
             // malformed request (05), refused like any other unknown parameter — silently
@@ -471,10 +522,10 @@ impl Handler for RuntimeService {
             methods::STATUS | methods::READINESS => {
                 no_params(params).map(|()| self.instance_status())
             }
-            methods::CREATE_SESSION => self.create_session(params),
-            methods::LIST_SESSIONS => self.list_sessions(params),
-            methods::SESSION_STATUS => self.session_status(params),
-            methods::CLOSE_SESSION => self.close_session(params),
+            methods::CREATE_SESSION => self.create_session(scope, origin, params),
+            methods::LIST_SESSIONS => self.list_sessions(scope, params),
+            methods::SESSION_STATUS => self.session_status(scope, params),
+            methods::CLOSE_SESSION => self.close_session(scope, params),
             methods::CONFIG_RELOAD => no_params(params).and_then(|()| self.config_reload()),
             methods::CONFIG_GET => self.config_get(params),
             methods::CONFIG_SET => self.config_set(params),
@@ -767,7 +818,18 @@ mod tests {
         method: &str,
         params: Option<Value>,
     ) -> Result<Value, ErrorEnvelope> {
-        match service.dispatch(method, params.as_ref()) {
+        result_as("operator", Origin::Shell, service, method, params)
+    }
+
+    /// One dispatch under an explicit caller identity (scope carriage, 05/07).
+    fn result_as(
+        scope: &str,
+        origin: Origin,
+        service: &RuntimeService,
+        method: &str,
+        params: Option<Value>,
+    ) -> Result<Value, ErrorEnvelope> {
+        match service.dispatch(scope, origin, method, params.as_ref()) {
             Response::Result(value) => Ok(value),
             Response::Error(envelope) => Err(envelope),
         }
@@ -1978,5 +2040,98 @@ mod tests {
 
         serving.abort();
         eprintln!("CHAIN: all lifecycle verbs green on the real chain");
+    }
+
+    /// Scope carriage (05/07): the identity on the frame decides the record, the quota and
+    /// what a listing shows — the CLI's absent field stays operator-wide.
+    #[test]
+    fn scope_carriage_records_the_caller_and_gates_visibility() {
+        let tmp = tempfile::tempdir().unwrap();
+        let scopes = tmp.path().join("daiorama/default/scopes");
+        std::fs::create_dir_all(&scopes).unwrap();
+        std::fs::write(
+            scopes.join("agent.ron"),
+            "(sessions: (visibility: own), grant: (categories: [\"input\"]))",
+        )
+        .unwrap();
+
+        let service = make_service(tmp.path(), Arc::new(TestSpawner::default()));
+        let created = result_as(
+            "agent",
+            Origin::Mcp,
+            &service,
+            methods::CREATE_SESSION,
+            Some(json!({})),
+        )
+        .expect("create as agent");
+        assert_eq!(created["scope"], "agent");
+        assert_eq!(created["origin"], "mcp");
+        let id = created["id"].as_str().unwrap().to_string();
+
+        // A CLI-shaped request (no scope field) is operator and reads operator-wide.
+        let operator = result(&service, methods::LIST_SESSIONS, None).unwrap();
+        assert_eq!(operator["sessions"].as_array().unwrap().len(), 1);
+
+        // The owning scope sees its session; a different own-scope sees neither the listing
+        // entry nor the detail.
+        let own = result_as("agent", Origin::Mcp, &service, methods::LIST_SESSIONS, None).unwrap();
+        assert_eq!(own["sessions"].as_array().unwrap().len(), 1);
+        let stranger =
+            result_as("other", Origin::Mcp, &service, methods::LIST_SESSIONS, None).unwrap();
+        assert_eq!(stranger["sessions"].as_array().unwrap().len(), 0);
+        let err = result_as(
+            "other",
+            Origin::Mcp,
+            &service,
+            methods::SESSION_STATUS,
+            Some(json!({ "session_id": id })),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, ErrorCode::SessionNotFound);
+    }
+
+    #[test]
+    fn per_scope_quota_comes_from_that_scopes_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let scopes = tmp.path().join("daiorama/default/scopes");
+        std::fs::create_dir_all(&scopes).unwrap();
+        std::fs::write(
+            scopes.join("agent.ron"),
+            "(sessions: (max: Some(1), visibility: own))",
+        )
+        .unwrap();
+
+        let service = make_service(tmp.path(), Arc::new(TestSpawner::default()));
+        result_as(
+            "agent",
+            Origin::Mcp,
+            &service,
+            methods::CREATE_SESSION,
+            Some(json!({})),
+        )
+        .expect("first create");
+        let err = result_as(
+            "agent",
+            Origin::Mcp,
+            &service,
+            methods::CREATE_SESSION,
+            Some(json!({})),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, ErrorCode::QuotaExceeded);
+        assert!(
+            err.message.contains("scope 'agent' 1/1"),
+            "message names the scope: {}",
+            err.message
+        );
+        // Another scope is unaffected by agent's quota.
+        result_as(
+            "operator",
+            Origin::Shell,
+            &service,
+            methods::CREATE_SESSION,
+            Some(json!({})),
+        )
+        .expect("operator create");
     }
 }
