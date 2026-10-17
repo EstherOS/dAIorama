@@ -635,7 +635,7 @@ impl App {
                 DaemonAction::Start => daemon::start(self).await,
                 DaemonAction::End { force } => daemon::end(self, force).await,
             },
-            Command::Doctor => Ok(doctor::report()),
+            Command::Doctor => Ok(doctor::report(&self.instance)),
             Command::Mcp(args) => match args.listen {
                 Some(addr) => {
                     crate::mcp::listen::run_listen(&self.instance, &addr, self.remote.clone())

@@ -67,12 +67,14 @@ served; the front already fails closed (503) while the tree is absent.
 
 ## Fetch recipe
 
-`fetch.sh [dest] [tarball]` downloads the pinned source tarball, checks the SHA-256, stages the
+The mechanism now ships with packaging, where 09 assigns install: `packaging/novnc/fetch.sh
+[dest] [tarball]` downloads the pinned source tarball, checks the SHA-256, stages the
 **subset the front needs** (`vnc.html`, `app/`, `core/`, `vendor/`, `LICENSE.txt`, `AUTHORS`,
-`VERSION`, `docs/LICENSE.*`) and asserts the entry points exist. It takes no credentials and does
-no network calls beyond the pinned URL; an offline `--from <tarball>` install (09) can reuse the
-same hash check. `vnc_lite.html`, `tests/`, `utils/`, `po/`, `snap/` and the CI files are
-deliberately not staged.
+`docs/LICENSE.*`) and asserts the entry points exist. It takes no credentials and does no
+network calls beyond the pinned URL; an offline host passes the tarball as the second argument
+and gets the same hash check. `vnc_lite.html`, `tests/`, `utils/`, `po/`, `snap/` and the CI
+files are deliberately not staged. This note stays the sourcing record: the pin, the licence
+split, and why the npm package cannot serve the front.
 
 ## Open items for packaging (09)
 

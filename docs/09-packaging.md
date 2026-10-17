@@ -95,8 +95,15 @@ agent's own container), and this is its named delivery (C2).
 | wayvnc | presence + version | install command / error |
 | screen capture | — decided below | — |
 | browser | detected (bare-host: the user's own; container image: ships Chromium) | bare-host: refusal naming the requirement; profile persistence per 09 volumes |
-| noVNC assets | shipped with the core (embedded) | — (view front serves them, 07) |
+| noVNC assets | the tree at `<data>/novnc` (entry point `vnc.html`) | `doctor` reports the tree and the staging command; the front refuses `view_unavailable` until it exists (07) |
 | clipboard | capability check at session start | degrade loudly in `doctor`, not silently |
+
+**View assets decision (C5, made):** the noVNC tree is **staged data, not an embedded
+blob** — the front serves `<data>/novnc` (07), so the operator (or the image build) stages
+the pinned tree once with `packaging/novnc/fetch.sh`; `doctor` reads the entry point the
+front actually looks up and names the command when it is absent. The pin, the licence
+matrix and the staging recipe are recorded in `p5/novnc/README.md`; carrying the tarball
+hash in the release manifest is an open item (11).
 
 **Screen capture decision (C5, made):** in-binary screencopy-protocol client.
 No external `grim`-style tool — this keeps the static-binary claim intact.

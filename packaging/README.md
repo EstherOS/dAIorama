@@ -109,6 +109,28 @@ says so. With this unit, `systemctl --user stop`/`restart` is equivalent to
 The token file is a credential: back it up like one, never in a shared archive
 (10).
 
+## View assets (noVNC)
+
+The view front serves a static noVNC tree from `<data root>/novnc` and refuses
+with `view_unavailable` until it exists (07). Stage the pinned tree once per
+instance, before the first `daiorama view`:
+
+    packaging/novnc/fetch.sh ~/.local/share/daiorama/default/novnc
+
+The script fetches noVNC v1.7.0 from the pinned URL, checks the sha256 before
+unpacking anything, and refuses a destination that is not a directory path or
+that already holds a non-noVNC tree. Re-running it against an existing noVNC
+tree replaces that tree (an upgrade), staged through a temp dir so the front
+never serves a half-extracted copy. For another instance use its own data root
+(08). An offline host passes the tarball as the second argument:
+
+    packaging/novnc/fetch.sh ~/.local/share/daiorama/default/novnc ./noVNC-1.7.0.tar.gz
+
+`daiorama doctor` reports the tree under `assets:` — installed at the path, or
+the front's refusal plus this command. The tree is data, not a build input: it
+survives upgrades and belongs in a backup (above), and a container needs it
+staged into the persisted `/data` mount, not baked into an ephemeral layer.
+
 ## Troubleshooting
 
 | symptom | check |
@@ -117,5 +139,5 @@ The token file is a credential: back it up like one, never in a shared archive
 | `Hyprland {found} is outside the supported range {min}-{max}.` | install a supported Hyprland; `doctor` names the package (09, C5) |
 | sessions die immediately | `daiorama doctor` — a session needs a working renderer and wayvnc, not just Hyprland |
 | cgroup limits refused | the user manager must delegate controllers; if the host cannot, `config set limits.mode off` (06) and the manager reports limits off |
-| view answers `view assets not installed (expected <data>/novnc)` | the noVNC tree is missing at `<data root>/novnc`; stage it (07, 09) |
+| view answers `view assets not installed (expected <data>/novnc)` | the noVNC tree is missing at `<data root>/novnc`; stage it once with `packaging/novnc/fetch.sh` (*View assets*) |
 | another manager answers | sockets are per instance under `$XDG_RUNTIME_DIR/daiorama/<instance>/`; `daiorama status` prints the path it used |
