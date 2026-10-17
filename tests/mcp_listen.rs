@@ -555,6 +555,9 @@ async fn a_relative_config_root_is_not_written_outside_the_temp_root() {
 /// and `list_sessions` — enough for the scope probe (the same shape as tests/mcp.rs's sink).
 struct FrameSink {
     frames: std::sync::Arc<std::sync::Mutex<Vec<Value>>>,
+    socket: PathBuf,
+    accept: tokio::task::JoinHandle<()>,
+    conns: std::sync::Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 }
 
 impl FrameSink {
@@ -564,19 +567,38 @@ impl FrameSink {
         listener.set_nonblocking(true).unwrap();
         let listener = tokio::net::UnixListener::from_std(listener).unwrap();
         let frames = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let conns = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let captured = std::sync::Arc::clone(&frames);
-        tokio::spawn(async move {
+        let tracked = std::sync::Arc::clone(&conns);
+        let accept = tokio::spawn(async move {
             loop {
                 let Ok((stream, _)) = listener.accept().await else {
                     return;
                 };
                 let frames = std::sync::Arc::clone(&captured);
-                tokio::spawn(async move {
+                let handle = tokio::spawn(async move {
                     let _ = sink_connection(stream, frames).await;
                 });
+                tracked.lock().unwrap().push(handle);
             }
         });
-        Self { frames }
+        Self {
+            frames,
+            socket,
+            accept,
+            conns,
+        }
+    }
+
+    /// Stop the fake manager: abort the accept loop AND every live connection task (the
+    /// in-process equivalent of the process dying), then free the socket path — leaving any
+    /// cached link in the bridge pointing at a dead end (the restart shape).
+    fn stop(self) {
+        self.accept.abort();
+        for handle in self.conns.lock().unwrap().drain(..) {
+            handle.abort();
+        }
+        std::fs::remove_file(&self.socket).ok();
     }
 }
 
@@ -660,4 +682,64 @@ async fn each_relayed_call_carries_its_own_scope() {
         vec!["agent1".to_string(), "agent2".to_string()],
         "each relayed call carries its own caller's scope"
     );
+}
+
+/// The capability read is the call a harness makes every turn: across a manager restart it
+/// must take the evict-and-replay path (the same one the stdio bridge uses), not sit on the
+/// dead link it cached before the restart.
+#[tokio::test]
+async fn capability_read_survives_a_manager_restart_over_listen() {
+    let bridge = Bridge::start().await;
+    let socket = bridge.manager_socket();
+    let first = FrameSink::serve(socket.clone());
+    let host = format!("127.0.0.1:{}", bridge.port);
+    let headers = [
+        ("Host", host.as_str()),
+        ("Daiorama-Token", &bridge.token()),
+        ("Daiorama-Scope", "agent1"),
+        ("Daiorama-Scope-Token", &bridge.scope_secret("agent1")),
+    ];
+    let call = |id: u64| {
+        json!({"jsonrpc": "2.0", "id": id, "method": "tools/call",
+               "params": {"name": "list_capabilities"}})
+    };
+    let mut conn = bridge.connection().await;
+    let (status, _, first_answer) = conn.mcp(&headers, call(1)).await;
+    assert_eq!(status, 200, "{first_answer}");
+    assert!(
+        first_answer["result"].get("isError").is_none(),
+        "the first manager answers the capability poll: {first_answer}"
+    );
+
+    // The manager process goes away and a new one binds the same socket while the harness
+    // stays connected — nothing calls the bridge in between, so the cached link is a dead end.
+    first.stop();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let second = FrameSink::serve(socket);
+
+    let (status, _, second_answer) = conn.mcp(&headers, call(2)).await;
+    assert_eq!(status, 200, "{second_answer}");
+    assert!(
+        second_answer["result"].get("isError").is_none(),
+        "the first post-restart capability call must answer, not surface the dead link: {second_answer}"
+    );
+    let live = &second_answer["result"]["structuredContent"]["quotas"]["sessions"]["live"];
+    assert_eq!(
+        live,
+        &json!(0),
+        "the answer comes from the restarted manager"
+    );
+
+    // The replay rode a fresh link, still stamped with the caller identity.
+    let listings: Vec<Value> = second
+        .frames
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|frame| frame["method"] == "list_sessions")
+        .cloned()
+        .collect();
+    assert_eq!(listings.len(), 1, "one replay listing on the new manager");
+    assert_eq!(listings[0]["scope"], "agent1");
+    assert_eq!(listings[0]["origin"], "mcp");
 }
