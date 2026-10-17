@@ -235,6 +235,7 @@ async fn network_gate_requires_token_scope_and_secret() {
     );
 
     // Instance token, no scope: no anonymous calls, no default scope.
+    let mut conn = bridge.connection().await;
     let (_, _, response) = conn
         .mcp(&[("Host", &host), ("Daiorama-Token", &token)], handshake())
         .await;
@@ -247,6 +248,7 @@ async fn network_gate_requires_token_scope_and_secret() {
     );
 
     // A scope named without its secret is refused even though the scope file exists.
+    let mut conn = bridge.connection().await;
     let (_, _, response) = conn
         .mcp(
             &[
@@ -266,6 +268,7 @@ async fn network_gate_requires_token_scope_and_secret() {
     );
 
     // An unknown scope is its own code; existence is not silently invented.
+    let mut conn = bridge.connection().await;
     let (_, _, response) = conn
         .mcp(
             &[
@@ -280,6 +283,7 @@ async fn network_gate_requires_token_scope_and_secret() {
     assert_eq!(envelope_code(&response), "scope_unknown");
 
     // A wrong scope secret is refused.
+    let mut conn = bridge.connection().await;
     let (_, _, response) = conn
         .mcp(
             &[
@@ -294,6 +298,7 @@ async fn network_gate_requires_token_scope_and_secret() {
     assert_eq!(envelope_code(&response), "scope_auth_required");
 
     // The full credential set reaches the handshake — answered locally, no manager needed.
+    let mut conn = bridge.connection().await;
     let (status, _, response) = conn
         .mcp(
             &[
@@ -768,6 +773,76 @@ async fn the_identity_gate_answers_before_the_body_is_parsed() {
         "token_required",
         "auth refusal first, body never parsed: {response}"
     );
+}
+
+/// A refused gate closes the connection: with `Expect: 100-continue` the client stops on the
+/// refusal and never sends the body — keep-alive would read that phantom body as the next
+/// request's head (behind a pooled connection, another client's request).
+#[tokio::test]
+async fn a_gate_failure_closes_the_connection() {
+    let bridge = Bridge::start().await;
+    let host = format!("127.0.0.1:{}", bridge.port);
+    let token = bridge.token();
+    let mut conn = bridge.connection().await;
+    let head = format!(
+        "POST /mcp HTTP/1.1\r\nHost: {host}\r\nDaiorama-Token: {token}\r\n\
+         Expect: 100-continue\r\nContent-Length: 50\r\n\r\n"
+    );
+    conn.reader
+        .get_mut()
+        .write_all(head.as_bytes())
+        .await
+        .unwrap();
+    let mut response_head = String::new();
+    loop {
+        let mut line = Vec::new();
+        let read = conn.reader.read_until(b'\n', &mut line).await.unwrap();
+        if read == 0 {
+            break;
+        }
+        response_head.push_str(&String::from_utf8_lossy(&line));
+        if line == b"\r\n" {
+            break;
+        }
+    }
+    assert!(response_head.starts_with("HTTP/1.1 200"), "{response_head}");
+    assert!(
+        response_head
+            .to_ascii_lowercase()
+            .contains("connection: close"),
+        "a refused gate closes: {response_head}"
+    );
+    // Nothing follows the refusal — no `100 Continue`, no body read, the connection ends.
+    let mut tail = Vec::new();
+    loop {
+        let mut chunk = [0u8; 1024];
+        let n = conn.reader.read(&mut chunk).await.unwrap();
+        if n == 0 {
+            break;
+        }
+        tail.extend_from_slice(&chunk[..n]);
+    }
+    let tail = String::from_utf8_lossy(&tail);
+    assert!(
+        tail.contains("scope_auth_required") || tail.contains("token_required"),
+        "the refusal body, nothing else: {tail}"
+    );
+
+    // A fresh connection starts clean.
+    let mut fresh = bridge.connection().await;
+    let (status, _, response) = fresh
+        .mcp(
+            &[
+                ("Host", &host),
+                ("Daiorama-Token", &token),
+                ("Daiorama-Scope", "agent1"),
+                ("Daiorama-Scope-Token", &bridge.scope_secret("agent1")),
+            ],
+            handshake(),
+        )
+        .await;
+    assert_eq!(status, 200, "{response}");
+    assert!(response["result"].is_object(), "{response}");
 }
 
 /// The connection cap closes over-cap sockets on accept: the fd set stays bounded, and the

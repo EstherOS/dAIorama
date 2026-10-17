@@ -211,8 +211,9 @@ def main():
         show("TE chunked + CL",
              send_raw(post(headers=auth + [("Transfer-Encoding", "chunked")], host=host), port),
              "chunked")
-        big = (f"POST /mcp HTTP/1.1\r\nHost: {host}\r\nContent-Length: {8 * 1024 * 1024 + 1}\r\n"
-               f"Daiorama-Token: {token}\r\n\r\n").encode()
+        big = (f"POST /mcp HTTP/1.1\r\nHost: {host}\r\nDaiorama-Token: {token}\r\n"
+               f"Daiorama-Scope: operator\r\nDaiorama-Scope-Token: {secret}\r\n"
+               f"Content-Length: {8 * 1024 * 1024 + 1}\r\n\r\n").encode()
         show("Content-Length MAX+1", send_raw(big, port), "request frame must be at most")
 
         print("\n=== target shapes ===")

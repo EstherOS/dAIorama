@@ -29,4 +29,5 @@ are read-when-on pointers)._
   workflow token scope) · L2 NVIDIA/CDI (operator's call) · rate-limit numbers
   → P4 · per-family GPU recipes · resize/scale path · renderer re-verification
   of the L2 image · `/media/*` pass-through on the network listener (rides the
-  capture tools, W2).
+  capture tools, W2) · a head dribbled slower than the per-read bound can hold a slot
+  past it (measured 14 s); a total head-phase deadline is the follow-up.

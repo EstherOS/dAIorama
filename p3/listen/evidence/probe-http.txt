@@ -1,5 +1,5 @@
 bin=daiorama
-port=35941 manager_pid=215506 bridge_pid=215512
+port=18758 manager_pid=231783 bridge_pid=231789
 
 === baseline ===
 [PASS] valid POST /mcp initialize                           HTTP/1.1 200 OK              ''
@@ -40,13 +40,13 @@ port=35941 manager_pid=215506 bridge_pid=215512
 [WATCH] scope '.'                                            HTTP/1.1 200 OK              'unknown scope "."'
 
 === origin shapes ===
-[WATCH] Origin: http://127.0.0.1:35941                       HTTP/1.1 200 OK              ''
-[WATCH] Origin: HTTP://127.0.0.1:35941                       HTTP/1.1 200 OK              ''
-[WATCH] Origin: http://127.0.0.1:35941/                      HTTP/1.1 200 OK              ''
-[WATCH] Origin: http://user@127.0.0.1:35941                  HTTP/1.1 403 Forbidden       'origin not allowed: "http://user@127.0.0.1:35941"'
-[WATCH] Origin: http://127.0.0.1:35941@evil.example          HTTP/1.1 403 Forbidden       'origin not allowed: "http://127.0.0.1:35941@evil.example"'
+[WATCH] Origin: http://127.0.0.1:18758                       HTTP/1.1 200 OK              ''
+[WATCH] Origin: HTTP://127.0.0.1:18758                       HTTP/1.1 200 OK              ''
+[WATCH] Origin: http://127.0.0.1:18758/                      HTTP/1.1 200 OK              ''
+[WATCH] Origin: http://user@127.0.0.1:18758                  HTTP/1.1 403 Forbidden       'origin not allowed: "http://user@127.0.0.1:18758"'
+[WATCH] Origin: http://127.0.0.1:18758@evil.example          HTTP/1.1 403 Forbidden       'origin not allowed: "http://127.0.0.1:18758@evil.example"'
 [WATCH] Origin: null                                         HTTP/1.1 403 Forbidden       'origin not allowed: "null"'
-[WATCH] Origin: http://127.0.0.1:35941:1                     HTTP/1.1 403 Forbidden       'origin not allowed: "http://127.0.0.1:35941:1"'
+[WATCH] Origin: http://127.0.0.1:18758:1                     HTTP/1.1 403 Forbidden       'origin not allowed: "http://127.0.0.1:18758:1"'
 
 === connection lifetime ===
 [WATCH] Connection: close -> HTTP/1.1 200 OK; socket then b'' (b'' = closed)
@@ -59,5 +59,5 @@ port=35941 manager_pid=215506 bridge_pid=215512
 [WATCH] pipelined #2 HTTP/1.1 200 OK ids=b'{"id":22,"jsonrpc":"2.0","result":{"tools":[{"description":"'
 
 === parse-before-auth ===
-[WATCH] no creds + malformed JSON                            HTTP/1.1 200 OK              'parse error: expected ident at line 1 column 2'
-[PASS] no creds + valid call                                HTTP/1.1 200 OK              "token required for 127.0.0.1:35941: set DAIORAMA_TOKEN (value from 'daiorama token show' on the manager host)."
+[WATCH] no creds + malformed JSON                            HTTP/1.1 200 OK              "token required for 127.0.0.1:18758: set DAIORAMA_TOKEN (value from 'daiorama token show' on the manager host)."
+[PASS] no creds + valid call                                HTTP/1.1 200 OK              "token required for 127.0.0.1:18758: set DAIORAMA_TOKEN (value from 'daiorama token show' on the manager host)."

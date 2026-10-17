@@ -302,18 +302,13 @@ async fn serve_connection(network: &Arc<Network>, stream: TcpStream) -> Result<(
         let (scope, definition) = match authenticate(network, &request).await {
             Ok(caller) => caller,
             Err(envelope) => {
-                let reply = Reply::mcp(json_rpc_envelope_error(None, &envelope));
+                let reply = Reply::refusal(200, json_rpc_envelope_error(None, &envelope));
                 write_reply(input.get_mut(), &reply).await?;
-                // The body still belongs to this request: drain it so the next request on a
-                // kept-alive connection starts at a frame boundary. An over-cap body has no
-                // usable next frame — the connection ends with the refusal.
-                if length > MAX_FRAME_BYTES {
-                    return Ok(());
-                }
-                if read_body(&mut input, length).await?.is_none() {
-                    return Ok(());
-                }
-                continue;
+                // A refused gate closes: answering keep-alive would leave a body this request
+                // never sent — an `Expect: 100-continue` client stops on the refusal — to be
+                // read as the next request's head. Keep-alive after a refused auth buys
+                // nothing; a fresh connection starts clean.
+                return Ok(());
             }
         };
 
