@@ -244,6 +244,17 @@ Refusal strings (pinned; `{scope}` and `{origin}` are the observed values, quote
 - `network mode serves the local instance; use stdio for a remote manager (--remote)` — `bad_request`
 - `missing Host header` — `bad_request`
 - `chunked request bodies are not supported` — `bad_request`
+- `request head too large` — `bad_request`
+- `malformed HTTP request` — `bad_request`
+- `duplicate Content-Length` — `bad_request`
+- `invalid Content-Length: {raw}` — `bad_request`
+
+A head is parsed strictly, because a `Content-Length` body means two readers of the same bytes
+must agree on where the next request starts. Refused as `malformed HTTP request` (400, the
+connection ends): more than one `Host`, an empty `Host`, whitespace between a field name and its
+colon (a folded continuation line included). Refused on their own strings: a repeated
+`Content-Length` (`duplicate Content-Length`) and a `Content-Length` that is not `1*DIGIT` — a
+leading `+`, an empty value, or any non-digit (`invalid Content-Length: {raw}`).
 
 A wrong or missing `Daiorama-Token` answers `token_required` with the 04 client string (the
 gate does not distinguish missing from wrong); an unknown scope answers `scope_unknown`.

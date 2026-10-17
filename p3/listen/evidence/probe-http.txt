@@ -1,0 +1,63 @@
+bin=/home/agent/workspace/dAIorama/p2fix/target/debug/daiorama
+port=35941 manager_pid=215506 bridge_pid=215512
+
+=== baseline ===
+[PASS] valid POST /mcp initialize                           HTTP/1.1 200 OK              ''
+
+=== host / header shapes ===
+[PASS] duplicate Host (real, evil)                          HTTP/1.1 400 Bad Request     'malformed HTTP request'
+[PASS] duplicate Host (same twice)                          HTTP/1.1 400 Bad Request     'malformed HTTP request'
+[PASS] space before colon: 'Host : x'                       HTTP/1.1 400 Bad Request     'malformed HTTP request'
+[WATCH] bare-LF head (no CR)                                 HTTP/1.1 200 OK              ''
+[PASS] header line without colon                            HTTP/1.1 400 Bad Request     'malformed HTTP request'
+[PASS] empty Host value                                     HTTP/1.1 400 Bad Request     'malformed HTTP request'
+
+=== content-length shapes ===
+[PASS] Content-Length: +N                                   HTTP/1.1 400 Bad Request     'invalid Content-Length: "+46"'
+[WATCH] Content-Length: 00N                                  HTTP/1.1 200 OK              ''
+[PASS] Content-Length: -1                                   HTTP/1.1 400 Bad Request     'invalid Content-Length: "-1"'
+[PASS] Content-Length: N, N                                 HTTP/1.1 400 Bad Request     'invalid Content-Length: "46, 46"'
+
+=== transfer-encoding / sizing ===
+[PASS] Transfer-Encoding: chunked                           HTTP/1.1 400 Bad Request     'chunked request bodies are not supported'
+[PASS] Transfer-Encoding: identity                          HTTP/1.1 400 Bad Request     'chunked request bodies are not supported'
+[PASS] TE chunked + CL                                      HTTP/1.1 400 Bad Request     'chunked request bodies are not supported'
+[PASS] Content-Length MAX+1                                 HTTP/1.1 200 OK              'request frame must be at most 8388608 bytes'
+
+=== target shapes ===
+[PASS] GET /mcp                                             HTTP/1.1 405 Method Not Allowed 'network bridge serves POST /mcp only'
+[PASS] POST /mcp?x=1                                        HTTP/1.1 404 Not Found       'network bridge serves POST /mcp only'
+[PASS] POST /mcp/../mcp                                     HTTP/1.1 404 Not Found       'network bridge serves POST /mcp only'
+[PASS] absolute-form target                                 HTTP/1.1 404 Not Found       'network bridge serves POST /mcp only'
+[PASS] no Host                                              HTTP/1.1 400 Bad Request     'missing Host header'
+
+=== scope names (traversal) ===
+[WATCH] scope '../token'                                     HTTP/1.1 200 OK              'unknown scope "../token"'
+[WATCH] scope '/etc/passwd'                                  HTTP/1.1 200 OK              'unknown scope "/etc/passwd"'
+[WATCH] scope 'operator/../operator'                         HTTP/1.1 200 OK              'unknown scope "operator/../operator"'
+[WATCH] scope 'operator\x00x'                                HTTP/1.1 200 OK              'unknown scope "operator\\0x"'
+[WATCH] scope '..%2ftoken'                                   HTTP/1.1 200 OK              'unknown scope "..%2ftoken"'
+[WATCH] scope '.'                                            HTTP/1.1 200 OK              'unknown scope "."'
+
+=== origin shapes ===
+[WATCH] Origin: http://127.0.0.1:35941                       HTTP/1.1 200 OK              ''
+[WATCH] Origin: HTTP://127.0.0.1:35941                       HTTP/1.1 200 OK              ''
+[WATCH] Origin: http://127.0.0.1:35941/                      HTTP/1.1 200 OK              ''
+[WATCH] Origin: http://user@127.0.0.1:35941                  HTTP/1.1 403 Forbidden       'origin not allowed: "http://user@127.0.0.1:35941"'
+[WATCH] Origin: http://127.0.0.1:35941@evil.example          HTTP/1.1 403 Forbidden       'origin not allowed: "http://127.0.0.1:35941@evil.example"'
+[WATCH] Origin: null                                         HTTP/1.1 403 Forbidden       'origin not allowed: "null"'
+[WATCH] Origin: http://127.0.0.1:35941:1                     HTTP/1.1 403 Forbidden       'origin not allowed: "http://127.0.0.1:35941:1"'
+
+=== connection lifetime ===
+[WATCH] Connection: close -> HTTP/1.1 200 OK; socket then b'' (b'' = closed)
+[WATCH] 64 idle connections still open: 64; bridge fds now 74
+[WATCH] slow body after 2s: no reply, connection still held (no read timeout)
+[WATCH] idle head after 2s: still open, no timeout
+
+=== pipelining ===
+[WATCH] pipelined #1 HTTP/1.1 200 OK ids=b'{"id":21,"jsonrpc":"2.0","result":{"capabilities":{"tools":{'
+[WATCH] pipelined #2 HTTP/1.1 200 OK ids=b'{"id":22,"jsonrpc":"2.0","result":{"tools":[{"description":"'
+
+=== parse-before-auth ===
+[WATCH] no creds + malformed JSON                            HTTP/1.1 200 OK              'parse error: expected ident at line 1 column 2'
+[PASS] no creds + valid call                                HTTP/1.1 200 OK              "token required for 127.0.0.1:35941: set DAIORAMA_TOKEN (value from 'daiorama token show' on the manager host)."

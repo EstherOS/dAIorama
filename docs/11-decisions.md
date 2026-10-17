@@ -497,3 +497,24 @@ calls" from degrading into "no usable caller".
 and would echo it; secrets do not belong in the reviewable file); sticky per-connection scope
 (the confused-deputy above); OAuth challenge/discovery metadata (harnesses without custom
 headers use the stdio client-only install, 05); bind-address gating (07's request-time rule).
+
+### Bridge network mode — a strict head, pinned transport refusals · adopted · home: 05, fixtures/README
+
+The HTTP head parser refuses the shapes a fronting proxy refuses, because a `Content-Length`
+body makes the exact byte boundaries load-bearing: more than one `Host`, or an empty `Host`
+(`malformed HTTP request`); whitespace between a field name and its colon, folded continuation
+lines included (`malformed HTTP request`); a repeated `Content-Length` (`duplicate
+Content-Length`); and a `Content-Length` that is not `1*DIGIT` — a leading `+`, empty, any
+non-digit (`invalid Content-Length: {raw}`). All are `bad_request` and the connection ends.
+The four transport strings already existed in `strings.rs` but were missing from
+`fixtures/README.md`; they are pinned there now, and the README-reading test covers them.
+
+*Rationale:* the raw-HTTP adversarial pass (evidence `p3/listen/evidence/probe-http.txt`) found
+four leniencies in the first parser: duplicate `Host` last-wins (the `Origin` check then reads a
+different authority than a proxy would), an empty `Host` passing the "Host required" test,
+`Host :` accepted after trimming the field name, and `Content-Length: +5` accepted because
+Rust's `parse` takes a leading plus. Each is a disagreement about where the next request starts
+— the same class as the already-refused repeated `Content-Length` and chunked forms.
+*Rejected:* refusing bare-LF heads (RFC 7230 lets a recipient accept them; the MUSTs above are
+the strict set); trimming a field name (that is the bug); turning any non-`POST` into 400
+(405 with `Allow: POST` is the pinned shape).

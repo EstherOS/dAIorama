@@ -81,8 +81,11 @@ an `Origin` (when present) must name the same authority as `Host`. Each request 
 own credentials (`Daiorama-Token`, `Daiorama-Scope`, `Daiorama-Scope-Token`); the gates run in
 that order before dispatch. Gate failures are MCP-level errors — HTTP 200 with a JSON-RPC error
 whose `data` is the canonical envelope — never an OAuth challenge. A notification that passes
-the gate executes nothing and answers `202` with an empty body. The refusal strings are pinned
-in `fixtures/README.md`'s network contract.
+the gate executes nothing and answers `202` with an empty body. The head is strict where a
+fronting proxy is strict: more than one `Host`, an empty `Host`, whitespace between a field name
+and its colon, a repeated `Content-Length`, or a value that is not `1*DIGIT` are all
+`bad_request` and the connection ends (11). The refusal strings are pinned in
+`fixtures/README.md`'s network contract.
 
 ## Scope and origin carriage on the RPC
 

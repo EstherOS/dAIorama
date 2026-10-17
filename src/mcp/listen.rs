@@ -440,8 +440,18 @@ impl RequestHead {
         let mut duplicate_content_length = false;
         for line in lines {
             let (name, value) = line.split_once(':')?;
-            let name = name.trim().to_ascii_lowercase();
-            if name.is_empty() {
+            // RFC 7230 §3.2.4: no whitespace between field-name and colon. Trimming it would
+            // paper over the exact bytes a fronting proxy rejects — the smuggling disagreement
+            // the duplicate-`Content-Length` refusal already guards against. A leading space is
+            // an obs-fold continuation, also refused (a folded line is not a field).
+            if name.is_empty() || name.trim() != name {
+                return None;
+            }
+            let name = name.to_ascii_lowercase();
+            // RFC 7230 §5.4: a request with more than one `Host`, or one with an empty value,
+            // is a 400. Last-wins would let two readers of the same head disagree about which
+            // authority the request is for — and the `Origin` check reads the same field.
+            if name == "host" && (headers.contains_key("host") || value.trim().is_empty()) {
                 return None;
             }
             if name == "content-length" && headers.contains_key("content-length") {
@@ -464,6 +474,13 @@ impl RequestHead {
     fn content_length(&self) -> Result<usize, String> {
         match self.header("content-length") {
             None => Ok(0),
+            // RFC 7230 §3.3.2: `Content-Length` is `1*DIGIT`. Rust's `parse` also accepts a
+            // leading `+` (and an empty value would read as no body); a proxy that follows the
+            // grammar rejects those bytes while this side would frame a body — a disagreement
+            // about where the next request starts. Only digits here.
+            Some(raw) if raw.is_empty() || !raw.bytes().all(|byte| byte.is_ascii_digit()) => {
+                Err(strings::invalid_content_length(raw))
+            }
             Some(raw) => raw
                 .parse::<usize>()
                 .map_err(|_| strings::invalid_content_length(raw)),
@@ -520,6 +537,9 @@ mod tests {
             strings::NETWORK_LOCAL_ONLY,
             strings::MISSING_HOST,
             strings::CHUNKED_UNSUPPORTED,
+            strings::HEAD_TOO_LARGE,
+            strings::MALFORMED_HTTP_REQUEST,
+            strings::DUPLICATE_CONTENT_LENGTH,
         ] {
             assert!(
                 README.contains(pinned),
@@ -530,16 +550,19 @@ mod tests {
             strings::network_scope_auth_required("agent1"),
             strings::scope_has_no_secret("agent1"),
             strings::origin_not_allowed("http://evil.example"),
+            strings::invalid_content_length("abc"),
         ];
         let templates = [
             "scope {scope} requires its scope secret (Daiorama-Scope-Token header)",
             "scope {scope} has no secret; it cannot be used over the network",
             "origin not allowed: {origin}",
+            "invalid Content-Length: {raw}",
         ];
         for (value, template) in with_values.iter().zip(templates) {
             let shape = template
                 .replace("{scope}", "\"agent1\"")
-                .replace("{origin}", "\"http://evil.example\"");
+                .replace("{origin}", "\"http://evil.example\"")
+                .replace("{raw}", "\"abc\"");
             assert_eq!(value, &shape, "the network string template holds");
             assert!(README.contains(template), "README pins {template:?}");
         }
@@ -567,6 +590,61 @@ mod tests {
             strings::invalid_content_length("abc"),
             "invalid Content-Length: \"abc\""
         );
+    }
+
+    /// The head shapes a fronting proxy refuses: two readers of one head must not disagree
+    /// about the authority or about where the body ends (RFC 7230 §3.2.4, §3.3.2, §5.4).
+    #[test]
+    fn smuggling_head_shapes_are_malformed() {
+        let parse = |lines: &[&str]| {
+            RequestHead::parse(
+                &lines
+                    .iter()
+                    .map(|line| line.to_string())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        assert!(
+            parse(&["POST /mcp HTTP/1.1", "Host: a", "Host: b"]).is_none(),
+            "duplicate Host is refused"
+        );
+        assert!(
+            parse(&["POST /mcp HTTP/1.1", "Host: a", "Host: a"]).is_none(),
+            "duplicate Host is refused even when the values agree"
+        );
+        assert!(
+            parse(&["POST /mcp HTTP/1.1", "Host:"]).is_none(),
+            "an empty Host is not an authority"
+        );
+        assert!(
+            parse(&["POST /mcp HTTP/1.1", "Host : a"]).is_none(),
+            "whitespace before the colon is refused"
+        );
+        assert!(
+            parse(&["POST /mcp HTTP/1.1", "Host: a", " folded"]).is_none(),
+            "a folded continuation line is not a field"
+        );
+        assert!(parse(&["POST /mcp HTTP/1.1", "Host: a"]).is_some());
+    }
+
+    #[test]
+    fn content_length_is_one_star_digit() {
+        let length = |raw: &str| {
+            RequestHead::parse(&[
+                "POST /mcp HTTP/1.1".to_string(),
+                "Host: a".to_string(),
+                format!("Content-Length: {raw}"),
+            ])
+            .expect("head parses")
+            .content_length()
+        };
+        assert_eq!(length("5").unwrap(), 5);
+        assert_eq!(length("0005").unwrap(), 5, "leading zeros are digits");
+        assert!(length("+5").is_err(), "a leading plus is not a digit");
+        assert!(length("").is_err(), "an empty value is not a length");
+        assert!(length("-1").is_err());
+        assert!(length("5, 5").is_err());
+        assert!(length("0x10").is_err());
     }
 
     #[test]

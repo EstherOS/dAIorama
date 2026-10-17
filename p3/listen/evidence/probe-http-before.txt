@@ -1,0 +1,63 @@
+bin=/home/agent/workspace/dAIorama/p2fix/target/debug/daiorama
+port=56799 manager_pid=210914 bridge_pid=210920
+
+=== baseline ===
+[PASS] valid POST /mcp initialize                           HTTP/1.1 200 OK              '{"id":1,"jsonrpc":"2.0","result":{"capabilities":{"tools":{"listChanged":false}},"instructions":"dAIorama desktop sessio'
+
+=== host / header shapes ===
+[FAIL] duplicate Host (real, evil)                          HTTP/1.1 200 OK              '{"id":1,"jsonrpc":"2.0","result":{"capabilities":{"tools":{"listChanged":false}},"instructions":"dAIorama desktop sessio'
+[FAIL] duplicate Host (same twice)                          HTTP/1.1 200 OK              '{"id":1,"jsonrpc":"2.0","result":{"capabilities":{"tools":{"listChanged":false}},"instructions":"dAIorama desktop sessio'
+[FAIL] space before colon: 'Host : x'                       HTTP/1.1 200 OK              '{"id":1,"jsonrpc":"2.0","result":{"capabilities":{"tools":{"listChanged":false}},"instructions":"dAIorama desktop sessio'
+[WATCH] bare-LF head (no CR)                                 HTTP/1.1 200 OK              '{"id":1,"jsonrpc":"2.0","result":{"capabilities":{"tools":{"listChanged":false}},"instructions":"dAIorama desktop sessio'
+[PASS] header line without colon                            HTTP/1.1 400 Bad Request     '{"error":{"code":-32600,"data":{"code":"bad_request","hint":"check the request against \'daiorama <command> --help\'","mes'
+[FAIL] empty Host value                                     HTTP/1.1 200 OK              '{"id":1,"jsonrpc":"2.0","result":{"capabilities":{"tools":{"listChanged":false}},"instructions":"dAIorama desktop sessio'
+
+=== content-length shapes ===
+[FAIL] Content-Length: +N                                   HTTP/1.1 200 OK              '{"id":2,"jsonrpc":"2.0","result":{"capabilities":{"tools":{"listChanged":false}},"instructions":"dAIorama desktop sessio'
+[WATCH] Content-Length: 00N                                  HTTP/1.1 200 OK              '{"id":2,"jsonrpc":"2.0","result":{"capabilities":{"tools":{"listChanged":false}},"instructions":"dAIorama desktop sessio'
+[PASS] Content-Length: -1                                   HTTP/1.1 400 Bad Request     '{"error":{"code":-32600,"data":{"code":"bad_request","hint":"check the request against \'daiorama <command> --help\'","mes'
+[PASS] Content-Length: N, N                                 HTTP/1.1 400 Bad Request     '{"error":{"code":-32600,"data":{"code":"bad_request","hint":"check the request against \'daiorama <command> --help\'","mes'
+
+=== transfer-encoding / sizing ===
+[PASS] Transfer-Encoding: chunked                           HTTP/1.1 400 Bad Request     '{"error":{"code":-32600,"data":{"code":"bad_request","hint":"check the request against \'daiorama <command> --help\'","mes'
+[PASS] Transfer-Encoding: identity                          HTTP/1.1 400 Bad Request     '{"error":{"code":-32600,"data":{"code":"bad_request","hint":"check the request against \'daiorama <command> --help\'","mes'
+[PASS] TE chunked + CL                                      HTTP/1.1 400 Bad Request     '{"error":{"code":-32600,"data":{"code":"bad_request","hint":"check the request against \'daiorama <command> --help\'","mes'
+[FAIL] Content-Length MAX+1                                 HTTP/1.1 200 OK              '{"error":{"code":-32600,"data":{"code":"bad_request","hint":"check the request against \'daiorama <command> --help\'","mes'
+
+=== target shapes ===
+[PASS] GET /mcp                                             HTTP/1.1 405 Method Not Allowed '{"error":{"code":-32600,"data":{"code":"bad_request","hint":"check the request against \'daiorama <command> --help\'","mes'
+[PASS] POST /mcp?x=1                                        HTTP/1.1 404 Not Found       '{"error":{"code":-32600,"data":{"code":"bad_request","hint":"check the request against \'daiorama <command> --help\'","mes'
+[PASS] POST /mcp/../mcp                                     HTTP/1.1 404 Not Found       '{"error":{"code":-32600,"data":{"code":"bad_request","hint":"check the request against \'daiorama <command> --help\'","mes'
+[PASS] absolute-form target                                 HTTP/1.1 404 Not Found       '{"error":{"code":-32600,"data":{"code":"bad_request","hint":"check the request against \'daiorama <command> --help\'","mes'
+[PASS] no Host                                              HTTP/1.1 400 Bad Request     '{"error":{"code":-32600,"data":{"code":"bad_request","hint":"check the request against \'daiorama <command> --help\'","mes'
+
+=== scope names (traversal) ===
+[WATCH] scope '../token'                                     HTTP/1.1 200 OK              '{"error":{"code":-32600,"data":{"code":"scope_unknown","message":"unknown scope \\"../token\\""},"message":"unknown scope '
+[WATCH] scope '/etc/passwd'                                  HTTP/1.1 200 OK              '{"error":{"code":-32600,"data":{"code":"scope_unknown","message":"unknown scope \\"/etc/passwd\\""},"message":"unknown sco'
+[WATCH] scope 'operator/../operator'                         HTTP/1.1 200 OK              '{"error":{"code":-32600,"data":{"code":"scope_unknown","message":"unknown scope \\"operator/../operator\\""},"message":"un'
+[WATCH] scope 'operator\x00x'                                HTTP/1.1 200 OK              '{"error":{"code":-32600,"data":{"code":"scope_unknown","message":"unknown scope \\"operator\\\\0x\\""},"message":"unknown sc'
+[WATCH] scope '..%2ftoken'                                   HTTP/1.1 200 OK              '{"error":{"code":-32600,"data":{"code":"scope_unknown","message":"unknown scope \\"..%2ftoken\\""},"message":"unknown scop'
+[WATCH] scope '.'                                            HTTP/1.1 200 OK              '{"error":{"code":-32600,"data":{"code":"scope_unknown","message":"unknown scope \\".\\""},"message":"unknown scope \\".\\""}'
+
+=== origin shapes ===
+[WATCH] Origin: http://127.0.0.1:56799                       HTTP/1.1 200 OK              '{"id":1,"jsonrpc":"2.0","result":{"capabilities":{"tools":{"listChanged":false}},"instructions":"dAIorama desktop sessio'
+[WATCH] Origin: HTTP://127.0.0.1:56799                       HTTP/1.1 200 OK              '{"id":1,"jsonrpc":"2.0","result":{"capabilities":{"tools":{"listChanged":false}},"instructions":"dAIorama desktop sessio'
+[WATCH] Origin: http://127.0.0.1:56799/                      HTTP/1.1 200 OK              '{"id":1,"jsonrpc":"2.0","result":{"capabilities":{"tools":{"listChanged":false}},"instructions":"dAIorama desktop sessio'
+[WATCH] Origin: http://user@127.0.0.1:56799                  HTTP/1.1 403 Forbidden       '{"error":{"code":-32600,"data":{"code":"bad_request","hint":"check the request against \'daiorama <command> --help\'","mes'
+[WATCH] Origin: http://127.0.0.1:56799@evil.example          HTTP/1.1 403 Forbidden       '{"error":{"code":-32600,"data":{"code":"bad_request","hint":"check the request against \'daiorama <command> --help\'","mes'
+[WATCH] Origin: null                                         HTTP/1.1 403 Forbidden       '{"error":{"code":-32600,"data":{"code":"bad_request","hint":"check the request against \'daiorama <command> --help\'","mes'
+[WATCH] Origin: http://127.0.0.1:56799:1                     HTTP/1.1 403 Forbidden       '{"error":{"code":-32600,"data":{"code":"bad_request","hint":"check the request against \'daiorama <command> --help\'","mes'
+
+=== connection lifetime ===
+[WATCH] Connection: close -> HTTP/1.1 200 OK; socket then b'' (b'' = closed)
+[WATCH] 64 idle connections still open: 64; bridge fds now 74
+[WATCH] slow body after 2s: no reply, connection still held (no read timeout)
+[WATCH] idle head after 2s: still open, no timeout
+
+=== pipelining ===
+[WATCH] pipelined #1 HTTP/1.1 200 OK ids=b'{"id":21,"jsonrpc":"2.0","result":{"capabilities":{"tools":{'
+[WATCH] pipelined #2 HTTP/1.1 200 OK ids=b'{"id":22,"jsonrpc":"2.0","result":{"tools":[{"description":"'
+
+=== parse-before-auth ===
+[WATCH] no creds + malformed JSON                            HTTP/1.1 200 OK              '{"error":{"code":-32700,"message":"parse error: expected ident at line 1 column 2"},"id":null,"jsonrpc":"2.0"}'
+[PASS] no creds + valid call                                HTTP/1.1 200 OK              '{"error":{"code":-32600,"data":{"code":"token_required","hint":"run \'daiorama token show\' on the manager host and set DA'
