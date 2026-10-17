@@ -106,6 +106,9 @@ actually runs: `wayvnc` (`view.wayvnc_command`), `grim` and `wf-recorder` (`capt
 the Mesa userspace, `xwayland`, `dbus`, `seatd`, `fontconfig` + `fonts-dejavu-core`. No terminal,
 no app suite, no browser in core; `wtype`/`wlrctl` are the L1 harness's stand-ins and do not ship.
 
+The desktop image sets `ENV XDG_DATA_HOME=/data`; the manager and the entrypoint
+must resolve one data root or the seed lands where the front does not look.
+
 **The noVNC tree stays data.** The desktop image carries one read-only seed at
 `/usr/share/daiorama/novnc`; `packaging/container/entrypoint.sh` copies it into
 `<data root>/novnc` only when `vnc.html` is absent, then `exec`s the command. A recreate keeps

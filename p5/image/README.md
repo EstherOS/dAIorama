@@ -47,7 +47,7 @@ manifest (C2) rather than pretending `sid-slim` is a version.
 
 - **noVNC tree.** Staged data at `<data>/novnc` (07/09). The desktop image ships the pinned tree
   once at `/usr/share/daiorama/novnc` (a read-only seed), and `packaging/container/entrypoint.sh`
-  copies it into `/data/novnc` **only when the entry point is absent**, then `exec`s the
+  copies it into `<data>/daiorama/default/novnc` (`XDG_DATA_HOME=/data` in the image) **only when the entry point is absent**, then `exec`s the
   command. A container recreate therefore keeps the tree on the volume; an operator can still
   stage or upgrade it with `packaging/novnc/fetch.sh` (the script's re-run replaces the tree).
   The seed is a copy source, not a served path — a `/usr/share` tree served directly would make
@@ -87,10 +87,10 @@ lands the Containerfiles must carry that evidence, not a local build claim:
    Hyprland in range, wayvnc present, containment delegated or the off-mode refusal.
 2. `serve` in the core image with a render node creates a session, `screenshot` returns an
    image block (grim present), `get_view` answers and the noVNC front serves after the
-   entrypoint seeds `/data/novnc`, `stop_view`/`close` leave no residue.
+   entrypoint seeds `<data>/daiorama/default/novnc`, `stop_view`/`close` leave no residue.
 3. The desktop image's `CMD` starts the manager with no arguments; the launcher path exists and
    the renderer mark is `verified` for a launched Chromium session.
-4. A recreate of the container: profile and `/data/novnc` survive; session state does not.
+4. A recreate of the container: profile and the seeded view tree survive; session state does not.
 5. Entrypoint seeding has an in-process test here (absent → copied; present → untouched; no
    seed → one line and `exec`, never a hard failure).
 

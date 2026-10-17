@@ -207,7 +207,6 @@ fn run_entrypoint(
         .args(argv)
         .env("DAIORAMA_NOVNC_SEED", seed)
         .env("XDG_DATA_HOME", data)
-        .env("DAIORAMA_INSTANCE", "test")
         .output()
         .expect("entrypoint runs")
 }
@@ -219,7 +218,7 @@ fn entrypoint_seeds_once_and_never_overwrites_a_staged_tree() {
     std::fs::create_dir_all(&seed).unwrap();
     std::fs::write(seed.join("vnc.html"), "seed").unwrap();
     let data = tmp.path().join("data");
-    let dest = data.join("daiorama/test/novnc");
+    let dest = data.join("daiorama/default/novnc");
 
     // Absent entry point: copied, and the command runs (its exit code proves the exec).
     let out = run_entrypoint(&seed, &data, &["sh", "-c", "echo ran; exit 7"]);
@@ -274,8 +273,8 @@ fn the_entrypoint_creates_only_the_asset_tree() {
         "exactly one directory is created: the asset tree"
     );
     assert!(
-        ENTRYPOINT.contains("mkdir -p \"$DEST\""),
-        "the asset tree is the one directory created"
+        ENTRYPOINT.contains("mkdir -p \"$DEST_DIR\""),
+        "the asset tree's parent is the one directory created"
     );
     assert!(
         !ENTRYPOINT.contains("XDG_RUNTIME_DIR"),
@@ -284,5 +283,30 @@ fn the_entrypoint_creates_only_the_asset_tree() {
     assert!(
         !ENTRYPOINT.contains("DAIORAMA_TOKEN"),
         "the entrypoint holds no secret"
+    );
+}
+
+#[test]
+fn entrypoint_repairs_an_interrupted_first_seed() {
+    // N4: a partial tree (copied but missing the entry point) must be replaced wholesale,
+    // not skipped forever by a presence check on a half-written directory.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let seed = tmp.path().join("seed");
+    std::fs::create_dir_all(&seed).unwrap();
+    std::fs::write(seed.join("vnc.html"), "seed").unwrap();
+    let data = tmp.path().join("data");
+    let dest = data.join("daiorama/default/novnc");
+    std::fs::create_dir_all(&dest).unwrap();
+    std::fs::write(dest.join("stale.js"), "partial").unwrap();
+
+    let out = run_entrypoint(&seed, &data, &["true"]);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        std::fs::read_to_string(dest.join("vnc.html")).unwrap(),
+        "seed"
+    );
+    assert!(
+        !dest.join("stale.js").exists(),
+        "the partial tree is replaced, not merged"
     );
 }

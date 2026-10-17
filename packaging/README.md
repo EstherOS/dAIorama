@@ -140,9 +140,11 @@ Two artifacts (09, *Image split*): **`daiorama`** — core substrate, no default
 the reference box; CI here has no podman, so their PR carries the build and the live legs.
 
 The desktop image carries the pinned noVNC tree once at `/usr/share/daiorama/novnc`.
-`packaging/container/entrypoint.sh` seeds it into `<data root>/novnc` only when `vnc.html` is
+`packaging/container/entrypoint.sh` seeds it into `<data root>/daiorama/default/novnc` only when `vnc.html` is
 absent, then `exec`s the command — the tree stays on the persisted volume, and an image upgrade
-never swaps it under a session. Mount `/data` and `/config` at 08's container equivalents; the
+never swaps it under a session. The image sets `ENV XDG_DATA_HOME=/data`, so the manager
+and the entrypoint resolve the same data root; without it the seed lands somewhere the
+binary never reads. Mount `/data` and `/config` at 08's container equivalents; the
 token and scope secrets live in `/data`, so back that volume up like a credential.
 
 The Containerfiles, the Quadlet unit and the compose snippets are the next packaging slice;
