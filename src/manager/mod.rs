@@ -990,13 +990,45 @@ async fn serve_connection(
                 }
             },
         };
-        let response = handler.dispatch(
-            request.scope.as_deref().unwrap_or(OPERATOR_SCOPE),
+        // Dispatch is where the work blocks: capture waits on a configured command (up to
+        // `capture.timeout_s` on top of the clip's own duration) and `new` waits on a
+        // compositor. Inline, each call occupies a reactor worker for that whole time, and
+        // one call per worker leaves the manager unable to answer anything — `status`,
+        // `close`, `drain` included. The blocking pool carries it instead; frames on one
+        // connection still run strictly in order.
+        let response = dispatch_offloaded(
+            Arc::clone(&handler),
+            request
+                .scope
+                .as_deref()
+                .unwrap_or(OPERATOR_SCOPE)
+                .to_string(),
             origin,
-            &request.method,
-            request.params.as_ref(),
-        );
+            request.method,
+            request.params,
+        )
+        .await;
         write_response(&mut reader, &response).await?;
+    }
+}
+
+/// Run one dispatch on the blocking pool (see `serve_connection`). A panic inside a dispatch
+/// answers `internal` instead of silently dropping the connection: the blocking task cannot
+/// unwind into the reactor.
+async fn dispatch_offloaded(
+    handler: Arc<dyn Handler>,
+    scope: String,
+    origin: Origin,
+    method: String,
+    params: Option<Value>,
+) -> Response {
+    match tokio::task::spawn_blocking(move || {
+        handler.dispatch(&scope, origin, &method, params.as_ref())
+    })
+    .await
+    {
+        Ok(response) => response,
+        Err(_) => Response::Error(ErrorEnvelope::internal(strings::DISPATCH_PANICKED)),
     }
 }
 
@@ -1610,6 +1642,192 @@ mod tests {
         serving.abort();
     }
 
+    /// A dispatch that blocks (capture waits on a configured command; `new` waits on a
+    /// compositor) must not occupy a reactor worker. Pre-fix, every worker sitting inside
+    /// `dispatch` means a plain `status` from a third connection is not even read: the fast
+    /// call waits out the slow ones, which in production is 10 s per screenshot and up to
+    /// 40 s per clip — with one call per worker, the manager stops answering anything.
+    struct BlockingHandler {
+        entered: std::sync::Mutex<std::sync::mpsc::Sender<()>>,
+        release: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+    }
+
+    impl Handler for BlockingHandler {
+        fn handshake_result(&self) -> HandshakeResult {
+            HandshakeResult {
+                protocol_version: PROTOCOL_VERSION.to_string(),
+                min_supported: Some(MIN_SUPPORTED.to_string()),
+                instance_id: "11111111-1111-4111-8111-111111111111".to_string(),
+            }
+        }
+
+        fn dispatch(
+            &self,
+            _scope: &str,
+            _origin: Origin,
+            method: &str,
+            _params: Option<&Value>,
+        ) -> Response {
+            if method == "slow" {
+                let _ = self.entered.lock().expect("entered lock").send(());
+                // Released by the test once the fast call has been timed; the deadline only
+                // bounds the pre-fix run (where the test cannot get to the release).
+                let deadline = std::time::Instant::now() + StdDuration::from_secs(3);
+                let (lock, cvar) = &*self.release;
+                let mut released = lock.lock().expect("release lock");
+                while !*released {
+                    let now = std::time::Instant::now();
+                    if now >= deadline {
+                        break;
+                    }
+                    released = cvar
+                        .wait_timeout(released, deadline - now)
+                        .expect("release wait")
+                        .0;
+                }
+                return Response::Result(json!({"slow": true}));
+            }
+            Response::Result(json!({"ok": true}))
+        }
+    }
+
+    /// One blocking client call outside the runtime: handshake, then `method`, one line back.
+    fn blocking_call(socket: &Path, method: &str) -> String {
+        use std::io::{BufRead, BufReader, Write};
+        let stream = std::os::unix::net::UnixStream::connect(socket).expect("connect");
+        stream
+            .set_read_timeout(Some(StdDuration::from_secs(10)))
+            .unwrap();
+        let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+        let mut writer = stream;
+        let handshake = json!({
+            "method": methods::HANDSHAKE,
+            "params": {"protocol_version": PROTOCOL_VERSION, "min_supported": MIN_SUPPORTED},
+        });
+        writeln!(writer, "{handshake}").unwrap();
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("handshake answer");
+        writeln!(writer, "{}", json!({"method": method, "params": null})).unwrap();
+        let mut answer = String::new();
+        reader.read_line(&mut answer).expect("call answer");
+        answer
+    }
+
+    #[test]
+    fn a_blocking_dispatch_cannot_starve_the_reactor() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("manager.sock");
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let release =
+            std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+        let handler = Arc::new(BlockingHandler {
+            entered: std::sync::Mutex::new(entered_tx),
+            release: std::sync::Arc::clone(&release),
+        });
+        let listener = runtime
+            .block_on(async { Listener::bind(&socket).await })
+            .unwrap();
+        runtime.spawn(listener.serve(
+            handler,
+            Arc::new(MediaStore::with_ttl(
+                dir.path().to_path_buf(),
+                crate::media::DEFAULT_TTL,
+            )),
+        ));
+
+        // Two blocking dispatches: one per worker thread.
+        let slow: Vec<_> = (0..2)
+            .map(|_| {
+                let socket = socket.clone();
+                std::thread::spawn(move || blocking_call(&socket, "slow"))
+            })
+            .collect();
+        for _ in 0..2 {
+            entered_rx
+                .recv_timeout(StdDuration::from_secs(5))
+                .expect("both slow dispatches are in flight");
+        }
+
+        let started = std::time::Instant::now();
+        let answer = blocking_call(&socket, methods::STATUS);
+        let elapsed = started.elapsed();
+        assert!(answer.contains("\"ok\":true"), "{answer}");
+        assert!(
+            elapsed < StdDuration::from_secs(1),
+            "a fast call waited {elapsed:?} behind two blocking dispatches"
+        );
+
+        *release.0.lock().unwrap() = true;
+        release.1.notify_all();
+        for thread in slow {
+            thread.join().unwrap();
+        }
+    }
+
+    /// The blocking-pool boundary still answers: a panic inside a dispatch is a JoinError, the
+    /// connection continues, and the next call on it is served (the pinned `internal` is in
+    /// fixtures/README and the README-reading test above).
+    #[tokio::test]
+    async fn a_panicking_dispatch_answers_internal_and_keeps_the_connection() {
+        struct PanickingHandler;
+
+        impl Handler for PanickingHandler {
+            fn handshake_result(&self) -> HandshakeResult {
+                HandshakeResult {
+                    protocol_version: PROTOCOL_VERSION.to_string(),
+                    min_supported: Some(MIN_SUPPORTED.to_string()),
+                    instance_id: "11111111-1111-4111-8111-111111111111".to_string(),
+                }
+            }
+
+            fn dispatch(
+                &self,
+                _scope: &str,
+                _origin: Origin,
+                method: &str,
+                _params: Option<&Value>,
+            ) -> Response {
+                if method == "boom" {
+                    panic!("dispatch blew up");
+                }
+                Response::Result(json!({"ok": true}))
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("manager.sock");
+        let listener = Listener::bind(&socket).await.unwrap();
+        let serving = tokio::spawn(listener.serve(
+            Arc::new(PanickingHandler),
+            Arc::new(MediaStore::with_ttl(
+                dir.path().to_path_buf(),
+                crate::media::DEFAULT_TTL,
+            )),
+        ));
+        let mut client = Client::connect(
+            &Address::Unix(socket.clone()),
+            StdDuration::from_secs(2),
+            None,
+        )
+        .await
+        .unwrap();
+        client.handshake().await.unwrap();
+
+        let err = client.request("boom", None, None).await.unwrap_err();
+        assert_eq!(err.code, crate::ipc::ErrorCode::Internal);
+        assert_eq!(err.message, strings::DISPATCH_PANICKED);
+
+        let value = client.request(methods::STATUS, None, None).await.unwrap();
+        assert_eq!(value["ok"], true);
+
+        serving.abort();
+    }
+
     /// 05 A7: an out-of-range handshake is rejected *at connect* — the refusal ends the
     /// connection, nothing may follow it (the conformance fixture's note: a refused
     /// handshake must not be followed by anything).
@@ -1935,6 +2153,7 @@ mod tests {
             strings::unknown_tool("x"),
             strings::invalid_origin("x"),
             strings::takes_no_parameters("bogus"),
+            strings::DISPATCH_PANICKED.to_string(),
         ] {
             assert!(
                 flat.contains(&pinned),

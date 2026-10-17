@@ -448,6 +448,23 @@ an `O_EXCL` lockfile (stale after a crash — the reason the runtime lock is flo
 treating parse errors as transient and retrying (the race heals as data loss, and corruption
 does not heal at all).
 
+### Hardening — dispatch runs off the reactor · adopted · home: fixtures/README
+
+Dispatch — capture (a configured command), `create_session` (a compositor readiness wait),
+media persistence — runs on the blocking pool, never inline on a reactor worker; frames on one
+connection still run strictly in order. A panic inside a dispatch answers `internal`
+(`dispatch panicked`) and the connection continues.
+
+*Rationale:* found live by the dispatch-stall battery: four `create_session` calls against a
+compositor that never becomes ready occupied all four reactor workers, and a plain `status`
+from a fifth connection then waited 14.5 s — the manager answered nothing at all (`status`,
+`close`, `drain` included) for as long as the slow calls ran. Capture's bound is
+`capture.timeout_s` (10 s default) on top of the clip's own duration (≤ 30 s), so one clip per
+worker is enough to reach it in normal use, not just under attack. Both ways on the real
+binary: `p2/hardening/run-dispatch-stall.sh` (14.53 s → 0.00 s).
+*Rejected:* offloading only the capture methods (the next blocking dispatch reintroduces the
+class); `block_in_place` (it does not add a thread — the worker still sits in the call).
+
 ## P3 bridge (2026-10-17)
 
 ### Bridge — scope and origin ride the request frame · adopted · home: 05

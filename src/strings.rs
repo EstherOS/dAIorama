@@ -311,6 +311,11 @@ pub fn null_id() -> &'static str {
 /// corrective step.
 pub const NOT_IMPLEMENTED_MESSAGE: &str = "not implemented yet";
 
+/// A dispatch that panicked (P2 hardening's blocking-pool boundary): the blocking task cannot
+/// unwind into the reactor, so the worker that ran it is gone and the caller gets a refusal
+/// instead of a silently dropped connection. `internal`: no corrective step exists.
+pub const DISPATCH_PANICKED: &str = "dispatch panicked";
+
 /// A method whose pinned surface takes no parameters refuses any it is given — the same
 /// `bad_request` class as an unknown parameter elsewhere (05: unknown keys are malformed
 /// requests), just without a valid-name list to print.
