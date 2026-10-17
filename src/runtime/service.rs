@@ -449,16 +449,20 @@ impl Handler for RuntimeService {
 
     fn dispatch(&self, method: &str, params: Option<&Value>) -> Response {
         let outcome: Result<Value, ErrorEnvelope> = match method {
-            methods::STATUS => Ok(self.instance_status()),
-            methods::READINESS => Ok(self.instance_status()),
+            // Instance reads and the two management verbs take no parameters: a stray key is a
+            // malformed request (05), refused like any other unknown parameter — silently
+            // accepting one answers the wrong question under a typo'd call.
+            methods::STATUS | methods::READINESS => {
+                no_params(params).map(|()| self.instance_status())
+            }
             methods::CREATE_SESSION => self.create_session(params),
             methods::LIST_SESSIONS => self.list_sessions(params),
             methods::SESSION_STATUS => self.session_status(params),
             methods::CLOSE_SESSION => self.close_session(params),
-            methods::CONFIG_RELOAD => self.config_reload(),
+            methods::CONFIG_RELOAD => no_params(params).and_then(|()| self.config_reload()),
             methods::CONFIG_GET => self.config_get(params),
             methods::CONFIG_SET => self.config_set(params),
-            methods::DRAIN => self.drain(),
+            methods::DRAIN => no_params(params).and_then(|()| self.drain()),
             // Pinned-surface names this build does not implement yet: the views/query methods
             // and the control tools land later (PLAN.md) — a valid call, an absent build.
             methods::GET_VIEW
@@ -488,6 +492,18 @@ fn params_object(params: Option<&Value>) -> Result<Map<String, Value>, ErrorEnve
         Some(other) => Err(ErrorEnvelope::bad_request(format!(
             "params must be an object or null, got {other}"
         ))),
+    }
+}
+
+/// A method whose pinned surface takes no parameters: `null`, absent and `{}` are all "no
+/// parameters"; anything else is a malformed request (05), refused like an unknown parameter.
+fn no_params(params: Option<&Value>) -> Result<(), ErrorEnvelope> {
+    let map = params_object(params)?;
+    match map.keys().next() {
+        None => Ok(()),
+        Some(key) => Err(ErrorEnvelope::bad_request(
+            crate::strings::takes_no_parameters(key),
+        )),
     }
 }
 
@@ -1137,6 +1153,38 @@ mod tests {
         assert_eq!(err.code, ErrorCode::BadRequest);
         assert_eq!(err.message, crate::strings::unknown_method("frobnicate"));
         assert_eq!(err.hint, None);
+    }
+
+    /// 05 parity: methods whose pinned surface takes no parameters refuse a stray key rather
+    /// than answering the wrong question under a typo'd call. `null`, absent and `{}` stay
+    /// valid — the malformed middle is what must refuse.
+    #[test]
+    fn no_parameter_methods_refuse_stray_parameters() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (service, _paths) = service_with_config_file(tmp.path(), 10);
+        for method in [
+            methods::STATUS,
+            methods::READINESS,
+            methods::CONFIG_RELOAD,
+            methods::DRAIN,
+        ] {
+            let err = result(&service, method, Some(json!({ "bogus": 1 }))).unwrap_err();
+            assert_eq!(err.code, ErrorCode::BadRequest, "{method}");
+            assert_eq!(
+                err.message,
+                crate::strings::takes_no_parameters("bogus"),
+                "{method}"
+            );
+            assert_eq!(
+                err.hint.as_deref(),
+                Some(crate::strings::HINT_CHECK_HELP),
+                "{method}"
+            );
+            result(&service, method, None)
+                .unwrap_or_else(|err| panic!("{method} with null params: {err:?}"));
+            result(&service, method, Some(json!({})))
+                .unwrap_or_else(|err| panic!("{method} with empty params: {err:?}"));
+        }
     }
 
     #[tokio::test]

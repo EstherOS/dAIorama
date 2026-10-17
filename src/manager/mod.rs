@@ -1691,6 +1691,7 @@ mod tests {
             strings::DUPLICATE_HANDSHAKE.to_string(),
             strings::NOT_IMPLEMENTED_MESSAGE.to_string(),
             strings::unknown_method("foo"),
+            strings::takes_no_parameters("bogus"),
         ] {
             assert!(
                 flat.contains(&pinned),

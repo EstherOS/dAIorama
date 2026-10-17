@@ -242,6 +242,13 @@ pub fn unknown_method(method: &str) -> String {
 /// corrective step.
 pub const NOT_IMPLEMENTED_MESSAGE: &str = "not implemented yet";
 
+/// A method whose pinned surface takes no parameters refuses any it is given — the same
+/// `bad_request` class as an unknown parameter elsewhere (05: unknown keys are malformed
+/// requests), just without a valid-name list to print.
+pub fn takes_no_parameters(found: &str) -> String {
+    format!("unknown parameter {found:?}; this method takes no parameters")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
