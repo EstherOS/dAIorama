@@ -1055,3 +1055,35 @@ shape the trust story:
 `--trusted-key` CLI flag (verification would become caller-asserted); shelling out to `minisign`
 from the binary (two trust boundaries, one of them external); signing in the generator (key
 material in an automated path).
+
+## P5-C2-MANIFEST-HARDENING — bounded inputs, validated rows, compact bytes
+
+The first implementation of the manifest pair verified signatures correctly and left three
+contract gaps; each fix is a rule, not a preference.
+
+- **Every read is bounded.** The manifest and signature are documents: size-checked at 1 MiB
+  before they are read. `--artifact` names a release download — it hashes through the installer's
+  existing bounded path (regular file, 128 MiB cap, checked before the read) instead of
+  `std::fs::read`, because a read side with no cap reads green until it OOMs, and the largest
+  files in the system are exactly the ones this verb is pointed at. The generator's hashing uses
+  the same path, so it cannot emit a digest for a file the verifier would refuse.
+- **Rows are validated after the signature verifies.** The pinned sets are enforced rather than
+  assumed: `channel` is `stable`/`beta`; `released_at` is the one RFC 3339 UTC shape;
+  `kind` is `core`/`dashboard`/`image`; a binary target is one of the four release triples and an
+  image target is `linux/amd64` or `linux/arm64`; digests are 64 lowercase hex; names are bare
+  published file names; duplicate rows, a missing pinned field (`facts`, `assets`, `artifacts`)
+  and an empty artifact list are refusals. A signature proves the bytes are the release lane's —
+  it does not prove the lane shipped a row an installer can use, and "an unknown target is a
+  refusal" was pinned in the pre-read.
+- **The generator emits the pinned bytes.** One artifact/asset object per line, fixed key order,
+  **no whitespace inside an object** — the installer's `grep -F '"name":"…"'` + `sed` extraction
+  is a tested contract, and a space after the colon silently matches nothing. The generator
+  refuses what the verifier refuses (channel, kind, target, empty artifact list), so the two
+  halves cannot disagree about what a valid manifest is.
+
+*Rejected:* trusting the caller-supplied file size (no bound); validating only the row named by
+`--artifact` (a signed manifest's other rows would still ship unchecked); leaving the layout as a
+docs-only convention (the bytes are the contract, and a formatter pass would break them).
+
+The refusal strings are pinned in 04 and the schema in 09; tests read both documents, so wording
+drift fails the build like every other pinned string.

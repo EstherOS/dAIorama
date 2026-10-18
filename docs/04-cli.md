@@ -154,6 +154,7 @@ these; wording changes are spec changes.
 - `dashboard install needs --artifact <tar.gz> and --sha256 <hex>, or --version <installed> to re-activate one`
 - `--artifact requires --sha256 <hex>: the artifact is verified before it is unpacked`
 - `--sha256 applies only with --artifact`
+- release manifest refusals (09 C2): `no trusted release key provisioned` (the trust list ships empty), `release signed by an untrusted key {id}`, `release signature verification failed`, `release document too large: {path} is {bytes} bytes (limit {limit} MiB)` (manifest and signature are bounded before they are read), `release manifest is missing {field}`, `release manifest field {field} has invalid value {value}`, `unknown release channel {raw}; expected stable or beta`, `unknown artifact kind {raw}; expected core, dashboard, or image`, `artifact target {target} is outside the release set for kind {kind}`, `duplicate release manifest row {name}`, `invalid artifact name {raw}`, `invalid sha256 in artifact {name}; expected 64 lowercase hex characters`, `release manifest lists no artifacts`. Every row is validated after the signature verifies; `--artifact` hashes through the installer's bounded path (128 MiB).
 - `view unavailable for {session}: {reason}.` — wayvnc unusable, the view-port range exhausted, or the front bind refused.
 - `no session specified; create one first (tool: create_session).` — MCP-side form of the missing-ID error.
 

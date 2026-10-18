@@ -1,0 +1,26 @@
+===== pre-fix (merged ae7c6ac)
+-- signed fixture (trust-list path, no artifact):
+manifest 0.1.0 (protocol 0.1.0)
+signed by 504C963C3ABCA66B
+-- 129 MiB artifact:
+rc=1 max_rss_kib=273076
+artifact "daiorama-0.1.0-x86_64-unknown-linux-gnu" sha256 9efc5dc2d6584895ba90dc7a5ab20477e9de4a6cd0195c13c502784cb41d5066 does not match the manifest row 0000000000000000000000000000000000000000000000000000000000000000 (bad_request)
+hint: check the request against 'daiorama <command> --help'
+-- 2 MiB manifest named as a manifest:
+rc=1 max_rss_kib=11192
+release signature verification failed (bad_request)
+hint: check the request against 'daiorama <command> --help'
+
+===== post-fix (p5/release-hardening-esther)
+-- signed fixture (trust-list path, no artifact):
+manifest 0.1.0 (protocol 0.1.0)
+signed by 504C963C3ABCA66B
+-- 129 MiB artifact:
+rc=1 max_rss_kib=11032
+artifact too large: 135266304 bytes (limit 128 MiB) (bad_request)
+hint: check the request against 'daiorama <command> --help'
+-- 2 MiB manifest named as a manifest:
+rc=1 max_rss_kib=11028
+release document too large: big.json is 2097152 bytes (limit 1 MiB) (bad_request)
+hint: check the request against 'daiorama <command> --help'
+

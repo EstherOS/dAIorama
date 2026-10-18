@@ -322,6 +322,69 @@ pub const DASHBOARD_INSTALL_NEEDS_SHA: &str =
 /// 04: `--sha256` with no artifact (a revert takes no digest).
 pub const DASHBOARD_SHA_WITHOUT_ARTIFACT: &str = "--sha256 applies only with --artifact";
 
+// ---------------------------------------------------------------------------
+// 04 — release manifest (09, C2)
+// ---------------------------------------------------------------------------
+
+/// 04: the trust list ships empty; verification refuses rather than trusting any signer.
+pub const RELEASE_NO_TRUSTED_KEY: &str = "no trusted release key provisioned";
+
+/// 04: the bytes were signed by a key this build does not carry (the id comes from the signature).
+pub fn release_untrusted_key(id: &str) -> String {
+    format!("release signed by an untrusted key {id}")
+}
+
+/// 04: the bytes are not the ones a trusted key signed. One answer, no diagnostic surface.
+pub const RELEASE_SIGNATURE_INVALID: &str = "release signature verification failed";
+
+/// 04: a manifest or signature larger than any document could be — refused before it is read.
+pub fn release_document_too_large(path: &str, bytes: u64, limit_mib: u64) -> String {
+    format!("release document too large: {path} is {bytes} bytes (limit {limit_mib} MiB)")
+}
+
+/// 04: a pinned manifest field absent or of the wrong type.
+pub fn release_missing_field(name: &str) -> String {
+    format!("release manifest is missing {name:?}")
+}
+
+/// 04: a pinned manifest field present with a value outside its shape or closed set.
+pub fn release_invalid_field(name: &str, value: &str) -> String {
+    format!("release manifest field {name:?} has invalid value {value:?}")
+}
+
+/// 04: `channel` is a closed set (09): stable or beta.
+pub fn release_unknown_channel(raw: &str) -> String {
+    format!("unknown release channel {raw:?}; expected stable or beta")
+}
+
+/// 04: artifact kinds are a closed set (09): core, dashboard or image.
+pub fn release_unknown_kind(raw: &str) -> String {
+    format!("unknown artifact kind {raw:?}; expected core, dashboard, or image")
+}
+
+/// 04: a row names a target the release lane does not build for (09 pins the set).
+pub fn release_unknown_target(kind: &str, target: &str) -> String {
+    format!("artifact target {target:?} is outside the release set for kind {kind:?}")
+}
+
+/// 04: two rows an installer could both match — the release lane's bug, refused rather than picked.
+pub fn release_duplicate_row(name: &str) -> String {
+    format!("duplicate release manifest row {name:?}")
+}
+
+/// 04: a row name that is a path, empty, or otherwise not a bare published file name.
+pub fn release_invalid_name(raw: &str) -> String {
+    format!("invalid artifact name {raw:?}")
+}
+
+/// 04: a digest that is not 64 lowercase hex characters.
+pub fn release_invalid_sha(name: &str) -> String {
+    format!("invalid sha256 in artifact {name:?}; expected 64 lowercase hex characters")
+}
+
+/// 04: a manifest with no artifact rows is not a release (client-only still ships a binary).
+pub const RELEASE_NO_ARTIFACTS: &str = "release manifest lists no artifacts";
+
 /// 04: view start refused — wayvnc unusable, port range exhausted, or front bind refused (05).
 pub fn view_unavailable(session: &str, reason: &str) -> String {
     format!("view unavailable for {session}: {reason}.")
