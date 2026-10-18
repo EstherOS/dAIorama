@@ -27,9 +27,9 @@ _One screen, kept current._
   is closed: `daiorama-browser` adds `--no-sandbox` only at `geteuid()` zero, with the container
   user namespace as the boundary (09).
 - **Repo target:** fork `EstherOS/dAIorama`; upstream PRs post-sign-off.
-- **Last green** (`e07e784`): 447 tests, 0 failed — 287 (+6 ignored) unit · 5 browser ·
+- **Last green** (`930470c`): 448 tests, 0 failed — 287 (+6 ignored) unit · 5 browser ·
   7 config_scope · 8 daemon · 9 dashboard · 3 doctor · 27 fixtures · 19 install_script · 7 mcp ·
-  22 mcp_listen · 6 network · 25 packaging · 6 release_manifest · 3 release_script; module
+  22 mcp_listen · 6 network · 26 packaging · 6 release_manifest · 3 release_script; module
   6 · 2 · 5; fmt/clippy clean.
 - **Next:** reference-box evidence (image builds; pixel oracle; the four browser legs), then the
   operator keypair and the CI/release lanes. Nothing on the software or documentation list is open.
