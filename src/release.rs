@@ -28,6 +28,10 @@ pub const TRUSTED_KEYS: &str = include_str!("../packaging/release/trusted-keys")
 /// Manifest and signature documents are small; anything larger is refused before it is read.
 pub const MAX_DOCUMENT_BYTES: u64 = 1024 * 1024;
 
+/// The manifest format this build writes and verifies. One constant: the generator and the
+/// verifier must never disagree about the number they publish, and the release notes quote it.
+pub const MANIFEST_FORMAT: u64 = 1;
+
 /// The closed sets 09 pins. A new kind or channel is a manifest-format change, not a guess.
 pub const KINDS: [&str; 3] = ["core", "dashboard", "image"];
 pub const CHANNELS: [&str; 2] = ["stable", "beta"];
@@ -223,7 +227,7 @@ pub fn verify(
 /// release lane's; this proves the release lane did not ship a row nobody can install.
 fn validate(manifest: &Value) -> Result<(), ErrorEnvelope> {
     let format = manifest.get("format").and_then(Value::as_u64);
-    if format != Some(1) {
+    if format != Some(MANIFEST_FORMAT) {
         return Err(ErrorEnvelope::bad_request(format!(
             "unsupported release manifest format {}",
             format
@@ -682,7 +686,7 @@ pub fn manifest(
 
     let mut out = String::new();
     out.push_str("{\n");
-    out.push_str("  \"format\": 1,\n");
+    out.push_str(&format!("  \"format\": {MANIFEST_FORMAT},\n"));
     out.push_str(&format!("  \"version\": {},\n", quoted(version)?));
     out.push_str(&format!("  \"protocol\": {},\n", quoted(protocol)?));
     out.push_str(&format!("  \"channel\": {},\n", quoted(channel)?));
