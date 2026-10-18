@@ -341,12 +341,17 @@ fn resolve_install(package: Package, os: &OsFacts) -> String {
             Some("sid" | "forky") => "sudo apt install hyprland".to_string(),
             _ => strings::HYPRLAND_NOT_PACKAGED.to_string(),
         },
-        ("debian", Package::Wayvnc) => "sudo apt install wayvnc".to_string(),
+        ("debian", Package::Wayvnc) => match os.codename.as_deref() {
+            Some("sid" | "forky" | "trixie") => "sudo apt install wayvnc".to_string(),
+            _ => strings::WAYVNC_NOT_PACKAGED.to_string(),
+        },
         // Ubuntu's archive is not one version: resolute carries 0.9.1, noble 0.7.2 (far older
         // than the tested 0.10), and 22.04 and older carry no usable package at all.
         ("ubuntu", Package::Wayvnc) => match os.codename.as_deref() {
             Some("resolute") => "sudo apt install wayvnc".to_string(),
-            Some("noble") => "sudo apt install wayvnc (0.7.2 on noble — older than the tested view server; the image is the supportable route)".to_string(),
+            // The command must stay executable: the version divergence is documented in the
+            // table's version cell and note, never appended to the command line.
+            Some("noble") => "sudo apt install wayvnc".to_string(),
             _ => strings::WAYVNC_NOT_PACKAGED.to_string(),
         },
         (_, Package::Wayvnc) => strings::WAYVNC_NOT_PACKAGED.to_string(),
@@ -667,6 +672,13 @@ mod tests {
             resolve_install(Package::Wayvnc, &debian_stable),
             "sudo apt install wayvnc"
         );
+        // A Debian release the table does not cover gets the no-package string, not an apt
+        // command whose archive carries 0.5.0.
+        let debian_bookworm = os_facts("debian", Some("bookworm"));
+        assert_eq!(
+            resolve_install(Package::Wayvnc, &debian_bookworm),
+            strings::WAYVNC_NOT_PACKAGED
+        );
         assert_eq!(
             resolve_install(Package::Wayvnc, &ubuntu),
             "sudo apt install wayvnc"
@@ -675,7 +687,7 @@ mod tests {
         // is printed with it rather than hidden.
         assert_eq!(
             resolve_install(Package::Wayvnc, &ubuntu_noble),
-            "sudo apt install wayvnc (0.7.2 on noble — older than the tested view server; the image is the supportable route)"
+            "sudo apt install wayvnc"
         );
         // jammy and older have no usable package; the wayvnc fallback is the image, not a COPR.
         assert_eq!(
@@ -700,6 +712,8 @@ mod tests {
             os_facts("fedora", None),
             os_facts("debian", Some("sid")),
             os_facts("debian", Some("trixie")),
+            os_facts("debian", Some("bookworm")),
+            os_facts("ubuntu", Some("noble")),
             os_facts("ubuntu", Some("resolute")),
             os_facts("alpine", None),
         ];
