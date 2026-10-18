@@ -108,8 +108,62 @@ pub enum Command {
     Doctor,
     /// Dashboard module operations.
     Dashboard(DashboardArgs),
+    /// Signed release manifest operations.
+    Release(ReleaseArgs),
     /// Core version, protocol version and min_supported.
     Version,
+}
+
+#[derive(Debug, Args)]
+pub struct ReleaseArgs {
+    #[command(subcommand)]
+    pub action: ReleaseAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ReleaseAction {
+    /// Render a release manifest (one artifact object per line). Signing is operator-side.
+    Manifest {
+        /// Release version, e.g. 0.1.0.
+        #[arg(long)]
+        version: String,
+        /// Protocol version the release implements.
+        #[arg(long)]
+        protocol: String,
+        /// Channel: stable or beta.
+        #[arg(long, default_value = "stable")]
+        channel: String,
+        /// RFC 3339 release timestamp (supplied, never invented).
+        #[arg(long)]
+        released_at: String,
+        /// Artifact as `kind:target:path`; the file's basename becomes the manifest name.
+        #[arg(long = "artifact")]
+        artifacts: Vec<String>,
+        /// Extra asset as `name:path` (noVNC tarball, signatures).
+        #[arg(long = "asset")]
+        assets: Vec<String>,
+        /// Record that the release is client-only (no manager artifacts).
+        #[arg(long)]
+        client_only: bool,
+        /// Write the manifest here.
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Verify a signed release manifest and, optionally, one artifact against its row.
+    Verify {
+        /// Manifest file (JSON; signed bytes).
+        #[arg(long)]
+        manifest: PathBuf,
+        /// Detached minisign signature over the manifest bytes.
+        #[arg(long)]
+        signature: PathBuf,
+        /// Also hash this file and require a matching name + sha256 row.
+        #[arg(long)]
+        artifact: Option<PathBuf>,
+        /// Print the result as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -656,6 +710,7 @@ impl App {
                 }
             },
             Command::Dashboard(args) => self.cmd_dashboard(args.action),
+            Command::Release(args) => self.cmd_release(args.action),
         }
     }
 
@@ -1326,6 +1381,110 @@ impl App {
     }
 
     // -- token ------------------------------------------------------------
+
+    /// 09 C2: verify a signed release manifest with the embedded trust anchors. Reads local
+    /// files only (no network, no writes); with `--artifact` the digest has to match the row.
+    fn cmd_release(&self, action: ReleaseAction) -> Result<Answer, ErrorEnvelope> {
+        match action {
+            ReleaseAction::Manifest {
+                version,
+                protocol,
+                channel,
+                released_at,
+                artifacts,
+                assets,
+                client_only,
+                out,
+            } => {
+                let mut inputs = Vec::new();
+                for spec in artifacts {
+                    let mut parts = spec.splitn(3, ':');
+                    let (Some(kind), Some(target), Some(path)) =
+                        (parts.next(), parts.next(), parts.next())
+                    else {
+                        return Err(ErrorEnvelope::bad_request(format!(
+                            "artifact {spec:?} is not kind:target:path"
+                        )));
+                    };
+                    inputs.push(crate::release::ArtifactInput {
+                        kind: kind.to_string(),
+                        target: target.to_string(),
+                        path: PathBuf::from(path),
+                    });
+                }
+                let mut asset_inputs = Vec::new();
+                for spec in assets {
+                    let mut parts = spec.splitn(2, ':');
+                    let (Some(name), Some(path)) = (parts.next(), parts.next()) else {
+                        return Err(ErrorEnvelope::bad_request(format!(
+                            "asset {spec:?} is not name:path"
+                        )));
+                    };
+                    asset_inputs.push(crate::release::AssetInput {
+                        name: name.to_string(),
+                        path: PathBuf::from(path),
+                    });
+                }
+                let rendered = crate::release::manifest(
+                    &version,
+                    &protocol,
+                    &channel,
+                    &released_at,
+                    &inputs,
+                    &asset_inputs,
+                    client_only,
+                )?;
+                std::fs::write(&out, rendered).map_err(|error| {
+                    ErrorEnvelope::bad_request(format!("cannot write {}: {error}", out.display()))
+                })?;
+                Ok(Answer::from_lines(vec![format!(
+                    "manifest written: {}",
+                    out.display()
+                )]))
+            }
+            ReleaseAction::Verify {
+                manifest,
+                signature,
+                artifact,
+                json,
+            } => {
+                let verified = crate::release::verify(
+                    &manifest,
+                    &signature,
+                    artifact.as_deref(),
+                    crate::release::TRUSTED_KEYS,
+                )?;
+                if json {
+                    let mut payload = Map::new();
+                    payload.insert("version".into(), Value::String(verified.version));
+                    payload.insert("protocol".into(), Value::String(verified.protocol));
+                    payload.insert("key_id".into(), Value::String(verified.key_id));
+                    if let Some(row) = verified.artifact {
+                        payload.insert("artifact".into(), json!(row.name));
+                        payload.insert("target".into(), json!(row.target));
+                        payload.insert("kind".into(), json!(row.kind));
+                        payload.insert("sha256".into(), json!(row.sha256));
+                        payload.insert("size".into(), json!(row.size));
+                    }
+                    return Ok(Answer::new(Value::Object(payload), Vec::new()));
+                }
+                let mut lines = vec![
+                    format!(
+                        "manifest {} (protocol {})",
+                        verified.version, verified.protocol
+                    ),
+                    format!("signed by {}", verified.key_id),
+                ];
+                if let Some(row) = verified.artifact {
+                    lines.push(format!(
+                        "artifact {} {} sha256 {}",
+                        row.kind, row.name, row.sha256
+                    ));
+                }
+                Ok(Answer::from_lines(lines))
+            }
+        }
+    }
 
     /// 04/09: the dashboard is a separate module artifact; the core CLI only locates and
     /// execs it (never a compile-time feature, never dashboard-aware code). A missing module
