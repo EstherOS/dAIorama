@@ -1,0 +1,64 @@
+Setting up libsodium23:amd64 (1.0.18-1+deb13u1) ...
+Setting up minisign (0.12-1) ...
+Processing triggers for libc-bin (2.41-12+deb13u4) ...
+== version
+minisign 0.12
+== keygen (no passphrase)
+The secret key was saved as /tmp/rel.sec - Keep it secret!
+The public key was saved as /tmp/rel.pub - That one can be public.
+
+Files signed using this key pair can be verified with the following command:
+
+minisign -Vm <file> -P RWRRZJiNf83cO5oqjoWZ201NFgX9E8o8mBE9vE5gQKUriMW9GpCn8/J9
+
+The secret key was saved as /tmp/other.sec - Keep it secret!
+The public key was saved as /tmp/other.pub - That one can be public.
+
+Files signed using this key pair can be verified with the following command:
+
+minisign -Vm <file> -P RWRljWLMdve5n9FU4FW9rkVEkUO/wF8/+txpfWOENsb8LFbqfJMgWvsh
+
+keygen_rc=0
+== public key file (the bytes that would be embedded)
+untrusted comment: minisign public key 3BDCCD7F8D986451
+RWRRZJiNf83cO5oqjoWZ201NFgX9E8o8mBE9vE5gQKUriMW9GpCn8/J9
+== public key on one line (base64 only)
+RWRRZJiNf83cO5oqjoWZ201NFgX9E8o8mBE9vE5gQKUriMW9GpCn8/J9
+== sample manifest
+c16a1add279b3880d9f3b65bde5d5eee286c1c29d0af85ef6c48aaf00b75e660  /tmp/manifest.json
+== sign
+sign_rc=0
+== the signature file
+untrusted comment: signature from minisign secret key
+RURRZJiNf83cOwhzsoE3Itq5cunvQ8BjKTdjIFgM76nHxMSPmWUum6pRwg1+mdAbnBBahWuzB/PeoA/uFyH8Edaz3Y3Xe/nVOwE=
+trusted comment: dAIorama release 0.2.0
+Ex/zHWRAdOn0HyfeecfIHza6ez+0vqLy3WToxdNoPawsljFFSrkXp2nLfLgICE1LP+MZ4auWt+umJS9n687+DA==
+== verify with the right key, base64 -P form
+Signature and comment signature verified
+Trusted comment: dAIorama release 0.2.0
+verify_p_rc=0
+== verify with the public-key file
+Signature and comment signature verified
+Trusted comment: dAIorama release 0.2.0
+verify_file_rc=0
+== verify a tampered manifest (one digest changed)
+Signature verification failed
+verify_tampered_rc=1
+== verify with the wrong key
+Signature key id in /tmp/manifest.json.minisig is 3BDCCD7F8D986451
+but the key id in the public key is 9FB9F776CC628D65
+verify_wrongkey_rc=1
+== verify with no signature file
+/tmp/none.minisig: No such file or directory
+verify_missing_rc=2
+== verify with a corrupted signature line
+Unsupported signature algorithm
+verify_badsig_rc=2
+== what a signature over the manifest does NOT cover (mtime/name)
+Signature and comment signature verified
+Trusted comment: dAIorama release 0.2.0
+verify_renamed_rc=0
+== trusted comment is inside the signature
+Comment signature verification failed
+verify_comment_rc=1
+ALLDONE
