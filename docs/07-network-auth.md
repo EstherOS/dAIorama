@@ -197,8 +197,8 @@ max_queued = 64 }`. Default `pace` delays excess calls to the bucket rate in arr
 never to a parked army. The counter lives in the manager, keyed by session; the map is bounded
 (4,096 buckets; a closed session's bucket is dropped at close, the least-recently-used quarter
 is evicted on overflow — a forgotten bucket starts full, exactly like a session never seen), and
-an id that could not name a session is never keyed at all, so a caller choosing its own ids
-cannot grow the manager's memory. Pacing is also the
+an id that cannot name a session — invalid, or valid but naming no live-or-recorded session —
+earns no bucket, so a caller choosing its own ids cannot grow the manager's memory. Pacing is also the
 natural place for future input-cadence shaping. Capture is exempt from the bucket but serialized
 (one at a time per session).
 

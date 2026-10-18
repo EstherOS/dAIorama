@@ -495,13 +495,19 @@ impl RuntimeService {
     pub fn sweep_retention(&self) -> crate::runtime::retention::SweepReport {
         let retention = self.config.read().expect("config lock").history.retention;
         let live = |id: &str| self.registry().get(id).is_some();
-        crate::runtime::retention::sweep(
+        let report = crate::runtime::retention::sweep(
             &self.paths.history_dir(),
             &self.paths.media_dir(),
             &live,
             retention.secs,
             crate::runtime::retention::now_secs(),
-        )
+        );
+        // The directory is gone, so its cached segment handle is stale: drop it in the same
+        // pass that removed the tree.
+        for id in &report.removed {
+            self.history.forget(id);
+        }
+        report
     }
 
     /// The startup pass. A manager start owns no sessions, so a history directory without a
@@ -1179,6 +1185,13 @@ impl RuntimeService {
                 || record.scope == scope,
         )
     }
+
+    /// Whether an id names a session this manager knows: live in the registry, or known from
+    /// its durable history (a closed session). Anything else is a string the caller invented.
+    fn session_known(&self, session_id: &str) -> bool {
+        self.registry().get(session_id).is_some()
+            || self.history.recorded_scope(session_id).is_some()
+    }
 }
 
 impl Handler for RuntimeService {
@@ -1263,22 +1276,29 @@ impl Handler for RuntimeService {
                 .and_then(|value| value.get("session_id"))
                 .and_then(Value::as_str)
         {
-            let rate = self
-                .scope_definition(scope)
-                .map(|definition| definition.limits.rate)
-                .unwrap_or_default();
-            if let Err(envelope) = self.rate.acquire(scope, session_id, &rate) {
-                return Response::Error(envelope);
+            // An id that names no session earns neither a pacing bucket nor a history record.
+            // The caller chooses this string, so keying or recording it would let one client
+            // grow the manager's memory (and a directory tree) with ids it invents; the handler
+            // refuses the call a few lines later. A closed session still counts: its history is
+            // the record of a real session, and `close` itself lands here.
+            if self.session_known(session_id) {
+                let rate = self
+                    .scope_definition(scope)
+                    .map(|definition| definition.limits.rate)
+                    .unwrap_or_default();
+                if let Err(envelope) = self.rate.acquire(scope, session_id, &rate) {
+                    return Response::Error(envelope);
+                }
+                // B8: the call is recorded, its arguments are not (06).
+                self.record(
+                    "tool.call",
+                    session_id,
+                    scope,
+                    origin,
+                    None,
+                    Some(json!({ "tool": method })),
+                );
             }
-            // B8: the call is recorded, its arguments are not (06).
-            self.record(
-                "tool.call",
-                session_id,
-                scope,
-                origin,
-                None,
-                Some(json!({ "tool": method })),
-            );
         }
         let outcome: Result<Value, ErrorEnvelope> = match method {
             // Instance reads and the two management verbs take no parameters: a stray key is a
@@ -4310,5 +4330,25 @@ mod tests {
         std::os::unix::fs::symlink(tmp.path().join("outside"), parent.join("active")).unwrap();
         let value = result(&service, methods::STATUS, None).unwrap();
         assert!(value["versions"]["dashboard_module"].is_null(), "{value}");
+    }
+
+    /// A control call naming an id that never was a session leaves no pacing bucket and no
+    /// history directory: the caller chose the string, so it must not become manager state.
+    #[test]
+    fn a_control_call_for_an_invented_id_leaves_no_history_behind() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spawner = Arc::new(TestSpawner::default());
+        let service = make_service(tmp.path(), spawner);
+        let error = result_as(
+            "s",
+            Origin::Shell,
+            &service,
+            methods::SESSION_STATUS,
+            Some(json!({ "session_id": "invented-session" })),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, crate::ipc::ErrorCode::SessionNotFound);
+        assert!(service.history.recorded_scope("invented-session").is_none());
+        assert!(!tmp.path().join("history/invented-session").exists());
     }
 }

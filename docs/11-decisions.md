@@ -1143,3 +1143,23 @@ trust — the pre-read's Option C).
 The refusal strings are pinned in 09 with a reader test. The harness stubs `minisign` for the
 ordering, selection and placement cases; `release_script.rs` and the release-manifest probe carry
 the real-key agreement.
+
+## P5-HISTORY-BOUND
+
+The rate limiter's map was not the only caller-keyed map. `dispatch()` records every control
+call (06 B8) and `History::append` keys its segment cache by `session_id` and creates
+`<data>/history/<id>` — so a valid, invented id wrote a directory and a map entry that nothing
+bounded. Bounded at both ends rather than one:
+
+- **No state for unresolved ids.** A control call whose id is neither live nor known from
+  durable history is refused by the handler without a pacing bucket or a history record. It
+  cannot create the directory it would have been recorded in. Closed sessions still record:
+  their history is what makes them known.
+- **Bounded cache.** The per-session segment cache is a cache, not the source of truth; it caps
+  at 4,096 entries and evicts the least-recently-appended quarter. An evicted entry is rebuilt
+  from its own directory on the next append, so eviction costs one `readdir`, never a record.
+- **Forget on sweep.** A retention pass that removes a session tree drops its cached handle in
+  the same pass, so a later append cannot reuse a stale segment number.
+
+*Rejected:* a cap on the map alone (leaves unbounded directories), and refusing all control calls
+for unknown ids (would make "unknown session" indistinguishable from a malformed call).

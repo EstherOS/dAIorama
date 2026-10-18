@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -57,7 +58,16 @@ struct SessionHistory {
     dir: PathBuf,
     segment: u32,
     bytes: u64,
+    /// Last append, the recency key for the cache bound. Rebuilding an evicted entry costs one
+    /// `readdir` of its own directory, never a lost record.
+    last: Instant,
 }
+
+/// How many per-session segment handles the manager caches. The cache exists to avoid walking a
+/// session's directory on every record; it must not grow with every id a caller has ever named.
+/// The map is bounded by live and recently-active sessions, and eviction drops the oldest
+/// quarter (an evicted entry is rebuilt from its directory on the next append).
+const MAX_CACHED_SESSIONS: usize = 4096;
 
 pub struct History {
     root: PathBuf,
@@ -83,6 +93,7 @@ impl History {
             return Err(ErrorEnvelope::bad_request("invalid session id"));
         }
         let mut sessions = self.sessions.lock().expect("history lock");
+        let now = Instant::now();
         let entry = sessions
             .entry(record.session_id.clone())
             .or_insert_with(|| {
@@ -92,6 +103,7 @@ impl History {
                     dir,
                     segment,
                     bytes,
+                    last: Instant::now(),
                 }
             });
         std::fs::create_dir_all(&entry.dir).map_err(|err| {
@@ -122,10 +134,27 @@ impl History {
         file.flush()
             .map_err(|err| ErrorEnvelope::internal(format!("history {}: {err}", path.display())))?;
         entry.bytes += line.len() as u64;
+        entry.last = now;
         if rotated {
             rotate(&entry.dir);
         }
+        if sessions.len() > MAX_CACHED_SESSIONS {
+            evict_locked(&mut sessions);
+        }
         Ok(())
+    }
+
+    /// Drops a session's cached segment state after its directory is gone. The next append for
+    /// that id (if one ever arrives) rebuilds from an empty directory.
+    pub fn forget(&self, session_id: &str) {
+        if let Ok(mut sessions) = self.sessions.lock() {
+            sessions.remove(session_id);
+        }
+    }
+
+    #[cfg(test)]
+    fn tracked(&self) -> usize {
+        self.sessions.lock().expect("history lock").len()
     }
 
     /// A durable session-end marker for the retention sweep: `<session>/.ended`, RFC 3339 plus
@@ -364,6 +393,26 @@ fn base64_decode(text: &str) -> Option<Vec<u8>> {
 // `mode(0o600)` / `from_mode(0o700)` for the history files and dirs.
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
+/// Evicts the least-recently-appended quarter of the cache. Append is serialized by the map
+/// mutex, so recency is exact and no entry is in flight.
+fn evict_locked(sessions: &mut HashMap<String, SessionHistory>) {
+    let target = MAX_CACHED_SESSIONS * 3 / 4;
+    if sessions.len() <= target {
+        return;
+    }
+    let mut order: Vec<(Instant, String)> = sessions
+        .iter()
+        .map(|(key, entry)| (entry.last, key.clone()))
+        .collect();
+    order.sort_by_key(|(last, _)| *last);
+    for (_, key) in order {
+        if sessions.len() <= target {
+            break;
+        }
+        sessions.remove(&key);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -538,5 +587,54 @@ mod tests {
             .unwrap();
         let reopened = History::new(&paths(dir.path()));
         assert_eq!(reopened.recorded_scope("s-1").as_deref(), Some("operator"));
+    }
+
+    #[test]
+    fn the_session_cache_is_bounded_and_rebuilds_after_eviction() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = crate::config::Paths::for_env(
+            Some(tmp.path()),
+            Some(tmp.path()),
+            Some(tmp.path()),
+            "default",
+        );
+        let history = History::new(&paths);
+        for index in 0..(MAX_CACHED_SESSIONS * 2) {
+            history
+                .append(&record(
+                    &format!("sess-{index}"),
+                    "tool.call",
+                    "2026-10-18T00:00:00Z",
+                ))
+                .expect("append");
+        }
+        let tracked = history.tracked();
+        assert!(tracked <= MAX_CACHED_SESSIONS, "tracked {tracked}");
+        assert!(
+            tracked >= MAX_CACHED_SESSIONS / 2,
+            "eviction trims a quarter: {tracked}"
+        );
+        // An evicted id is rebuilt from its directory: the record is never lost.
+        history
+            .append(&record("sess-0", "tool.call", "2026-10-18T00:00:01Z"))
+            .expect("append after eviction");
+    }
+
+    #[test]
+    fn forget_drops_the_cached_handle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = crate::config::Paths::for_env(
+            Some(tmp.path()),
+            Some(tmp.path()),
+            Some(tmp.path()),
+            "default",
+        );
+        let history = History::new(&paths);
+        history
+            .append(&record("sess", "tool.call", "2026-10-18T00:00:00Z"))
+            .unwrap();
+        assert_eq!(history.tracked(), 1);
+        history.forget("sess");
+        assert_eq!(history.tracked(), 0);
     }
 }
