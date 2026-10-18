@@ -46,7 +46,12 @@ agent's own container), and this is its named delivery (C2).
   One artifact/asset object per line with no whitespace inside an object and a
   fixed key order, so an installer reads a row without `jq`:
   `grep -F '"name":"daiorama-<version>-<target>"'` then
-  `sed -n 's/.*"sha256":"\([0-9a-f]\{64\}\)".*/\1/p'`. The verifier validates
+  `sed -n 's/.*"sha256":"\([0-9a-f]\{64\}\)".*/\1/p'`. An image row is not a file
+  row: `name` is the slug `daiorama-<version>-image-linux-amd64` (no `/`), `target`
+  is the platform, `sha256` is the registry's immutable manifest digest (never a
+  tag, never a hash of the image tar) and `size` is `0` because a digest carries no
+  byte count; `release manifest --image <platform>:<digest>` writes it without
+  reading a file. The verifier validates
   every row after the signature verifies (unknown target/kind/channel, a bad
   digest shape, a bad `released_at`, a duplicate row and a missing pinned field
   are refusals), bounds the manifest and signature at 1 MiB before reading them,

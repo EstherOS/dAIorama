@@ -331,7 +331,18 @@ fn validate(manifest: &Value) -> Result<(), ErrorEnvelope> {
                 &name,
             )));
         }
-        if row
+        if kind == "image" {
+            if name != image_name(&version, &target) {
+                return Err(ErrorEnvelope::bad_request(strings::release_invalid_name(
+                    &name,
+                )));
+            }
+            if row.get("size").and_then(Value::as_u64) != Some(0) {
+                return Err(ErrorEnvelope::bad_request(strings::release_invalid_field(
+                    "size", &name,
+                )));
+            }
+        } else if row
             .get("size")
             .and_then(Value::as_u64)
             .is_none_or(|size| size == 0)
@@ -391,6 +402,11 @@ fn known_target(kind: &str, target: &str) -> bool {
     } else {
         crate::install::TARGET_TRIPLES.contains(&target)
     }
+}
+
+/// The pinned image name: a slug, never a registry tag (`/` is not allowed in a row name).
+pub fn image_name(version: &str, platform: &str) -> String {
+    format!("daiorama-{version}-image-{}", platform.replace('/', "-"))
 }
 
 /// `MAJOR.MINOR.PATCH`, each a decimal run. Release and protocol versions are plain triples.
@@ -504,6 +520,14 @@ pub struct AssetInput {
     pub path: std::path::PathBuf,
 }
 
+/// An image row is not a file row: the release lane knows the registry manifest digest, not a
+/// local tar. The name is the pinned slug, the digest is the registry's immutable digest, and
+/// `size` is 0 because a digest carries no byte count (an installer pulls by digest).
+pub struct ImageInput {
+    pub platform: String,
+    pub digest: String,
+}
+
 fn quoted(value: &str) -> Result<String, ErrorEnvelope> {
     serde_json::to_string(value)
         .map_err(|error| ErrorEnvelope::bad_request(format!("cannot encode JSON string: {error}")))
@@ -521,12 +545,14 @@ fn hashed(path: &Path) -> Result<(String, u64), ErrorEnvelope> {
 /// Render a manifest with one artifact/asset object per line and no whitespace inside an object:
 /// a POSIX installer reads a row with `grep -F '"name":"…"'` + `sed` and needs no `jq`.
 /// Signing is operator-side and by hand; this never touches a key.
+#[allow(clippy::too_many_arguments)] // the parameters are the manifest's own fields, in order
 pub fn manifest(
     version: &str,
     protocol: &str,
     channel: &str,
     released_at: &str,
     artifacts: &[ArtifactInput],
+    images: &[ImageInput],
     assets: &[AssetInput],
     client_only: bool,
 ) -> Result<String, ErrorEnvelope> {
@@ -556,11 +582,12 @@ pub fn manifest(
             released_at,
         )));
     }
-    if artifacts.is_empty() {
+    if artifacts.is_empty() && images.is_empty() {
         return Err(ErrorEnvelope::bad_request(strings::RELEASE_NO_ARTIFACTS));
     }
     let mut names = BTreeSet::new();
-    let mut rows = Vec::new();
+    let mut slots = BTreeSet::new();
+    let mut rows: Vec<(String, String, String, String, u64)> = Vec::new();
     for artifact in artifacts {
         let name = artifact
             .path
@@ -582,14 +609,61 @@ pub fn manifest(
                 &artifact.kind,
             )));
         }
+        if artifact.kind == "image" {
+            return Err(ErrorEnvelope::bad_request(
+                "image rows are digest rows; pass them with --image <platform>:<digest>",
+            ));
+        }
         if !known_target(&artifact.kind, &artifact.target) {
             return Err(ErrorEnvelope::bad_request(strings::release_unknown_target(
                 &artifact.kind,
                 &artifact.target,
             )));
         }
+        if !slots.insert((artifact.kind.clone(), artifact.target.clone())) {
+            return Err(ErrorEnvelope::bad_request(strings::release_duplicate_row(
+                name,
+            )));
+        }
         let (sha256, size) = hashed(&artifact.path)?;
-        rows.push((name.to_string(), artifact, sha256, size));
+        rows.push((
+            name.to_string(),
+            artifact.target.clone(),
+            artifact.kind.clone(),
+            sha256,
+            size,
+        ));
+    }
+    for image in images {
+        let name = image_name(version, &image.platform);
+        if !IMAGE_TARGETS.contains(&image.platform.as_str()) {
+            return Err(ErrorEnvelope::bad_request(strings::release_unknown_target(
+                "image",
+                &image.platform,
+            )));
+        }
+        if !valid_sha256(&image.digest) {
+            return Err(ErrorEnvelope::bad_request(strings::release_invalid_sha(
+                &name,
+            )));
+        }
+        if !names.insert(name.clone()) {
+            return Err(ErrorEnvelope::bad_request(strings::release_duplicate_row(
+                &name,
+            )));
+        }
+        if !slots.insert(("image".to_string(), image.platform.clone())) {
+            return Err(ErrorEnvelope::bad_request(strings::release_duplicate_row(
+                &name,
+            )));
+        }
+        rows.push((
+            name,
+            image.platform.clone(),
+            "image".to_string(),
+            image.digest.clone(),
+            0,
+        ));
     }
     let mut asset_rows = Vec::new();
     for asset in assets {
@@ -614,12 +688,12 @@ pub fn manifest(
     out.push_str(&format!("  \"channel\": {},\n", quoted(channel)?));
     out.push_str(&format!("  \"released_at\": {},\n", quoted(released_at)?));
     out.push_str("  \"artifacts\": [\n");
-    for (index, (name, artifact, sha256, size)) in rows.iter().enumerate() {
+    for (index, (name, target, kind, sha256, size)) in rows.iter().enumerate() {
         out.push_str(&format!(
             "    {{\"name\":{},\"target\":{},\"kind\":{},\"sha256\":{},\"size\":{}}}{}\n",
             quoted(name)?,
-            quoted(&artifact.target)?,
-            quoted(&artifact.kind)?,
+            quoted(target)?,
+            quoted(kind)?,
             quoted(sha256)?,
             size,
             if index + 1 == rows.len() { "" } else { "," }
@@ -881,6 +955,7 @@ mod tests {
                 target: "x86_64-unknown-linux-gnu".into(),
                 path: core,
             }],
+            &[],
             &[AssetInput {
                 name: "novnc-1.7.0.tar.gz".into(),
                 path: asset,
@@ -956,6 +1031,7 @@ mod tests {
                     path: core.clone(),
                 }],
                 &[],
+                &[],
                 false,
             )
             .unwrap_err();
@@ -968,10 +1044,66 @@ mod tests {
             "2026-10-18T00:00:00Z",
             &[],
             &[],
+            &[],
             false,
         )
         .unwrap_err();
         assert_eq!(error.message, strings::RELEASE_NO_ARTIFACTS);
+    }
+
+    #[test]
+    fn image_rows_are_digest_rows_not_file_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = dir.path().join("daiorama-0.1.0-x86_64-unknown-linux-gnu");
+        std::fs::write(&core, b"core").unwrap();
+        let digest = "ab".repeat(32);
+        let text = manifest(
+            "0.1.0",
+            "0.1.0",
+            "stable",
+            "2026-10-18T00:00:00Z",
+            &[ArtifactInput {
+                kind: "core".into(),
+                target: "x86_64-unknown-linux-gnu".into(),
+                path: core.clone(),
+            }],
+            &[ImageInput {
+                platform: "linux/amd64".into(),
+                digest: digest.clone(),
+            }],
+            &[],
+            false,
+        )
+        .unwrap();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        let rows = parsed["artifacts"].as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1]["name"], "daiorama-0.1.0-image-linux-amd64");
+        assert_eq!(rows[1]["target"], "linux/amd64");
+        assert_eq!(rows[1]["kind"], "image");
+        assert_eq!(rows[1]["sha256"], digest);
+        assert_eq!(rows[1]["size"], 0);
+        validate(&parsed).expect("an image row is valid at size 0");
+
+        let error = manifest(
+            "0.1.0",
+            "0.1.0",
+            "stable",
+            "2026-10-18T00:00:00Z",
+            &[ArtifactInput {
+                kind: "core".into(),
+                target: "x86_64-unknown-linux-gnu".into(),
+                path: core,
+            }],
+            &[ImageInput {
+                platform: "linux/amd64".into(),
+                digest: "latest".into(),
+            }],
+            &[],
+            false,
+        )
+        .unwrap_err();
+        assert!(error.message.contains("invalid sha256"), "{error:?}");
     }
 
     #[test]
@@ -996,6 +1128,7 @@ mod tests {
                     path: core,
                 },
             ],
+            &[],
             &[],
             false,
         )

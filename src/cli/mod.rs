@@ -142,6 +142,9 @@ pub enum ReleaseAction {
         /// Extra asset as `name:path` (noVNC tarball, signatures).
         #[arg(long = "asset")]
         assets: Vec<String>,
+        /// Image row as `platform:digest` (digest is the registry manifest digest, never a tag).
+        #[arg(long = "image")]
+        images: Vec<String>,
         /// Record that the release is client-only (no manager artifacts).
         #[arg(long)]
         client_only: bool,
@@ -1393,6 +1396,7 @@ impl App {
                 released_at,
                 artifacts,
                 assets,
+                images,
                 client_only,
                 out,
             } => {
@@ -1425,12 +1429,26 @@ impl App {
                         path: PathBuf::from(path),
                     });
                 }
+                let mut image_inputs = Vec::new();
+                for spec in images {
+                    let mut parts = spec.splitn(2, ':');
+                    let (Some(platform), Some(digest)) = (parts.next(), parts.next()) else {
+                        return Err(ErrorEnvelope::bad_request(format!(
+                            "image {spec:?} is not platform:digest"
+                        )));
+                    };
+                    image_inputs.push(crate::release::ImageInput {
+                        platform: platform.to_string(),
+                        digest: digest.to_string(),
+                    });
+                }
                 let rendered = crate::release::manifest(
                     &version,
                     &protocol,
                     &channel,
                     &released_at,
                     &inputs,
+                    &image_inputs,
                     &asset_inputs,
                     client_only,
                 )?;
