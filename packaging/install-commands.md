@@ -16,6 +16,10 @@ Where no package exists in range, `doctor` prints exactly:
 
     not packaged for this distribution; see the release notes for a COPR/upstream build
 
+Where no **wayvnc** package exists, `doctor` prints exactly:
+
+    not packaged for this distribution; use the container image
+
 ## Hyprland (the compositor — manager hosts only)
 
 | distribution | release | Hyprland | command |
@@ -38,8 +42,11 @@ Hyprland row.
 |---|---|---|---|
 | Arch Linux | rolling | 0.10.2-1 | `sudo pacman -S wayvnc` |
 | Debian | sid / forky / trixie | 0.9.1-1 | `sudo apt install wayvnc` |
-| Ubuntu | 24.04 LTS and later | 0.9.1-1 | `sudo apt install wayvnc` |
+| Ubuntu | 26.04 LTS (resolute) | 0.9.1-1build1 | `sudo apt install wayvnc` |
+| Ubuntu | 24.04 LTS (noble) | 0.7.2-1build2 (older than the tested view server) | `sudo apt install wayvnc (0.7.2 on noble — older than the tested view server; the image is the supportable route)` |
+| Ubuntu | 22.04 LTS and older | none usable | no-package string; use the image |
 | Fedora | 42 and later | packaged | `sudo dnf install wayvnc` |
+| anything else | — | unknown | no-package string; use the image |
 
 ## Binary channels
 
@@ -56,5 +63,5 @@ the signed manifest), the container image and its compose/Quadlet shapes
 
 - https://archlinux.org/packages/extra/x86_64/hyprland/ · https://archlinux.org/packages/extra/x86_64/wayvnc/
 - https://packages.debian.org/sid/hyprland · https://packages.debian.org/trixie/hyprland · https://packages.debian.org/trixie/wayvnc
-- https://packages.ubuntu.com/search?keywords=hyprland&searchon=names&suite=all · https://packages.ubuntu.com/resolute/wayvnc
+- https://packages.ubuntu.com/search?keywords=hyprland&searchon=names&suite=all · https://packages.ubuntu.com/resolute/wayvnc · https://packages.ubuntu.com/noble/wayvnc
 - https://packages.fedoraproject.org/pkgs/hyprland/hyprland/
