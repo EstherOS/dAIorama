@@ -6,12 +6,15 @@ shipped path instead: a real manager process, real frames, records written by `d
 for control-class calls, and `list_history` read back over the same socket.
 
 Cases:
-  [A] cold manager: an empty read (`records: [], next_cursor: null`).
-  [B] six control calls on one (not yet existing) session write six `tool.call` records;
+  [A] cold manager: an empty read (`records: [], next_cursor: null`), then the fixture that
+      makes this leg's ids known (`known_session`): #118 records only ids that can name a
+      session, and this bench has no compositor to create one, so one seeded
+      `session.created` line per id stands in for a session that closed earlier.
+  [B] six control calls on one known (not live) session write six `tool.call` records;
       the read returns them newest-first, event `tool.call`, detail `{tool}` only (no
-      arguments), scope/origin carried.
-  [C] `limit: 2` pages the six records without gaps or duplicates; the last page has no
-      cursor.
+      arguments), scope/origin carried -- alongside the one seeded session.created line.
+  [C] `limit: 2` pages the seven records (one seed + six calls) without gaps or
+      duplicates; the last page has no cursor.
   [D] a garbage cursor is `bad_request`; a cursor without `session_id` is `bad_request`.
   [E] hostile session ids (`../../etc`, `a/b`, `..`) are `session_not_found` -- never a
       filesystem walk (P4-HISTORY-FU); an unknown but valid id is the same answer.
@@ -31,6 +34,8 @@ import json
 import os
 import socket
 import sys
+
+import known_session
 
 SOCK = sys.argv[1]
 DATA = sys.argv[2]
@@ -160,6 +165,15 @@ try:
     )
 
     # -------------------------------------------------------------------
+    # [A2] the fixture: two closed sessions, so `dispatch()` has a known id
+    # to pace and record (#118). Seeded after the cold read so A1 still
+    # sees an empty history root.
+    # -------------------------------------------------------------------
+    known_session.seed(DATA, "s-hist-1")
+    known_session.seed(DATA, "s-hist-2")
+    ok("[A2] seeded a closed-session record for s-hist-1 and s-hist-2", HIST)
+
+    # -------------------------------------------------------------------
     # [B] six live control calls -> six records, newest first, no arguments
     # -------------------------------------------------------------------
     for tool in TOOLS:
@@ -168,35 +182,41 @@ try:
             fail(f"[B0] control call {tool} reached dispatch", json.dumps(reply))
     b = history(f, session_id="s-hist-1")
     records = records_of(b)
-    check("[B1] six control calls wrote six records", len(records) == 6, f"n={len(records)}")
+    calls = known_session.tool_calls(records)
+    check("[B1] six control calls wrote six tool.call records", len(calls) == 6, f"n={len(calls)}")
     check(
-        "[B2] records are newest-first",
-        tools_of(records) == list(reversed(TOOLS)),
-        f"tools={tools_of(records)}",
+        "[B2] the seeded session.created line is the only other record",
+        len(records) == 7 and len(records) - len(calls) == 1,
+        f"records={len(records)} calls={len(calls)}",
     )
     check(
-        "[B3] every record is a tool.call",
-        all(record.get("event") == "tool.call" for record in records),
-        f"events={sorted({r.get('event') for r in records})}",
+        "[B3] the calls are newest-first",
+        tools_of(calls) == list(reversed(TOOLS)),
+        f"tools={tools_of(calls)}",
     )
     check(
-        "[B4] detail carries the tool name only (no arguments)",
-        all(set((r.get("detail") or {}).keys()) == {"tool"} for r in records),
-        f"details={[r.get('detail') for r in records][:2]}",
+        "[B4] every call record is a tool.call",
+        all(record.get("event") == "tool.call" for record in calls),
+        f"events={sorted({r.get('event') for r in calls})}",
     )
     check(
-        "[B5] scope, origin and session id are carried",
+        "[B5] detail carries the tool name only (no arguments)",
+        all(set((r.get("detail") or {}).keys()) == {"tool"} for r in calls),
+        f"details={[r.get('detail') for r in calls][:2]}",
+    )
+    check(
+        "[B6] scope, origin and session id are carried",
         all(
             r.get("scope") == SCOPE and r.get("origin") and r.get("session_id") == "s-hist-1"
-            for r in records
+            for r in calls
         ),
-        f"scope={records[0].get('scope') if records else None} "
-        f"origin={records[0].get('origin') if records else None}",
+        f"scope={calls[0].get('scope') if calls else None} "
+        f"origin={calls[0].get('origin') if calls else None}",
     )
     check(
-        "[B6] `at` is RFC 3339 UTC",
-        all(isinstance(r.get("at"), str) and r["at"].endswith("Z") for r in records),
-        f"at={records[0].get('at') if records else None}",
+        "[B7] `at` is RFC 3339 UTC",
+        all(isinstance(r.get("at"), str) and r["at"].endswith("Z") for r in calls),
+        f"at={calls[0].get('at') if calls else None}",
     )
 
     # -------------------------------------------------------------------
@@ -213,19 +233,19 @@ try:
             break
     flattened = [record for page_records in pages for record in page_records]
     check(
-        "[C1] limit 2 pages the six records as 2+2+2",
-        [len(p) for p in pages] == [2, 2, 2],
+        "[C1] limit 2 pages the seven records as 2+2+2+1",
+        [len(p) for p in pages] == [2, 2, 2, 1],
         f"sizes={[len(p) for p in pages]}",
     )
     check(
-        "[C2] the pages concatenate to the full newest-first list",
-        tools_of(flattened) == list(reversed(TOOLS)),
-        f"tools={tools_of(flattened)}",
+        "[C2] the pages concatenate to the single-page read, in order",
+        flattened == records,
+        f"paged={len(flattened)} single={len(records)}",
     )
     check(
-        "[C3] no record repeats across pages",
-        len({(r.get("at"), (r.get("detail") or {}).get("tool")) for r in flattened}) == 6,
-        f"unique={len({(r.get('at'), (r.get('detail') or {}).get('tool')) for r in flattened})}",
+        "[C3] the paged tool.calls are the six, newest-first",
+        tools_of(known_session.tool_calls(flattened)) == list(reversed(TOOLS)),
+        f"tools={tools_of(known_session.tool_calls(flattened))}",
     )
     check("[C4] the last page has no cursor", cursor is None, f"cursor={cursor!r}")
 
@@ -269,11 +289,12 @@ try:
         control(f, tool, "s-hist-2")
     f1 = history(f)
     cross = records_of(f1)
+    cross_calls = known_session.tool_calls(cross)
     sessions = sorted({record.get("session_id") for record in cross})
     check(
         "[F1] a cross-session read returns both sessions' records",
-        sessions == ["s-hist-1", "s-hist-2"] and len(cross) == 8,
-        f"sessions={sessions} n={len(cross)}",
+        sessions == ["s-hist-1", "s-hist-2"] and len(cross_calls) == 8,
+        f"sessions={sessions} calls={len(cross_calls)}",
     )
     check(
         "[F2] a cross-session read carries no cursor",
@@ -282,8 +303,8 @@ try:
     )
     check(
         "[F3] the second session's call is present in the cross-session read",
-        "key_up" in tools_of(cross),
-        f"tools={tools_of(cross)}",
+        "key_up" in tools_of(cross_calls),
+        f"tools={tools_of(cross_calls)}",
     )
     note(
         "cross-session ordering sorts on `at`, which is second-granular: records written in "

@@ -1,0 +1,6 @@
+binary=daiorama label=legprobes
+status_latency_s=0.00 status=running
+create_elapsed_s=[15.02, 30.04, 40.04, 40.04]
+create_answer={"error": {"code": "internal", "message": "mutter parent did not present its wayland socket in time; mutter.log tail: "}}
+create_answer={"error": {"code": "internal", "message": "mutter parent did not present its wayland socket in time; mutter.log tail: "}}
+VERDICT=PASS fast_call_latency_s=0.00

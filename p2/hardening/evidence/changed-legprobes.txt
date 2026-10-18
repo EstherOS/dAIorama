@@ -1,0 +1,23 @@
+rustc rustc 1.99.0 (b940084d7 2026-09-28)
+cargo cargo 1.99.0 (5f94df478 2026-08-27)
+== fmt
+rc=0
+== fmt-check
+rc=0
+== clippy
+rc=0
+== build
+rc=0
+== test
+rc=0
+GATE_FAILS=0
+GATE_RC=0
+binary: 71730768 bytes
+dispatch-stall rc=0
+rate-limit rc=0
+rate-buckets rc=0
+history rc=0
+history-bound rc=0
+LEG_FAILS=0
+VERDICT=PASS
+SCRIPT_RC=0

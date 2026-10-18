@@ -1,8 +1,9 @@
 #!/bin/bash
 # Rate-limiter bucket-map growth leg: one real `daiorama serve` process, real unix-socket
-# frames, and a caller that chooses its own session id. `dispatch()` runs the control-class
-# gate before any session lookup, so ids that name nothing still reach the bucket map; this
-# leg measures the manager's VmRSS across a burst of unique ids.
+# frames, and a caller that chooses its own session id. Since #117 an id that cannot name a
+# session is never keyed, so this leg's growth ids (longer than the 128-byte id bound) must
+# leave the bucket map flat; it measures the manager's VmRSS across rounds of such ids, and
+# [D] paces a seeded closed session (`known_session`).
 #
 # Usage: run-rate-buckets.sh <binary> <label>
 set -u
@@ -35,7 +36,8 @@ fi
 python3 "$(dirname "$0")/probe-rate-buckets.py" \
     "$ROOT/run/daiorama/default/manager.sock" \
     "$SERVE" \
-    "$ROOT/config/daiorama/default/scopes/operator.ron"
+    "$ROOT/config/daiorama/default/scopes/operator.ron" \
+    "$ROOT/data/daiorama/default"
 RC=$?
 echo "ratebuckets_rc=$RC"
 if [ "$RC" -eq 0 ]; then

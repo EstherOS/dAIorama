@@ -1,0 +1,85 @@
+BUILD_RC=0
+[NOTE] seeded closed-session records for the five ids this leg drives
+[OK]   [A1] first control call passes the gate ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [A2] second control call passes (burst 2) ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [A3] third control call is rate_limited ({"error": {"code": "rate_limited", "message": "rate limit exceeded for scope \"operator\"", "hint": "retry after 998 ms"}})
+[OK]   [A4] refusal carries a numeric retry-after hint (hint='retry after 998 ms')
+[OK]   [B1] session_status is exempt from the bucket ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [B2] screenshot is exempt from the bucket ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [C1] a different session has its own burst ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [D1] a refilled bucket passes again ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [E1] paced call passes after its wait ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [E2] the scope file was re-read per call (pace took effect, no restart) (elapsed=0.500s want ~0.50s)
+[OK]   [F1] first call passes ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [F2] a wait past max_wait_ms refuses ({"error": {"code": "rate_limited", "message": "rate limit exceeded for scope \"operator\"", "hint": "retry after 1000 ms"}})
+[OK]   [F3] the refused wait did not park the caller (elapsed=0.001s)
+[OK]   [G1] at least one concurrent call passes the gate (passed=3 refused=3 other=0)
+[OK]   [G2] the queue bound refuses rather than parking the whole flood (passed=3 refused=3 other=0)
+[OK]   [G3] every answer arrives inside the parked wait bound (total=2.004s max_call=2.002s)
+FAILS=0
+rate_rc=0
+VERDICT=PASS
+RL_RC=0
+[OK]   [A1] manager is running (pid=2040)
+[OBS]  [A2] baseline VmRSS = 10812 kB
+[OBS]  [B1] round 1: 16 x 1 MiB ids in 0.76s; VmRSS 10812 -> 16968 kB (delta 6156 kB)
+[OBS]  [B2] round 2: 16 x 1 MiB ids in 0.72s; VmRSS 16968 -> 16968 kB (delta 0 kB)
+[OBS]  [B3] round 3: 16 x 1 MiB ids in 0.72s; VmRSS 16968 -> 16968 kB (delta 0 kB)
+[OK]   [B4] every id answered `session_not_found` (the frame passed the gate) ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [B5] a second round of fresh ids does not grow the manager (round2 delta=0 kB (bound 2048 kB))
+[OK]   [B6] a third round stays flat (steady state, not a slower leak) (round3 delta=0 kB (bound 2048 kB))
+[OBS]  [C1] 6 MiB id #1: VmRSS 16968 -> 17988 kB (delta 1020 kB)
+[OBS]  [C1] 6 MiB id #2: VmRSS 17988 -> 43584 kB (delta 25596 kB)
+[OBS]  [C1] 6 MiB id #3: VmRSS 43584 -> 55876 kB (delta 12292 kB)
+[OBS]  [C1] 6 MiB id #4: VmRSS 55876 -> 55876 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #5: VmRSS 55876 -> 55876 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #6: VmRSS 55876 -> 55876 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #7: VmRSS 55876 -> 55876 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #8: VmRSS 55876 -> 55876 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #9: VmRSS 55876 -> 55876 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #10: VmRSS 55876 -> 55876 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #11: VmRSS 55876 -> 55876 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #12: VmRSS 55876 -> 55876 kB (delta 0 kB)
+[OK]   [C2] the 6 MiB ids are refused as unknown sessions (session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found)
+[OK]   [C3] twelve 6 MiB ids plateau instead of accumulating (total=38908 kB over 12 calls (ceiling 81920 kB; an unbounded map adds ~6 MiB/call))
+[OBS]  [D] seeded a closed-session record for sess-pace
+[OK]   [D1] the first two calls pass the bucket (session_not_found / session_not_found)
+[OK]   [D2] the third call is rate_limited ({"error": {"code": "rate_limited", "message": "rate limit exceeded for scope \"operator\"", "hint": "retry after 998 ms"}})
+[OK]   [E1] status still answers after the id burst ({"result": {"drain": {"active": false, "remaining": 0}, "instance_id": "a1aa95d3-c2d5-476f-aaeb-1c3f5f481f22", "mode": "background", "pid": 2040, "sessions": {"dead": 0, "running": 0}, "socket": "/tmp)
+FAILS=0
+ratebuckets_rc=0
+VERDICT=PASS
+RB_RC=0
+[OK]   [A1] a cold history answers an empty page ({"result": {"next_cursor": null, "records": []}})
+[OK]   [A2] seeded a closed-session record for s-hist-1 and s-hist-2 (/tmp/dr-history-legprobes-r2/data/daiorama/default/history)
+[OK]   [B1] six control calls wrote six tool.call records (n=6)
+[OK]   [B2] the seeded session.created line is the only other record (records=7 calls=6)
+[OK]   [B3] the calls are newest-first (tools=['key_tap', 'pointer_button_up', 'pointer_button_down', 'pointer_click', 'pointer_scroll', 'pointer_move'])
+[OK]   [B4] every call record is a tool.call (events=['tool.call'])
+[OK]   [B5] detail carries the tool name only (no arguments) (details=[{'tool': 'key_tap'}, {'tool': 'pointer_button_up'}])
+[OK]   [B6] scope, origin and session id are carried (scope=operator origin=shell)
+[OK]   [B7] `at` is RFC 3339 UTC (at=2026-10-18T11:09:05Z)
+[OK]   [C1] limit 2 pages the seven records as 2+2+2+1 (sizes=[2, 2, 2, 1])
+[OK]   [C2] the pages concatenate to the single-page read, in order (paged=7 single=7)
+[OK]   [C3] the paged tool.calls are the six, newest-first (tools=['key_tap', 'pointer_button_up', 'pointer_button_down', 'pointer_click', 'pointer_scroll', 'pointer_move'])
+[OK]   [C4] the last page has no cursor (cursor=None)
+[OK]   [D1] a garbage cursor is bad_request ({"error": {"code": "bad_request", "message": "invalid cursor", "hint": "check the request against 'daiorama <command> --help'"}})
+[OK]   [D2] a cursor without a session_id is bad_request ({"error": {"code": "bad_request", "message": "a cursor requires a session_id", "hint": "check the request against 'daiorama <command> --help'"}})
+[OK]   [E] hostile id '../../etc' is session_not_found ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [E] hostile id 's-1/../../s-2' is session_not_found ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [E] hostile id '..' is session_not_found ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [E] hostile id 'a/b' is session_not_found ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [E2] an unknown valid id is session_not_found ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [F1] a cross-session read returns both sessions' records (sessions=['s-hist-1', 's-hist-2'] calls=8)
+[OK]   [F2] a cross-session read carries no cursor (null)
+[OK]   [F3] the second session's call is present in the cross-session read (tools=['key_tap', 'pointer_button_up', 'pointer_button_down', 'pointer_click', 'pointer_scroll', 'pointer_move', 'key_up', 'key_down'])
+[NOTE] cross-session ordering sorts on `at`, which is second-granular: records written in the same second tie and keep readdir order. In-session order is file order.
+[OK]   [G1] the live session dir is 0700 (0o700)
+[OK]   [G2] the live segment file is 0600 (0o600)
+[OK]   [H0] the rotating call still passes ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [H1] eight segments after rotation (pinned 8 x 4 MiB budget) (segments=8 files=['seg-0001.log', 'seg-0002.log', 'seg-0003.log', 'seg-0004.log', 'seg-0005.log', 'seg-0006.log', 'seg-0007.log', 'seg-0008.log'] total_bytes=4195309)
+[OK]   [H2] the oldest segment is the one dropped (files=['seg-0001.log', 'seg-0002.log', 'seg-0003.log', 'seg-0004.log', 'seg-0005.log', 'seg-0006.log', 'seg-0007.log', 'seg-0008.log'])
+[NOTE] rotation is exercised live by seeding the newest segment at the budget; the assertion is on the file count under the live root, not on the unit-test helper
+[OK]   [I1] the post-rotation record is readable (first={'at': '2026-10-18T11:09:05Z', 'detail': {'tool': 'pointer_move'}, 'event': 'tool.call', 'origin': 'shell', 'scope': 'operator', 'session_id': 's-rot'})
+FAILS=0
+HIST_RC=0
