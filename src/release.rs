@@ -219,11 +219,15 @@ pub fn verify(
     })
 }
 
+/// The manifest format the generator writes and the verifier accepts. A row shape change is a
+/// format bump, never a silent reinterpretation of `format: 1`.
+pub const MANIFEST_FORMAT: u64 = 1;
+
 /// Validate a signed manifest against 09's pinned shape. The signature proved the bytes are the
 /// release lane's; this proves the release lane did not ship a row nobody can install.
 fn validate(manifest: &Value) -> Result<(), ErrorEnvelope> {
     let format = manifest.get("format").and_then(Value::as_u64);
-    if format != Some(1) {
+    if format != Some(MANIFEST_FORMAT) {
         return Err(ErrorEnvelope::bad_request(format!(
             "unsupported release manifest format {}",
             format
@@ -682,7 +686,7 @@ pub fn manifest(
 
     let mut out = String::new();
     out.push_str("{\n");
-    out.push_str("  \"format\": 1,\n");
+    out.push_str(&format!("  \"format\": {MANIFEST_FORMAT},\n"));
     out.push_str(&format!("  \"version\": {},\n", quoted(version)?));
     out.push_str(&format!("  \"protocol\": {},\n", quoted(protocol)?));
     out.push_str(&format!("  \"channel\": {},\n", quoted(channel)?));
