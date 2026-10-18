@@ -563,7 +563,7 @@ fn a_release_file_over_one_mib_is_refused_before_verification() {
     );
     assert_eq!(output.status.code(), Some(1), "{output:?}");
     assert!(
-        stderr(&output).contains("larger than 1 MiB"),
+        stderr(&output).contains("larger than 1048576 bytes"),
         "{}",
         stderr(&output)
     );
@@ -640,6 +640,100 @@ fn an_unset_home_without_prefix_is_a_named_refusal() {
     assert_eq!(output.status.code(), Some(1), "{output:?}");
     assert!(
         stderr(&output).contains("HOME is not set; pass --prefix"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn an_artifact_over_one_mib_still_installs() {
+    let dir = tempfile::tempdir().unwrap();
+    install_script(dir.path(), TEST_KEY);
+    let bin = stub_minisign(dir.path(), 0);
+    let prefix = dir.path().join("prefix");
+
+    // A real core binary is several MiB; the metadata cap must not apply to it.
+    let bytes = vec![0x5au8; 2 * 1024 * 1024];
+    let artifact = dir.path().join("artifact");
+    std::fs::write(&artifact, &bytes).unwrap();
+    let digest = sha256sum(&artifact).expect("sha256sum is present");
+    let manifest_text = manifest("0.1.0", "x86_64-unknown-linux-gnu", &digest, 1);
+    let release = release(dir.path(), "0.1.0", &manifest_text, Some(&bytes));
+    let output = run(
+        dir.path(),
+        &[
+            "--version",
+            "0.1.0",
+            "--prefix",
+            prefix.to_str().unwrap(),
+            "--base",
+            release.to_str().unwrap(),
+            "--client-only",
+        ],
+        Some(&bin),
+    );
+    assert!(output.status.success(), "{output:?}");
+    assert!(stdout(&output).contains("installed daiorama 0.1.0"));
+    assert_eq!(std::fs::read(prefix.join("daiorama")).unwrap(), bytes);
+}
+
+#[test]
+fn an_artifact_over_the_128_mib_ceiling_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    install_script(dir.path(), TEST_KEY);
+    let bin = stub_minisign(dir.path(), 0);
+    let prefix = dir.path().join("prefix");
+
+    let release = release(
+        dir.path(),
+        "0.1.0",
+        &manifest("0.1.0", "x86_64-unknown-linux-gnu", &"0".repeat(64), 1),
+        None,
+    );
+    // Sparse file: the size check must fire before any digest work.
+    let huge = release.join("daiorama-0.1.0-x86_64-unknown-linux-gnu");
+    let file = std::fs::File::create(&huge).unwrap();
+    file.set_len(134217729).unwrap();
+    let output = run(
+        dir.path(),
+        &[
+            "--version",
+            "0.1.0",
+            "--prefix",
+            prefix.to_str().unwrap(),
+            "--base",
+            release.to_str().unwrap(),
+        ],
+        Some(&bin),
+    );
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(
+        stderr(&output).contains("larger than 134217728 bytes"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn an_explicit_empty_prefix_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    install_script(dir.path(), TEST_KEY);
+    let bin = stub_minisign(dir.path(), 0);
+    let output = run(
+        dir.path(),
+        &[
+            "--version",
+            "0.1.0",
+            "--prefix",
+            "",
+            "--base",
+            "/nonexistent",
+        ],
+        Some(&bin),
+    );
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(
+        stderr(&output).contains("--prefix must not be empty"),
         "{}",
         stderr(&output)
     );
