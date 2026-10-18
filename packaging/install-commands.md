@@ -43,8 +43,9 @@ Hyprland row.
 | Arch Linux | rolling | 0.10.2-1 | `sudo pacman -S wayvnc` |
 | Debian | sid / forky / trixie | 0.9.1-1 | `sudo apt install wayvnc` |
 | Ubuntu | 26.04 LTS (resolute) | 0.9.1-1build1 | `sudo apt install wayvnc` |
-| Ubuntu | 24.04 LTS (noble) | 0.7.2-1build2 (older than the tested view server) | `sudo apt install wayvnc (0.7.2 on noble — older than the tested view server; the image is the supportable route)` |
+| Ubuntu | 24.04 LTS (noble) | 0.7.2-1build2 — older than the tested view server; the image is the supportable route | `sudo apt install wayvnc` |
 | Ubuntu | 22.04 LTS and older | none usable | no-package string; use the image |
+| Debian | bookworm (12) and older | 0.5.0 — below the tested view server; the image is the supportable route | no-package string; use the image |
 | Fedora | 42 and later | packaged | `sudo dnf install wayvnc` |
 | anything else | — | unknown | no-package string; use the image |
 
