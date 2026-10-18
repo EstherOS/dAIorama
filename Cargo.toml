@@ -25,6 +25,9 @@ uuid = { version = "=1.28.0", features = ["v4"] }
 # checked (relative, file-or-directory) instead of trusting a shelled-out tar.
 flate2 = "=1.1.2"
 tar = "=0.4.44"
+# 09 C2: release manifest signatures are verified in-process with a pure-Rust verifier, never a
+# shelled-out minisign (a verifier that trusts an external binary is a weaker trust story).
+minisign-verify = "=0.3.0"
 
 [dev-dependencies]
 ron = "=0.12.2"

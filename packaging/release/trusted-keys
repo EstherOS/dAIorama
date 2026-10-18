@@ -1,0 +1,6 @@
+# Trusted release keys (09 C2): one minisign public key per entry — its "untrusted comment:"
+# line followed by the base64 key. Verification refuses with "no trusted release key
+# provisioned" while this list is empty; it is never shipped with an example key. The first
+# operator-signed release opens a PR adding the public key and its key id, and that PR is the
+# trust anchor. Rotation adds the incoming key here beside the outgoing one; removal is a
+# deliberate later release.

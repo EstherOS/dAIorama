@@ -1028,3 +1028,30 @@ embedding the version range in the table and letting doctor drift from it; an `-
 verb (the operator's package manager installs packages — doctor names, it does not act); baking
 the table into the binary (it is re-checked per release; the reader pin is the binding, not a
 copy).
+
+## P5-C2-MANIFEST — signed bytes, an empty trust list, and in-process verification
+
+The release manifest is JSON signed with minisign; `daiorama release verify` checks the signature
+against trust anchors embedded at build, and only then trusts a digest from it. Three decisions
+shape the trust story:
+
+- **The anchors are data, and empty by default.** `packaging/release/trusted-keys` holds one
+  minisign public key per entry, included with `include_str!`. It ships empty with the reason
+  stated in the file; verification refuses `no trusted release key provisioned` rather than
+  trusting anything, and an unknown signer is `release signed by an untrusted key <id>`. The first
+  release adds the operator's public key in a reviewed PR — that PR is the trust anchor. Rotation
+  is a second line, not a code change.
+- **Verification is in-process, not a shell-out.** The binary carries a pinned pure-Rust verifier
+  crate; shelling out to `minisign` would make the verifier trust the thing it is verifying. The
+  release script still uses the distribution `minisign`, and the gate requires both implementations
+  to agree on the same bytes and on refusals.
+- **The generator never signs.** `daiorama release manifest` renders the unsigned bytes with one
+  artifact/asset object per line so a POSIX installer can read a row without `jq`; signing is an
+  operator step, offline and by hand. Private key material never exists in the repo or on an
+  agent's box. `verify --artifact` matches by name + sha256 and refuses an unknown name, so a
+  digest cannot be paired with the wrong artifact.
+
+*Rejected:* an example key in the trust list (it would be a usable anchor nobody reviewed); a
+`--trusted-key` CLI flag (verification would become caller-asserted); shelling out to `minisign`
+from the binary (two trust boundaries, one of them external); signing in the generator (key
+material in an automated path).

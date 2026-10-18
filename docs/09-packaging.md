@@ -19,7 +19,19 @@ agent's own container), and this is its named delivery (C2).
 - **Signed per-release manifest**: artifacts × target triples × sha256,
   signed with **minisign** and verified against the embedded release key
   before digests are trusted. Compose snippets and install commands pin by
-  **digest**.
+  **digest**. The trust anchors are data — `packaging/release/trusted-keys`,
+  one public key per entry, embedded at build — and ship **empty** until the
+  first operator-signed release adds one; an empty list refuses with
+  `no trusted release key provisioned`, and an unknown signer is
+  `release signed by an untrusted key <id>`. Verification is in-process with a
+  pinned pure-Rust verifier (never a shelled-out `minisign`); signing stays
+  operator-side, by hand, and private key material never enters the repo.
+- **Manifest generator and verifier**: `daiorama release manifest` renders the
+  unsigned manifest with one artifact/asset object per line (a POSIX installer
+  can read a row without `jq`); `daiorama release verify --manifest … --signature
+  … [--artifact …]` checks the signature and, when asked, a local file's name +
+  sha256 before any digest is trusted. Both are cold verbs: local files only, no
+  network, no writes except the generator's `--out`.
 - **Install-command table (maintained)**: `packaging/install-commands.md` —
   distro/release → exact command → version, with explicit "not packaged / out
   of range" rows (the Fedora ≥ f43 Hyprland case renders "not packaged for this
