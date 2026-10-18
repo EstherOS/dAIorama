@@ -1,4 +1,17 @@
-const state = { managers: [], manager: null, sessions: [], session: null, cursor: null, timer: null };
+// dAIorama dashboard UI. Read-only; tokens never reach this page.
+// Every API string is written with textContent (h() uses createTextNode): a session label or a
+// history detail is untrusted input, and innerHTML in an operator page is the wrong default.
+const state = {
+  managers: [],
+  manager: null,
+  sessions: [],
+  session: null,
+  cursor: null,
+  historyKeys: new Set(),
+  historyLoading: false,
+  historyEnd: false,
+  timer: null,
+};
 
 async function getJSON(url) {
   const response = await fetch(url, { headers: { accept: "application/json" } });
@@ -8,93 +21,218 @@ async function getJSON(url) {
 }
 
 function el(id) { return document.getElementById(id); }
-
 function short(value) { return value === undefined || value === null || value === "" ? "—" : String(value); }
+
+/** DOM builder: attributes are properties/text, children are text nodes unless already nodes. */
+function h(tag, props = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(props || {})) {
+    if (value === undefined || value === null) continue;
+    if (key === "class") node.className = String(value);
+    else if (key === "style") node.style.cssText = String(value);
+    else if (key.startsWith("on") && typeof value === "function") node[key] = value;
+    else if (key === "tabIndex") node.tabIndex = value;
+    else node.setAttribute(key, String(value));
+  }
+  for (const child of children.flat()) {
+    if (child === undefined || child === null) continue;
+    node.appendChild(child instanceof Node ? child : document.createTextNode(String(child)));
+  }
+  return node;
+}
+
+function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+
+/** Rendered truth for the view column: "up" is a running front, "down" is a live session without
+ * one, and a dead/closed session is neither — it is over, so it shows an em dash. */
+function viewState(session) {
+  if (session.state === "dead" || session.state === "closed") {
+    return { text: "—", className: "muted", title: `session is ${session.state}` };
+  }
+  if (session.view) {
+    return { text: "up", className: "good", title: "view front is running" };
+  }
+  return { text: "down", className: "warn", title: "running; no view started (view down ≠ session dead)" };
+}
+
+function stateClass(value) {
+  return value === "running" ? "good" : value === "degraded" ? "warn" : value === "dead" || value === "closed" ? "bad" : "muted";
+}
 
 function renderManagers() {
   const list = el("manager-list");
-  list.textContent = "";
+  clear(list);
   for (const manager of state.managers) {
-    const li = document.createElement("li");
-    li.className = manager.name === state.manager ? "selected" : "";
-    const version = manager.ok ? `v${manager.readiness?.versions?.protocol ?? "?"}` : "unreachable";
-    li.innerHTML = `<strong>${manager.name}</strong><br><span class="muted">${manager.address}</span><br>` +
-      (manager.ok
-        ? `<span class="good">${manager.readiness?.state ?? "?"}</span> · ${version} · ${manager.readiness?.sessions?.running ?? 0} running`
-        : `<span class="bad">${manager.error}</span>`);
-    li.onclick = () => { state.manager = manager.name; state.session = null; renderManagers(); loadSessions(); };
-    list.appendChild(li);
+    const selected = manager.name === state.manager;
+    list.appendChild(h("li", {
+      class: selected ? "selected" : "",
+      tabIndex: 0,
+      role: "button",
+      "aria-pressed": selected ? "true" : "false",
+      onclick: () => selectManager(manager.name),
+      onkeydown: (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectManager(manager.name); } },
+    },
+      h("strong", {}, manager.name),
+      h("br"),
+      h("span", { class: "muted" }, manager.address),
+      h("br"),
+      manager.ok
+        ? h("span", {},
+            h("span", { class: "good" }, manager.readiness?.state ?? "?"),
+            ` · v${manager.readiness?.versions?.protocol ?? "?"} · ${manager.readiness?.sessions?.running ?? 0} running`)
+        : h("span", { class: "bad" }, manager.error ?? "unreachable"),
+    ));
   }
-  el("summary").textContent = `${state.managers.filter(m => m.ok).length}/${state.managers.length} managers reachable`;
+  const reachable = state.managers.filter((manager) => manager.ok).length;
+  el("summary").textContent = state.managers.length
+    ? `${reachable}/${state.managers.length} managers reachable`
+    : "no managers configured";
 }
 
 async function refreshManagers() {
-  try { state.managers = (await getJSON("/api/managers")).managers; }
-  catch (error) { state.managers = [{ name: "dashboard", address: "—", ok: false, error: String(error) }]; }
+  try {
+    state.managers = (await getJSON("/api/managers")).managers ?? [];
+  } catch (error) {
+    state.managers = [{ name: "dashboard", address: "—", ok: false, error: String(error) }];
+  }
+  if (state.manager && !state.managers.some((manager) => manager.name === state.manager)) {
+    state.manager = null;
+    state.sessions = [];
+    state.session = null;
+  }
   renderManagers();
+}
+
+function selectManager(name) {
+  state.manager = name;
+  state.session = null;
+  state.sessions = [];
+  resetHistory();
+  renderManagers();
+  renderSessions();
+  renderDetail(null);
+  loadSessions();
 }
 
 function renderSessions() {
   const rows = el("session-rows");
-  rows.textContent = "";
+  clear(rows);
   for (const session of state.sessions) {
-    const tr = document.createElement("tr");
-    tr.className = session.id === state.session ? "selected" : "";
-    const view = session.view ? "up" : "down";
-    tr.innerHTML = `<td>${session.id}</td><td>${short(session.label)}</td>` +
-      `<td>${short(session.state)}</td><td>${view}</td><td>${short(session.scope)}</td>` +
-      `<td>${session.resolution ?? "?"} @ ${session.scale ?? "?"}</td><td>${short(session.idle_since)}</td>`;
-    tr.onclick = () => { state.session = session.id; renderSessions(); loadHistory(true); renderDetail(session); };
-    rows.appendChild(tr);
+    const view = viewState(session);
+    const selected = session.id === state.session;
+    rows.appendChild(h("tr", {
+      class: selected ? "selected" : "",
+      tabIndex: 0,
+      "aria-selected": selected ? "true" : "false",
+      onclick: () => selectSession(session.id),
+      onkeydown: (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectSession(session.id); } },
+    },
+      h("td", {}, short(session.id)),
+      h("td", {}, short(session.label)),
+      h("td", { class: stateClass(session.state) }, short(session.state)),
+      h("td", { class: view.className, title: view.title }, view.text),
+      h("td", {}, short(session.scope)),
+      h("td", {}, `${session.resolution ?? "?"} @ ${session.scale ?? "?"}`),
+      h("td", {}, short(session.idle_since)),
+    ));
   }
   el("sessions-for").textContent = state.manager ? `· ${state.manager}` : "";
-  el("sessions-note").textContent = state.manager
-    ? (state.sessions.length ? "" : "no sessions for this manager")
-    : "pick a manager";
+  el("sessions-note").textContent = !state.manager
+    ? "pick a manager"
+    : (state.sessions.length ? "" : "no sessions for this manager");
 }
 
 async function loadSessions() {
   if (!state.manager) { state.sessions = []; renderSessions(); return; }
-  try { state.sessions = (await getJSON(`/api/sessions?manager=${encodeURIComponent(state.manager)}`)).sessions ?? []; }
-  catch (error) { state.sessions = []; el("sessions-note").textContent = String(error); }
+  try {
+    state.sessions = (await getJSON(`/api/sessions?manager=${encodeURIComponent(state.manager)}`)).sessions ?? [];
+  } catch (error) {
+    state.sessions = [];
+    el("sessions-note").textContent = String(error);
+  }
   renderSessions();
   if (state.session) {
-    const session = state.sessions.find(s => s.id === state.session);
+    const session = state.sessions.find((candidate) => candidate.id === state.session);
     if (session) renderDetail(session);
   }
 }
 
-function renderDetail(session) {
-  el("detail-id").textContent = session.id;
-  el("detail-body").innerHTML =
-    `<div><strong>state</strong> ${short(session.state)}</div>` +
-    `<div><strong>view</strong> ${session.view ? "up" : "down"} <span class="muted">(view down ≠ session dead)</span></div>` +
-    `<div><strong>backend</strong> ${short(session.backend)} · <strong>scope</strong> ${short(session.scope)} · <strong>origin</strong> ${short(session.origin)}</div>` +
-    `<div><strong>size</strong> ${session.resolution ?? "?"} @ ${session.scale ?? "?"} · <strong>renderer</strong> ${short(session.renderer)}</div>`;
-  el("open-view").disabled = false;
-  el("view-note").textContent = "";
+function selectSession(id) {
+  state.session = id;
+  renderSessions();
+  renderDetail(state.sessions.find((session) => session.id === id) ?? null);
+  resetHistory();
+  loadHistory();
 }
 
-async function loadHistory(reset) {
-  if (!state.manager || !state.session) return;
-  if (reset) { state.cursor = null; el("history").textContent = ""; }
+function renderDetail(session) {
+  const body = el("detail-body");
+  clear(body);
+  const button = el("open-view");
+  if (!session) {
+    el("detail-id").textContent = "";
+    body.appendChild(h("span", { class: "muted" }, "Pick a session."));
+    button.disabled = true;
+    el("view-note").textContent = "";
+    return;
+  }
+  el("detail-id").textContent = session.id;
+  const view = viewState(session);
+  body.appendChild(h("div", {}, h("strong", {}, "state "), h("span", { class: stateClass(session.state) }, short(session.state))));
+  body.appendChild(h("div", {}, h("strong", {}, "view "), h("span", { class: view.className, title: view.title }, view.text),
+    h("span", { class: "muted" }, session.state === "dead" || session.state === "closed"
+      ? ` (${session.state} — no view can start)`
+      : view.text === "down" ? " (view down ≠ session dead)" : "")));
+  body.appendChild(h("div", {}, h("strong", {}, "backend "), short(session.backend),
+    " · ", h("strong", {}, "scope "), short(session.scope),
+    " · ", h("strong", {}, "origin "), short(session.origin)));
+  body.appendChild(h("div", {}, h("strong", {}, "size "), `${session.resolution ?? "?"} @ ${session.scale ?? "?"}`,
+    " · ", h("strong", {}, "renderer "), short(session.renderer)));
+
+  const over = session.state === "dead" || session.state === "closed";
+  button.disabled = over;
+  el("view-note").textContent = over ? `session ${session.state} — view cannot start` : "opens the session's own view front";
+}
+
+function resetHistory() {
+  clear(el("history"));
+  el("history-note").textContent = "";
+  state.cursor = null;
+  state.historyKeys.clear();
+  state.historyEnd = false;
+}
+
+async function loadHistory() {
+  if (!state.manager || !state.session || state.historyLoading || state.historyEnd) return;
+  state.historyLoading = true;
+  el("older").disabled = true;
+  el("history-note").textContent = "loading…";
   const query = new URLSearchParams({ manager: state.manager, session: state.session, limit: "50" });
   if (state.cursor) query.set("cursor", state.cursor);
   try {
     const page = await getJSON(`/api/history?${query}`);
     for (const record of page.records ?? []) {
-      const li = document.createElement("li");
-      li.innerHTML = `<span class="badge">${record.event}</span> <span class="muted">${record.at}</span><br>` +
-        `<span class="muted">scope ${record.scope} · origin ${record.origin}${record.cause ? " · cause " + record.cause : ""}</span>`;
-      el("history").appendChild(li);
+      const key = `${record.at}|${record.event}|${record.session_id ?? ""}`;
+      if (state.historyKeys.has(key)) continue;
+      state.historyKeys.add(key);
+      el("history").appendChild(h("li", {},
+        h("span", { class: "badge" }, record.event),
+        " ",
+        h("span", { class: "muted" }, record.at),
+        h("br"),
+        h("span", { class: "muted" }, `scope ${record.scope} · origin ${record.origin}${record.cause ? ` · cause ${record.cause}` : ""}`),
+      ));
     }
     state.cursor = page.next_cursor ?? null;
-    el("older").disabled = !state.cursor;
+    state.historyEnd = !state.cursor;
+    el("history-note").textContent = state.historyEnd
+      ? (state.historyKeys.size ? "end of history" : "no history for this session")
+      : "";
   } catch (error) {
-    const li = document.createElement("li");
-    li.className = "bad";
-    li.textContent = String(error);
-    el("history").appendChild(li);
+    el("history-note").textContent = String(error);
+  } finally {
+    state.historyLoading = false;
+    el("older").disabled = !state.cursor || state.historyLoading;
   }
 }
 
@@ -102,12 +240,13 @@ async function openView() {
   if (!state.manager || !state.session) return;
   el("view-note").textContent = "starting…";
   try {
-    const view = await (await fetch("/api/view", {
+    const response = await fetch("/api/view", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ manager: state.manager, session: state.session }),
-    })).json();
-    if (view.error) throw new Error(view.error);
+    });
+    const view = await response.json();
+    if (!response.ok || view.error) throw new Error(view.error || `HTTP ${response.status}`);
     const url = view.address?.includes("://") ? view.address : `http://${view.address}`;
     const target = view.credential ? `${url}${url.includes("?") ? "&" : "?"}credential=${encodeURIComponent(view.credential)}` : url;
     el("view-note").textContent = `generation ${view.generation ?? "?"} · opened`;
@@ -118,7 +257,7 @@ async function openView() {
 }
 
 el("open-view").onclick = openView;
-el("older").onclick = () => loadHistory(false);
+el("older").onclick = () => loadHistory();
 
 async function tick() {
   await refreshManagers();
