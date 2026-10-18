@@ -108,14 +108,14 @@ and every run**.
   first call on a connection`). Nothing follows either refusal, like a refused handshake.
 - **Dispatch refusals answer by class, and do not end the connection.** A method name outside
   the pinned surface is refused with `bad_request` (`unknown method "foo"`); a pinned-surface
-  name this build does not implement yet — the views/query methods, `daemon_end`, the control
-  tools — answers `internal` (`not implemented yet`). A method whose pinned surface takes no
-  parameters (`status`, `readiness`, `config_reload`, `drain`) refuses any it is given with
-  `bad_request` (`unknown parameter "bogus"; this method takes no parameters`). All are
-  dispatch-level refusals: unlike the frame- and gate-level refusals above, the connection
-  continues. A dispatch that panics answers `internal` (`dispatch panicked`) and the
-  connection continues — dispatch runs on the blocking pool, so a panic cannot unwind into
-  the reactor and must not read as a dropped connection.
+  name this build does not implement yet (`daemon_end`, and registry names without a runtime
+  handler such as `list_capabilities`) answers `internal` (`not implemented yet`). A method
+  whose pinned surface takes no parameters (`status`, `readiness`, `config_reload`, `drain`)
+  refuses any it is given with `bad_request` (`unknown parameter "bogus"; this method takes no
+  parameters`). All are dispatch-level refusals: unlike the frame- and gate-level refusals
+  above, the connection continues. A dispatch that panics answers `internal` (`dispatch
+  panicked`) and the connection continues — dispatch runs on the blocking pool, so a panic
+  cannot unwind into the reactor and must not read as a dropped connection.
 - **Scope and origin ride the frame, not the params.** A request may carry `scope` (absent =
   `operator`) and `origin` (absent = `shell`); an `origin` outside `shell` | `mcp` is refused
   with `bad_request` (`invalid origin "x"; expected one of: shell, mcp`). The MCP bridge's
