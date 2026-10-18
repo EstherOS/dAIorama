@@ -29,6 +29,10 @@ pub const TARGET_TRIPLES: [&str; 4] = [
 
 /// Largest artifact accepted; checked before the bytes are read for hashing.
 pub const MAX_ARTIFACT_BYTES: u64 = 128 * 1024 * 1024;
+/// Defense in depth: the digest is the trust boundary, but an artifact that inflates far past
+/// its compressed size is refused before it can fill the data volume.
+pub const MAX_UNPACKED_BYTES: u64 = 128 * 1024 * 1024;
+pub const MAX_ENTRIES: usize = 4096;
 
 /// The module binary inside an artifact — the path the core CLI execs (04, D1).
 pub const MODULE_BINARY: &str = "daiorama-dashboard";
@@ -166,6 +170,7 @@ pub fn install(
 
     // 3. Stage beside the module tree; the tree itself is untouched until the rename.
     let parent = paths.modules_dir().join("daiorama-dashboard");
+    let parent_existed = parent.is_dir();
     std::fs::create_dir_all(&parent).map_err(|err| {
         ErrorEnvelope::bad_request(format!("cannot create {}: {err}", parent.display()))
     })?;
@@ -176,10 +181,40 @@ pub fn install(
     std::fs::create_dir(&stage).map_err(|err| {
         ErrorEnvelope::bad_request(format!("cannot create {}: {err}", stage.display()))
     })?;
+    // 3b. Replacing the active version: remove the link first. `active` is then absent
+    // (D1 reads "not installed") rather than dangling at a directory that is being renamed
+    // away; the swap below recreates it.
+    let active_slug = std::fs::read_link(parent.join("active"))
+        .ok()
+        .and_then(|target| {
+            target
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        });
+    let mut removed_active = None;
+    if force
+        && active_slug.as_deref() == Some(version.as_str())
+        && std::fs::remove_file(parent.join("active")).is_ok()
+    {
+        removed_active = active_slug;
+    }
+
     let staged =
         extract_artifact(artifact, &stage).and_then(|()| place(&parent, &stage, &version, force));
     if let Err(err) = staged {
         let _ = std::fs::remove_dir_all(&stage);
+        // N2: the link was cleared above; a failed install puts it back so the module tree
+        // is exactly what it was, not "not installed" beside a version directory.
+        if let Some(slug) = removed_active
+            && parent.join(&slug).is_dir()
+        {
+            let _ = activate(&parent, &slug);
+        }
+        // A first install that refused leaves no module tree behind: `remove_dir` only
+        // succeeds on the directory it created and only while it is empty.
+        if !parent_existed {
+            let _ = std::fs::remove_dir(&parent);
+        }
         return Err(err);
     }
 
@@ -187,6 +222,32 @@ pub fn install(
     let dir = parent.join(&version);
     activate(&parent, &version)?;
     Ok(Installed { version, dir })
+}
+
+/// A member path is refused when it is absolute or climbs (`..`) — only relative normal
+/// components (and `.`) are allowed inside the stage.
+fn entry_path_refused(path: &Path) -> bool {
+    path.is_absolute()
+        || path
+            .components()
+            .any(|part| !matches!(part, Component::Normal(_) | Component::CurDir))
+}
+
+/// A member kind is refused unless it is a regular file or a directory: links, devices and
+/// other special members never land in a module tree.
+fn entry_kind_refused(kind: tar::EntryType) -> bool {
+    !(kind.is_file() || kind.is_dir())
+}
+
+/// Add one member's declared size to the running total, refusing past the cap.
+fn budget(total: u64, size: u64) -> Result<u64, ErrorEnvelope> {
+    let next = total.saturating_add(size);
+    if next > MAX_UNPACKED_BYTES {
+        return Err(ErrorEnvelope::bad_request(
+            strings::artifact_expands_too_large(MAX_UNPACKED_BYTES / (1024 * 1024)),
+        ));
+    }
+    Ok(next)
 }
 
 /// Unpack the gzipped tar into `stage` and check the one file that matters.
@@ -205,6 +266,8 @@ fn extract_artifact(artifact: &Path, stage: &Path) -> Result<(), ErrorEnvelope> 
             artifact.display()
         ))
     })?;
+    let mut total: u64 = 0;
+    let mut count: usize = 0;
     for entry in entries {
         let mut entry = entry.map_err(|err| {
             ErrorEnvelope::bad_request(format!(
@@ -223,17 +286,20 @@ fn extract_artifact(artifact: &Path, stage: &Path) -> Result<(), ErrorEnvelope> 
             .into_owned();
         // A module artifact is files and directories only, all of them relative and inside
         // the staging directory: links, devices and `..` are refusals, not surprises.
-        if path.is_absolute()
-            || path
-                .components()
-                .any(|part| !matches!(part, Component::Normal(_) | Component::CurDir))
-        {
+        if entry_path_refused(&path) {
             return Err(ErrorEnvelope::bad_request(strings::artifact_entry_refused(
                 &path.display().to_string(),
             )));
         }
+        count += 1;
+        if count > MAX_ENTRIES {
+            return Err(ErrorEnvelope::bad_request(
+                strings::artifact_too_many_entries(MAX_ENTRIES),
+            ));
+        }
+        total = budget(total, entry.size())?;
         let kind = entry.header().entry_type();
-        if !(kind.is_file() || kind.is_dir()) {
+        if entry_kind_refused(kind) {
             return Err(ErrorEnvelope::bad_request(strings::artifact_entry_refused(
                 &path.display().to_string(),
             )));
@@ -301,9 +367,17 @@ fn place(parent: &Path, stage: &Path, version: &str, force: bool) -> Result<(), 
             )));
         }
     }
-    std::fs::rename(stage, &target).map_err(|err| {
-        ErrorEnvelope::bad_request(format!("cannot install {}: {err}", target.display()))
-    })?;
+    if let Err(err) = std::fs::rename(stage, &target) {
+        // N2: the old version was moved aside before this rename; restore it so a failed
+        // install leaves the tree exactly as it found it instead of a missing version path.
+        if let Some(aside) = &previous {
+            let _ = std::fs::rename(aside, &target);
+        }
+        return Err(ErrorEnvelope::bad_request(format!(
+            "cannot install {}: {err}",
+            target.display()
+        )));
+    }
     if let Some(aside) = previous {
         let _ = std::fs::remove_dir_all(&aside);
     }
@@ -341,5 +415,161 @@ mod tests {
             None
         );
         assert_eq!(version_from_asset_name("something-else.tar.gz"), None);
+    }
+
+    #[test]
+    fn entry_paths_and_kinds_are_refused_by_the_filter() {
+        use std::path::Path;
+        assert!(entry_path_refused(Path::new("../evil")));
+        assert!(entry_path_refused(Path::new("/etc/passwd")));
+        assert!(!entry_path_refused(Path::new("./daiorama-dashboard")));
+        assert!(!entry_path_refused(Path::new("ui/index.html")));
+        assert!(entry_kind_refused(tar::EntryType::Symlink));
+        assert!(entry_kind_refused(tar::EntryType::Link));
+        assert!(!entry_kind_refused(tar::EntryType::Regular));
+        assert!(!entry_kind_refused(tar::EntryType::Directory));
+    }
+
+    #[test]
+    fn the_unpacked_budget_refuses_past_the_cap() {
+        let ok = budget(MAX_UNPACKED_BYTES - 1, 1).expect("exactly at the cap");
+        assert_eq!(ok, MAX_UNPACKED_BYTES);
+        let err = budget(MAX_UNPACKED_BYTES - 1, 2).expect_err("one byte over");
+        assert!(err.message.contains("expands beyond"), "{err:?}");
+    }
+
+    fn artifact_with(dir: &Path, name: &str, content: &str) -> std::path::PathBuf {
+        use flate2::Compression;
+        use flate2::write::GzEncoder;
+        let path = dir.join(name);
+        let file = std::fs::File::create(&path).unwrap();
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut builder = tar::Builder::new(encoder);
+        let mut header = tar::Header::new_gnu();
+        header.set_mode(0o755);
+        header.set_size(content.len() as u64);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, "daiorama-dashboard", content.as_bytes())
+            .unwrap();
+        builder.into_inner().unwrap().finish().unwrap();
+        path
+    }
+
+    #[test]
+    fn forcing_the_active_version_leaves_active_resolving() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = Paths::for_env(
+            Some(&root.path().join("config")),
+            Some(&root.path().join("data")),
+            Some(root.path()),
+            "t",
+        );
+        let name = "daiorama-dashboard-0.1.0-x86_64-unknown-linux-gnu.tar.gz";
+        let first = artifact_with(root.path(), name, "first");
+        let sha_first = file_sha256(&first).unwrap();
+        install(&paths, &first, &sha_first, None, false).expect("first install");
+
+        let second = artifact_with(root.path(), name, "second");
+        let sha_second = file_sha256(&second).unwrap();
+        let installed =
+            install(&paths, &second, &sha_second, Some("0.1.0"), true).expect("forced reinstall");
+        let link = std::fs::read_link(installed.dir.join("..").join("active")).unwrap();
+        assert_eq!(link.file_name().unwrap(), "0.1.0");
+        assert_eq!(
+            std::fs::read_to_string(installed.dir.join("daiorama-dashboard")).unwrap(),
+            "second"
+        );
+    }
+
+    #[test]
+    fn a_failed_stage_rename_restores_the_previous_version() {
+        let root = tempfile::tempdir().unwrap();
+        let parent = root.path().join("modules").join("daiorama-dashboard");
+        std::fs::create_dir_all(parent.join("0.1.0")).unwrap();
+        std::fs::write(parent.join("0.1.0").join("daiorama-dashboard"), "old").unwrap();
+        // No stage directory: the rename fails after the old version was moved aside.
+        let missing = parent.join(".stage-missing");
+        let err = place(&parent, &missing, "0.1.0", true).expect_err("rename must fail");
+        assert!(err.message.contains("cannot install"), "{err:?}");
+        assert_eq!(
+            std::fs::read_to_string(parent.join("0.1.0").join("daiorama-dashboard")).unwrap(),
+            "old",
+            "the previous version is restored, not lost"
+        );
+    }
+
+    fn artifact_without_binary(dir: &Path, name: &str) -> std::path::PathBuf {
+        use flate2::Compression;
+        use flate2::write::GzEncoder;
+        let path = dir.join(name);
+        let file = std::fs::File::create(&path).unwrap();
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut builder = tar::Builder::new(encoder);
+        let mut header = tar::Header::new_gnu();
+        header.set_mode(0o644);
+        header.set_size(4);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, "assets/index.html", &b"html"[..])
+            .unwrap();
+        builder.into_inner().unwrap().finish().unwrap();
+        path
+    }
+
+    #[test]
+    fn a_failed_forced_install_puts_the_active_link_back() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = Paths::for_env(
+            Some(&root.path().join("config")),
+            Some(&root.path().join("data")),
+            Some(root.path()),
+            "t",
+        );
+        let name = "daiorama-dashboard-0.1.0-x86_64-unknown-linux-gnu.tar.gz";
+        let first = artifact_with(root.path(), name, "first");
+        let sha_first = file_sha256(&first).unwrap();
+        let installed = install(&paths, &first, &sha_first, None, false).expect("first install");
+
+        // Same version, forced, and the unpack fails after the link was cleared: the tree
+        // must come back exactly as it was, `active` included.
+        let broken = artifact_without_binary(root.path(), name);
+        let sha_broken = file_sha256(&broken).unwrap();
+        let err = match install(&paths, &broken, &sha_broken, Some("0.1.0"), true) {
+            Ok(_) => panic!("an artifact without the module binary must be refused"),
+            Err(err) => err,
+        };
+        assert!(err.message.contains("does not contain"), "{err:?}");
+        let link = std::fs::read_link(installed.dir.join("..").join("active")).unwrap();
+        assert_eq!(link.file_name().unwrap(), "0.1.0");
+        assert_eq!(
+            std::fs::read_to_string(installed.dir.join("daiorama-dashboard")).unwrap(),
+            "first"
+        );
+    }
+
+    #[test]
+    fn a_refused_first_install_leaves_no_module_tree() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = Paths::for_env(
+            Some(&root.path().join("config")),
+            Some(&root.path().join("data")),
+            Some(root.path()),
+            "t",
+        );
+        let broken = artifact_without_binary(
+            root.path(),
+            "daiorama-dashboard-0.1.0-x86_64-unknown-linux-gnu.tar.gz",
+        );
+        let sha = file_sha256(&broken).unwrap();
+        let err = match install(&paths, &broken, &sha, None, false) {
+            Ok(_) => panic!("an artifact without the module binary must be refused"),
+            Err(err) => err,
+        };
+        assert!(err.message.contains("does not contain"), "{err:?}");
+        assert!(
+            !paths.modules_dir().join("daiorama-dashboard").exists(),
+            "the refused install created the module tree anyway"
+        );
     }
 }
