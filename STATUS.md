@@ -23,7 +23,7 @@ _One screen, kept current._
   image). The root refusal is closed: `daiorama-browser` adds `--no-sandbox` only at `geteuid()`
   zero, with the container user namespace as the boundary (09).
 - **Repo target:** fork `EstherOS/dAIorama`; upstream PRs post-sign-off.
-- **Last green** (this branch): 433 tests, 0 failed — 280 (+6 ignored) unit · 5 browser ·
+- **Last green** (`5fb7128`): 433 tests, 0 failed — 280 (+6 ignored) unit · 5 browser ·
   7 config_scope · 8 daemon · 9 dashboard · 3 doctor · 27 fixtures · 12 install_script · 7 mcp ·
   22 mcp_listen · 6 network · 25 packaging · 6 release_manifest · 3 release_script; module
   6 · 2 · 5; fmt/clippy clean.
