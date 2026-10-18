@@ -360,7 +360,7 @@ refusals always carry their own code.
   out-of-range handshakes at connect.
 - Additive-only applies to the RPC surface, error codes, and tool names.
 - The dashboard never rejects a manager on version: it degrades per-manager
-  via capability detection (10); a small compat table ships with release notes
+  via capability detection (10); a small compat table ships in `RELEASE-NOTES.md`
   (09).
 - Readiness: the `readiness` call — the RPC form of `status --json` (the same
   field set plus `dashboard_module`) — is the thing operators and the
