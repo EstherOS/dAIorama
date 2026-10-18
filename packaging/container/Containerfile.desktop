@@ -1,0 +1,60 @@
+# dAIorama desktop image — core + pinned Chromium + the session launcher (09, "Image split").
+#
+# Build after the core image exists:
+#   podman build --build-arg DEBIAN_SID_DIGEST="$DIGEST" -f packaging/container/Containerfile.core \
+#     -t localhost/daiorama:dev .
+#   podman build --build-arg DEBIAN_SID_DIGEST="$DIGEST" \
+#     --build-arg CORE_IMAGE=localhost/daiorama:dev \
+#     -f packaging/container/Containerfile.desktop -t localhost/daiorama-desktop:dev .
+#
+# CORE_IMAGE is required, like the base digest: a default tag goes stale silently, and a release
+# records the exact core digest this desktop artifact was built on.
+
+ARG DEBIAN_SID_DIGEST
+ARG CORE_IMAGE
+FROM docker.io/library/debian:sid-slim@${DEBIAN_SID_DIGEST} AS launcher
+
+# The launcher is a second bin of the root crate; build it here so the core image stays free of
+# browser-specific files, then copy the one binary into the desktop layer.
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends rustc cargo ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+COPY dashboard ./dashboard
+RUN cargo build --release --locked --bin daiorama-browser
+
+# The pinned noVNC tree, fetched once with the installer's own hash check and carried read-only;
+# entrypoint.sh seeds it into the data volume on first boot (09: the tree is data, not a layer).
+FROM docker.io/library/debian:sid-slim@${DEBIAN_SID_DIGEST} AS novnc
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates tar \
+    && rm -rf /var/lib/apt/lists/*
+COPY packaging/novnc/fetch.sh /usr/local/bin/fetch-novnc
+RUN sh /usr/local/bin/fetch-novnc /usr/share/daiorama/novnc
+
+FROM ${CORE_IMAGE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+# The only application the desktop shape adds. No terminal, no suite: the browser is the session
+# surface, and the launcher is the documented route to it (06 D6).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends chromium fonts-liberation \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=launcher /src/target/release/daiorama-browser /usr/local/bin/daiorama-browser
+COPY --from=novnc /usr/share/daiorama/novnc /usr/share/daiorama/novnc
+
+# The seed rule (09): on first boot the read-only noVNC copy lands on the data volume, then the
+# command runs. CMD stays the documented default; the entrypoint only stages data.
+COPY packaging/container/entrypoint.sh /usr/local/bin/daiorama-entrypoint
+RUN chmod 755 /usr/local/bin/daiorama-entrypoint
+ENTRYPOINT ["/usr/local/bin/daiorama-entrypoint"]
+
+# The desktop artifact is the one with a default command (09); the systemd unit remains the
+# bare-host channel, not an alternative to this CMD.
+CMD ["daiorama", "serve"]

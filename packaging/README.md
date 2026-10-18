@@ -161,10 +161,22 @@ host or the reference box.
     podman build --build-arg DEBIAN_SID_DIGEST="$DIGEST" \
       -f packaging/container/Containerfile.core -t daiorama:dev .
 
-The core image has no default command — it is the substrate every shape composes on. The
-desktop image (Chromium plus the session launcher at `/usr/local/bin/daiorama-browser`) builds
-on it once the launcher exists (06); until then a browser started in the core image is unrouted
-and the session reads `renderer: unverified`.
+The core image has no default command — it is the substrate every shape composes on.
+
+### Build the desktop image
+
+The desktop artifact builds **on the core image**, so build (or pull) core first. `CORE_IMAGE` is
+a required build argument, like the base digest: a default tag goes stale silently, and the
+release manifest records the exact core reference.
+
+    podman build --build-arg DEBIAN_SID_DIGEST="$DIGEST" \
+      --build-arg CORE_IMAGE=localhost/daiorama:dev \
+      -f packaging/container/Containerfile.desktop -t localhost/daiorama-desktop:dev .
+
+It adds pinned Chromium and the session launcher at `/usr/local/bin/daiorama-browser` (built as a
+second bin of the root crate in a launcher-only stage), and its `CMD ["daiorama","serve"]` is the
+one documented exception to the no-default-command rule. A browser started in the core image
+alone is unrouted and the session reads `renderer: unverified`.
 
 ### Run it
 

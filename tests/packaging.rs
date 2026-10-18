@@ -15,6 +15,7 @@ const SPEC_10: &str = include_str!("../docs/10-operations.md");
 const IMAGE_NOTE: &str = include_str!("../p5/image/README.md");
 const ENTRYPOINT: &str = include_str!("../packaging/container/entrypoint.sh");
 const CORE_IMAGE: &str = include_str!("../packaging/container/Containerfile.core");
+const DESKTOP_IMAGE: &str = include_str!("../packaging/container/Containerfile.desktop");
 const IMAGE_VERIFY: &str = include_str!("../packaging/container/verify-image.sh");
 const COREFILE: &str = include_str!("../packaging/container/Containerfile.core");
 const COMPOSE_MANAGER_ONLY: &str = include_str!("../packaging/compose/manager-only.yml");
@@ -513,4 +514,37 @@ fn the_core_image_pins_an_empty_command_and_strips_hyprland_caps() {
         IMAGE_VERIFY.contains("Config.Cmd") && IMAGE_VERIFY.contains("podman inspect"),
         "the verify script inspects the built artifact"
     );
+}
+
+#[test]
+fn the_desktop_containerfile_builds_on_core_and_installs_the_launcher() {
+    // 09: the desktop artifact is core + pinned Chromium + the launcher, and is the one image
+    // with a default command. CORE_IMAGE is required, never defaulted.
+    assert!(DESKTOP_IMAGE.contains("ARG CORE_IMAGE"), "{DESKTOP_IMAGE}");
+    assert!(
+        DESKTOP_IMAGE.contains("FROM ${CORE_IMAGE}"),
+        "{DESKTOP_IMAGE}"
+    );
+    assert!(
+        DESKTOP_IMAGE.contains("--bin daiorama-browser"),
+        "the launcher is built in its own stage"
+    );
+    assert!(
+        DESKTOP_IMAGE.contains("COPY --from=launcher /src/target/release/daiorama-browser /usr/local/bin/daiorama-browser"),
+        "{DESKTOP_IMAGE}"
+    );
+    assert!(
+        DESKTOP_IMAGE.contains("CMD [\"daiorama\", \"serve\"]"),
+        "{DESKTOP_IMAGE}"
+    );
+    assert!(
+        DESKTOP_IMAGE.contains("ENTRYPOINT [\"/usr/local/bin/daiorama-entrypoint\"]"),
+        "the seed entrypoint is installed as the desktop entrypoint"
+    );
+    assert!(
+        DESKTOP_IMAGE.contains("COPY packaging/container/entrypoint.sh"),
+        "{DESKTOP_IMAGE}"
+    );
+    assert!(README.contains("Build the desktop image"), "{README}");
+    assert!(SPEC_09.contains("Containerfile.desktop"), "{SPEC_09}");
 }
