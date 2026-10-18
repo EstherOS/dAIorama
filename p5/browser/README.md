@@ -88,7 +88,7 @@ data rule). The core image is unchanged: no Chromium, no launcher, no default co
    probe page is gone, and the browser is on `<url>`.
 2. **No title:** a stub browser that never sets a title → no file, one warning, and the session
    keeps `renderer: unverified`.
-3. **Signals:** SIGTERM to the launcher ends the browser and the launcher exits 143; no orphan.
+3. **Signals:** SIGTERM to the launcher ends the browser and leaves no orphan; the launcher exits with the browser's status (a clean Chromium shutdown is 0; 128 + signal only when the browser is actually signalled).
 4. **Manager read:** with a file seeded as `renderer=llvmpipe`, a session detail call moves the
    mark to `software` and records one `renderer.software` history event; with a hardware string,
    the mark is unchanged.

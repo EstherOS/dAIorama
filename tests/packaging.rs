@@ -532,7 +532,10 @@ fn image_builds_stage_the_embedded_release_trust_list() {
     // this the image build fails at `couldn't read src/../packaging/release/trusted-keys`.
     let copy = "COPY packaging/release/trusted-keys ./packaging/release/trusted-keys";
     assert!(CORE_IMAGE.contains(copy), "core image omits the trust list");
-    assert!(DESKTOP_IMAGE.contains(copy), "desktop launcher stage omits the trust list");
+    assert!(
+        DESKTOP_IMAGE.contains(copy),
+        "desktop launcher stage omits the trust list"
+    );
 }
 
 #[test]
