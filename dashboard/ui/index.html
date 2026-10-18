@@ -22,21 +22,22 @@
       <thead><tr><th>id</th><th>label</th><th>state</th><th>view</th><th>scope</th><th>size</th><th>idle</th></tr></thead>
       <tbody id="session-rows"></tbody>
     </table>
-    <p id="sessions-note" class="muted"></p>
+    <p id="sessions-note" class="muted" aria-live="polite"></p>
   </section>
   <section id="detail" aria-label="Session detail">
     <h2>Session <span id="detail-id" class="muted"></span></h2>
     <div id="detail-body" class="muted">Pick a session.</div>
     <div class="row">
       <button id="open-view" disabled>Open view</button>
-      <span id="view-note" class="muted"></span>
+      <span id="view-note" class="muted" aria-live="polite"></span>
     </div>
     <h3>History</h3>
     <ul id="history"></ul>
     <button id="older" disabled>Load older</button>
+    <p id="history-note" class="muted" aria-live="polite"></p>
   </section>
 </main>
-<footer class="muted">read-only view · polling every 5 s · tokens stay on this machine</footer>
+<footer class="muted">read-only view · polling every 5 s · tokens stay on this machine · rows select with Tab + Enter</footer>
 <script src="/app.js"></script>
 </body>
 </html>
