@@ -125,7 +125,14 @@ Two artifacts, one Containerfile each (pre-read and rationale: `p5/image/README.
 Both Containerfiles live in `packaging/container/`: `Containerfile.core` (no default command) and
 `Containerfile.desktop` (`ARG CORE_IMAGE` required, launcher-only build stage, pinned Chromium,
 `CMD ["daiorama","serve"]`). The desktop build consumes a core image reference; the release
-manifest records the core digest it was built on.
+manifest records the core digest it was built on. Offline builds pass `NOVNC_TARBALL=<file>` with
+the pinned tarball in `packaging/novnc/`; `fetch.sh` verifies the same sha256 either way.
+
+**Container user.** Both images run as uid 0 inside the rootless user namespace; the namespace,
+not an in-container account, is the security boundary. Chromium refuses to start as root without
+`--no-sandbox`, so `daiorama-browser` adds that flag only when `geteuid() == 0` (bare-host runs
+never get it) and says so on stderr. Hyprland's root escape is already passed by the session
+spawner. A non-root image user is a possible later shape, not this one.
 
 The desktop image's `CMD` is the **documented exception** to the no-default-CMD rule above; the
 rule is scoped to the core image. The systemd unit in `packaging/systemd/` is the bare-host

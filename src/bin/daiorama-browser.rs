@@ -103,13 +103,24 @@ fn run(args: Args) -> Result<i32, (i32, String)> {
     let probe = runtime.join(PROBE_FILENAME);
     write_private(&probe, &probe_html(&args.url)).map_err(|err| (127, err))?;
 
+    // Chromium refuses to start as uid 0 without --no-sandbox. Both images run as root inside a
+    // rootless user namespace (09), so the namespace — not Chromium's sandbox — is the boundary;
+    // the flag is added only in that case, never on a bare host.
+    let as_root = unsafe { libc::geteuid() } == 0;
+    if as_root {
+        eprintln!(
+            "daiorama-browser: running as uid 0; adding --no-sandbox (the container user namespace is the boundary)"
+        );
+    }
     let mut command = Command::new(&browser);
     command
-        .arg(format!("--app=file://{}", probe.display()))
-        .arg(format!("--user-data-dir={}", profile.display()))
-        .arg("--no-first-run")
-        .arg("--no-default-browser-check")
-        .args(&args.browser_args)
+        .args(browser_argv(
+            &browser,
+            &probe,
+            &profile,
+            &args.browser_args,
+            as_root,
+        ))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit());
@@ -173,6 +184,27 @@ fn run(args: Args) -> Result<i32, (i32, String)> {
         Some(code) => code,
         None => 128 + status.signal().unwrap_or(0),
     })
+}
+
+/// The browser argv, split out so the root-sandbox decision is testable without a browser.
+fn browser_argv(
+    _browser: &str,
+    probe: &Path,
+    profile: &Path,
+    extra: &[String],
+    as_root: bool,
+) -> Vec<String> {
+    let mut argv = vec![
+        format!("--app=file://{}", probe.display()),
+        format!("--user-data-dir={}", profile.display()),
+        "--no-first-run".to_string(),
+        "--no-default-browser-check".to_string(),
+    ];
+    if as_root {
+        argv.push("--no-sandbox".to_string());
+    }
+    argv.extend(extra.iter().cloned());
+    argv
 }
 
 /// Poll the compositor's client list for the probe title. `Ok(None)` is a timeout (not an
@@ -313,6 +345,21 @@ mod tests {
         assert!(html.contains("2000"));
         assert!(html.contains("UNMASKED_RENDERER_WEBGL"));
         assert!(html.contains("\"https://example.test/a?b=1\""));
+    }
+
+    #[test]
+    fn root_runs_add_no_sandbox_and_bare_host_does_not() {
+        let probe = Path::new("/run/browser-probe.html");
+        let profile = Path::new("/data/browser");
+        let plain = browser_argv("chromium", probe, profile, &[], false);
+        assert!(!plain.iter().any(|arg| arg == "--no-sandbox"), "{plain:?}");
+        let root = browser_argv("chromium", probe, profile, &[], true);
+        assert!(root.iter().any(|arg| arg == "--no-sandbox"), "{root:?}");
+        assert!(root.iter().any(|arg| arg.starts_with("--app=file://")));
+        assert!(
+            root.iter()
+                .any(|arg| arg == "--user-data-dir=/data/browser")
+        );
     }
 
     #[test]

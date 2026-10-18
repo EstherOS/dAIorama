@@ -545,6 +545,10 @@ fn the_desktop_containerfile_builds_on_core_and_installs_the_launcher() {
         DESKTOP_IMAGE.contains("COPY packaging/container/entrypoint.sh"),
         "{DESKTOP_IMAGE}"
     );
+    assert!(
+        DESKTOP_IMAGE.contains("ARG NOVNC_TARBALL"),
+        "{DESKTOP_IMAGE}"
+    );
     assert!(README.contains("Build the desktop image"), "{README}");
     assert!(SPEC_09.contains("Containerfile.desktop"), "{SPEC_09}");
 }

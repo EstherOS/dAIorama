@@ -30,12 +30,19 @@ RUN cargo build --release --locked --bin daiorama-browser
 # The pinned noVNC tree, fetched once with the installer's own hash check and carried read-only;
 # entrypoint.sh seeds it into the data volume on first boot (09: the tree is data, not a layer).
 FROM docker.io/library/debian:sid-slim@${DEBIAN_SID_DIGEST} AS novnc
+ARG NOVNC_TARBALL
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates tar \
     && rm -rf /var/lib/apt/lists/*
-COPY packaging/novnc/fetch.sh /usr/local/bin/fetch-novnc
-RUN sh /usr/local/bin/fetch-novnc /usr/share/daiorama/novnc
+COPY packaging/novnc /opt/novnc-stage
+# Offline builds pass NOVNC_TARBALL=<name> with the pinned tarball placed in packaging/novnc/;
+# fetch.sh still verifies the pinned sha256, so the source of the bytes changes, not the trust.
+RUN if [ -n "${NOVNC_TARBALL}" ] && [ -f "/opt/novnc-stage/${NOVNC_TARBALL}" ]; then \
+        sh /opt/novnc-stage/fetch.sh /usr/share/daiorama/novnc "/opt/novnc-stage/${NOVNC_TARBALL}"; \
+    else \
+        sh /opt/novnc-stage/fetch.sh /usr/share/daiorama/novnc; \
+    fi
 
 FROM ${CORE_IMAGE}
 
