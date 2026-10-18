@@ -1,0 +1,50 @@
+# Pixel oracle — 2509c98
+
+The shipped `screenshot` tool, driven through `daiorama mcp` (scope act, categories
+input/capture/query), from a session with a solid `swaybg -c '#ff0000'` background. The PNG is
+decoded with the stdlib and sampled at four well-separated points; the expected RGB is #ff0000.
+
+Environment: L1 image `0f9c851bf381` (privileged, `/dev/dri/renderD128`), `daiorama` built from
+the same tree; sessions `daiorama new --resolution <res> --scale <n>`; one `dbus-run-session`
+for the leg.
+
+```
+== one: 1280x720 @ scale 1 ==
+dbus-daemon[3]: [session uid=0 pid=3 pidfd=5] Activating service name='ca.desrt.dconf' requested by ':1.1' (uid=0 pid=106 comm="Hyprland --i-am-really-stupid" label="unconfined_u:unconfined_r:spc_t:s0")
+dbus-daemon[3]: [session uid=0 pid=3 pidfd=5] Successfully activated service 'ca.desrt.dconf'
+sid=d60f4371-155f-40c5-a24a-7a857aa79370 rt=/tmp/dr-d60f4371 ws=wayland-1 sig=efb50993780079460b0cbed1363e2166a2de1d9f_1792335494_1892173724
+DIM=1280x720
+SAMPLE x=128 y=72 rgb=#ff0000
+SAMPLE x=1152 y=72 rgb=#ff0000
+SAMPLE x=640 y=648 rgb=#ff0000
+SAMPLE x=1152 y=648 rgb=#ff0000
+SAMPLE_OK
+DIM_EXPECTED=1280 x 720
+== two: 1920x1080 @ scale 1 ==
+sid=af03b804-84ac-46df-89c3-9ee62283a38f rt=/tmp/dr-af03b804 ws=wayland-1 sig=efb50993780079460b0cbed1363e2166a2de1d9f_1792335497_1316282757
+DIM=1920x1080
+SAMPLE x=192 y=108 rgb=#ff0000
+SAMPLE x=1728 y=108 rgb=#ff0000
+SAMPLE x=960 y=972 rgb=#ff0000
+SAMPLE x=1728 y=972 rgb=#ff0000
+SAMPLE_OK
+DIM_EXPECTED=1920 x 1080
+== three: 1280x720 @ scale 2 ==
+sid=7c916876-0352-4a0e-8150-fcd278be520c rt=/tmp/dr-7c916876 ws=wayland-1 sig=efb50993780079460b0cbed1363e2166a2de1d9f_1792335502_1316483352
+DIM=2560x1440
+SAMPLE x=256 y=144 rgb=#ff0000
+SAMPLE x=2304 y=144 rgb=#ff0000
+SAMPLE x=1280 y=1296 rgb=#ff0000
+SAMPLE x=2304 y=1296 rgb=#ff0000
+SAMPLE_OK
+DIM_EXPECTED=2560 x 1440
+PIXEL_FAILS=0
+VERDICT=PASS
+SCRIPT_RC=0
+RUN-DONE
+```
+
+Result: **PIXEL_FAILS=0** — dimensions are the physical screenshot size at all three sessions
+(`1280x720`, `1920x1080`, and `2560x1440` at scale 2), and all sampled pixels are `#ff0000`.
+The scale-2 result is the logical→physical assertion: a 1280×720 logical session with scale 2
+produces a 2560×1440 screenshot.
