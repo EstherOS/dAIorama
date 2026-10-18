@@ -59,6 +59,17 @@ struct SessionRate {
     queued: AtomicUsize,
 }
 
+/// How many `(scope, session)` buckets the manager keeps.
+///
+/// The gate runs before any session lookup and keys the bucket by a caller-supplied id, so a
+/// control-call flood with fresh ids used to grow this map for the life of the process
+/// (measured on a real manager: each round of 16 calls carrying 1 MiB ids moved VmRSS by
+/// ~17 MB, round after round, and one 6 MiB id by ~17 MB). 4,096 is far above any real
+/// fleet's live session count — every session owns a compositor — and overflow evicts the
+/// least-recently-used quarter, so the map stays proportional to live traffic rather than to
+/// every id ever seen.
+const MAX_TRACKED_SESSIONS: usize = 4096;
+
 #[derive(Default)]
 pub struct RateLimiter {
     sessions: Mutex<HashMap<String, Arc<SessionRate>>>,
@@ -67,16 +78,42 @@ pub struct RateLimiter {
 impl RateLimiter {
     fn entry(&self, key: &str, burst: u32) -> Arc<SessionRate> {
         let mut sessions = self.sessions.lock().expect("rate lock");
-        sessions
-            .entry(key.to_string())
-            .or_insert_with(|| {
-                Arc::new(SessionRate {
-                    gate: Mutex::new(()),
-                    bucket: Mutex::new(Bucket::new(burst)),
-                    queued: AtomicUsize::new(0),
-                })
-            })
-            .clone()
+        if let Some(existing) = sessions.get(key) {
+            return Arc::clone(existing);
+        }
+        sessions.insert(
+            key.to_string(),
+            Arc::new(SessionRate {
+                gate: Mutex::new(()),
+                bucket: Mutex::new(Bucket::new(burst)),
+                queued: AtomicUsize::new(0),
+            }),
+        );
+        if sessions.len() > MAX_TRACKED_SESSIONS {
+            evict_locked(&mut sessions);
+        }
+        Arc::clone(sessions.get(key).expect("just inserted"))
+    }
+
+    /// Drops a session's bucket when the session closes. The bucket has no meaning after that,
+    /// and a manager that runs one session per client turn must not keep an entry per session
+    /// it has ever run. A parked caller keeps its entry (its gate state is the queue).
+    pub fn forget(&self, scope: &str, session_id: &str) {
+        let key = format!("{scope}:{session_id}");
+        let Ok(mut sessions) = self.sessions.lock() else {
+            return;
+        };
+        let idle = sessions
+            .get(&key)
+            .is_some_and(|entry| entry.queued.load(Ordering::SeqCst) == 0);
+        if idle {
+            sessions.remove(&key);
+        }
+    }
+
+    #[cfg(test)]
+    fn tracked(&self) -> usize {
+        self.sessions.lock().expect("rate lock").len()
     }
 
     /// Consume one token for a control-class call, or refuse with `rate_limited`.
@@ -86,6 +123,13 @@ impl RateLimiter {
         session_id: &str,
         rate: &RateLimit,
     ) -> Result<(), ErrorEnvelope> {
+        // An id that cannot name a session never earns a bucket: the handler refuses it a few
+        // lines later, and keying it would let a caller park an arbitrary string in the map (a
+        // 1 MiB id used to stay resident after the call was refused). Nothing is refused here —
+        // the dispatch arm owns that answer.
+        if !crate::history::valid_session_id(session_id) {
+            return Ok(());
+        }
         let key = format!("{scope}:{session_id}");
         let entry = self.entry(&key, rate.burst);
         let queued = entry.queued.fetch_add(1, Ordering::SeqCst) + 1;
@@ -121,6 +165,29 @@ impl RateLimiter {
         bucket.refill(rate);
         bucket.take();
         Ok(())
+    }
+}
+
+/// Evicts the least-recently-used quarter of the map down to the target, never a session with
+/// a caller parked on its gate (that state is the arrival-order queue, not cache). `Bucket::last`
+/// is the last acquire, which is exactly the recency this map needs. Called only on overflow, so
+/// the scan is amortised over `MAX_TRACKED_SESSIONS / 4` inserts.
+fn evict_locked(sessions: &mut HashMap<String, Arc<SessionRate>>) {
+    let target = MAX_TRACKED_SESSIONS * 3 / 4;
+    if sessions.len() <= target {
+        return;
+    }
+    let mut order: Vec<(Instant, String)> = sessions
+        .iter()
+        .filter(|(_, entry)| entry.queued.load(Ordering::SeqCst) == 0)
+        .map(|(key, entry)| (entry.bucket.lock().expect("bucket").last, key.clone()))
+        .collect();
+    order.sort_by_key(|(last, _)| *last);
+    for (_, key) in order {
+        if sessions.len() <= target {
+            break;
+        }
+        sessions.remove(&key);
     }
 }
 
@@ -214,5 +281,78 @@ mod tests {
         let rate = rate(1, 1, RateMode::Reject);
         assert!(limiter.acquire("s", "one", &rate).is_ok());
         assert!(limiter.acquire("s", "two", &rate).is_ok());
+    }
+
+    #[test]
+    fn an_id_that_cannot_name_a_session_is_never_keyed() {
+        let limiter = RateLimiter::default();
+        let rate = rate(1, 1, RateMode::Reject);
+        // The gate answers Ok (the dispatch arm refuses the call); the point is that none of
+        // these strings becomes a map key.
+        assert!(
+            limiter
+                .acquire("s", &"x".repeat(1024 * 1024), &rate)
+                .is_ok()
+        );
+        assert!(limiter.acquire("s", "with/slash", &rate).is_ok());
+        assert!(limiter.acquire("s", "..", &rate).is_ok());
+        assert!(limiter.acquire("s", &"n".repeat(129), &rate).is_ok());
+        assert_eq!(limiter.tracked(), 0);
+        // A valid id right beside them still gets its bucket.
+        assert!(limiter.acquire("s", "sess-1", &rate).is_ok());
+        assert_eq!(limiter.tracked(), 1);
+    }
+
+    #[test]
+    fn the_tracked_map_is_bounded() {
+        let limiter = RateLimiter::default();
+        let rate = rate(1_000_000, 40, RateMode::Reject);
+        for index in 0..(MAX_TRACKED_SESSIONS * 2) {
+            limiter
+                .acquire("s", &format!("sess-{index}"), &rate)
+                .expect("a fresh id passes");
+        }
+        let tracked = limiter.tracked();
+        assert!(tracked <= MAX_TRACKED_SESSIONS, "tracked {tracked}");
+        assert!(
+            tracked > MAX_TRACKED_SESSIONS / 2,
+            "eviction trims a quarter, it does not clear the map: {tracked}"
+        );
+    }
+
+    #[test]
+    fn eviction_keeps_the_newest_buckets_state() {
+        let limiter = RateLimiter::default();
+        let rate = rate(1, 1, RateMode::Reject);
+        // Drained first, so it is the oldest entry and the first eviction candidate.
+        assert!(limiter.acquire("s", "old", &rate).is_ok());
+        for index in 0..(MAX_TRACKED_SESSIONS + 1) {
+            limiter
+                .acquire("s", &format!("sess-{index}"), &rate)
+                .expect("a fresh id passes");
+        }
+        // The newest entry keeps its spent bucket: the second call is refused, not fresh.
+        let newest = format!("sess-{MAX_TRACKED_SESSIONS}");
+        let refused = limiter.acquire("s", &newest, &rate).unwrap_err();
+        assert_eq!(refused.code, crate::ipc::ErrorCode::RateLimited);
+        // The oldest entry was forgotten, so it starts full again — like an unseen session.
+        assert!(limiter.acquire("s", "old", &rate).is_ok());
+    }
+
+    #[test]
+    fn forgetting_a_session_drops_its_bucket() {
+        let limiter = RateLimiter::default();
+        let rate = rate(1, 1, RateMode::Reject);
+        assert!(limiter.acquire("s", "sess", &rate).is_ok());
+        assert_eq!(
+            limiter.acquire("s", "sess", &rate).unwrap_err().code,
+            crate::ipc::ErrorCode::RateLimited
+        );
+        limiter.forget("s", "sess");
+        assert_eq!(limiter.tracked(), 0);
+        assert!(
+            limiter.acquire("s", "sess", &rate).is_ok(),
+            "a forgotten bucket starts full"
+        );
     }
 }

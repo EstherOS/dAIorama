@@ -1,0 +1,113 @@
+Rate-limiter bucket-map growth — live leg (P5 hardening)
+
+Tree:   base `75050e8` (spec/v1)  ->  fix: this branch (`p5/rate-bucket-bound`, rebased on `68c01ad`)
+Image:  docker.io/library/rust:slim, one fresh container per run; python3 for the probe
+Leg:    p2/hardening/run-rate-buckets.sh <binary> <label>
+        one real `daiorama serve`, real unix-socket frames into `dispatch()`, repeated
+        identical loads, manager VmRSS read from /proc/<pid>/status after a 0.6 s settle.
+        Every id here is longer than the store's 128-byte session-id bound, so every call is
+        answered `session_not_found` — the frame is accepted, the rate gate runs, nothing else
+        does. That isolates the bucket map from session work and from history writes.
+
+Finding (base): the B9 bucket map is keyed by the caller-supplied `session_id` and never
+shrinks. `dispatch()` spends the control-class token before any session lookup, so a call
+naming nothing still inserts `"<scope>:<id>"` verbatim. Measured: each round of 16 calls
+carrying 1 MiB ids added ~17 MB to VmRSS and the next round added another ~17 MB (linear, not
+allocator noise); one 6 MiB id added ~17 MB on its own; twelve 6 MiB ids added ~100 MB total
+and the process never released it. A client that can send control calls can therefore grow the
+manager without bound until every session on the box dies with it.
+
+Fix (this branch): ids that cannot name a session are never keyed (the handler already answers
+`session_not_found`; nothing is refused differently); the map is capped at 4,096 buckets with
+the least-recently-used quarter evicted on overflow (never a bucket with a caller parked on
+its gate); `close_session` drops the bucket for the closing and the creating scope.
+
+== gate (fresh rust:slim, tree = 68c01ad + this branch)
+cargo fmt --all; cargo fmt --all --check; cargo clippy --workspace --all-targets --locked -- -D warnings;
+cargo test --workspace --all-targets --locked
+FMT=0  FMT_CHECK=0  CLIPPY=0  TESTS=0
+test result lines (17 suites): 444 passed, 0 failed, 6 ignored —
+  284 (+6 ignored) unit · 5 browser · 7 config_scope · 8 daemon · 9 dashboard · 3 doctor ·
+  27 fixtures · 19 install_script · 7 mcp · 22 mcp_listen · 6 network · 25 packaging ·
+  6 release_manifest · 3 release_script · member 6 · 2 · 5; the four new rate tests are
+  inside the unit count.
+  The suite does not read p2/hardening/**; only the probe ran after this gate, on this tree.
+
+== base `75050e8` — probe (same script as the fix run)
+== probe (base)
+[OK]   [A1] manager is running (pid=1779)
+[OBS]  [A2] baseline VmRSS = 10696 kB
+[OBS]  [B1] round 1: 16 x 1 MiB ids in 1.66s; VmRSS 10696 -> 34284 kB (delta 23588 kB)
+[OBS]  [B2] round 2: 16 x 1 MiB ids in 1.68s; VmRSS 34284 -> 50668 kB (delta 16384 kB)
+[OBS]  [B3] round 3: 16 x 1 MiB ids in 1.24s; VmRSS 50668 -> 68076 kB (delta 17408 kB)
+[OK]   [B4] every id answered `session_not_found` (the frame passed the gate) ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[FAIL] [B5] a second round of fresh ids does not grow the manager :: round2 delta=16384 kB (bound 2048 kB)
+[FAIL] [B6] a third round stays flat (steady state, not a slower leak) :: round3 delta=17408 kB (bound 2048 kB)
+[OBS]  [C1] 6 MiB id #1: VmRSS 68076 -> 85480 kB (delta 17404 kB)
+[OBS]  [C1] 6 MiB id #2: VmRSS 85480 -> 103912 kB (delta 18432 kB)
+[OBS]  [C1] 6 MiB id #3: VmRSS 103912 -> 122352 kB (delta 18440 kB)
+[OBS]  [C1] 6 MiB id #4: VmRSS 122352 -> 128496 kB (delta 6144 kB)
+[OBS]  [C1] 6 MiB id #5: VmRSS 128496 -> 134640 kB (delta 6144 kB)
+[OBS]  [C1] 6 MiB id #6: VmRSS 134640 -> 128620 kB (delta -6020 kB)
+[OBS]  [C1] 6 MiB id #7: VmRSS 128620 -> 140780 kB (delta 12160 kB)
+[OBS]  [C1] 6 MiB id #8: VmRSS 140780 -> 153072 kB (delta 12292 kB)
+[OBS]  [C1] 6 MiB id #9: VmRSS 153072 -> 159216 kB (delta 6144 kB)
+[OBS]  [C1] 6 MiB id #10: VmRSS 159216 -> 165360 kB (delta 6144 kB)
+[OBS]  [C1] 6 MiB id #11: VmRSS 165360 -> 171504 kB (delta 6144 kB)
+[OBS]  [C1] 6 MiB id #12: VmRSS 171504 -> 171504 kB (delta 0 kB)
+[OK]   [C2] the 6 MiB ids are refused as unknown sessions (session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found)
+[FAIL] [C3] twelve 6 MiB ids plateau instead of accumulating :: total=103428 kB over 12 calls (ceiling 81920 kB; an unbounded map adds ~6 MiB/call)
+[OK]   [D1] the first two calls pass the bucket (session_not_found / session_not_found)
+[OK]   [D2] the third call is rate_limited ({"error": {"code": "rate_limited", "message": "rate limit exceeded for scope \"operator\"", "hint": "retry after 998 ms"}})
+[OK]   [E1] status still answers after the id burst ({"result": {"drain": {"active": false, "remaining": 0}, "instance_id": "7ba82e2d-ba13-4da9-9531-5ffe3a26268c", "mode": "background", "pid": 1779, "sessions": {"dead": 0, "running": 0}, "socket": "/tmp)
+FAILS=3
+ratebuckets_rc=3
+VERDICT=FAIL
+SCRIPT_RC=3
+
+== fix (this branch) — probe (inside the gate container, after the suite)
+== probe (fixed)
+[OK]   [A1] manager is running (pid=8993)
+[OBS]  [A2] baseline VmRSS = 10760 kB
+[OBS]  [B1] round 1: 16 x 1 MiB ids in 0.73s; VmRSS 10760 -> 17948 kB (delta 7188 kB)
+[OBS]  [B2] round 2: 16 x 1 MiB ids in 0.57s; VmRSS 17948 -> 17952 kB (delta 4 kB)
+[OBS]  [B3] round 3: 16 x 1 MiB ids in 0.71s; VmRSS 17952 -> 17952 kB (delta 0 kB)
+[OK]   [B4] every id answered `session_not_found` (the frame passed the gate) ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [B5] a second round of fresh ids does not grow the manager (round2 delta=4 kB (bound 2048 kB))
+[OK]   [B6] a third round stays flat (steady state, not a slower leak) (round3 delta=0 kB (bound 2048 kB))
+[OBS]  [C1] 6 MiB id #1: VmRSS 17952 -> 29208 kB (delta 11256 kB)
+[OBS]  [C1] 6 MiB id #2: VmRSS 29208 -> 42516 kB (delta 13308 kB)
+[OBS]  [C1] 6 MiB id #3: VmRSS 42516 -> 42516 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #4: VmRSS 42516 -> 42516 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #5: VmRSS 42516 -> 42516 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #6: VmRSS 42516 -> 42516 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #7: VmRSS 42516 -> 54808 kB (delta 12292 kB)
+[OBS]  [C1] 6 MiB id #8: VmRSS 54808 -> 54808 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #9: VmRSS 54808 -> 54808 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #10: VmRSS 54808 -> 54808 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #11: VmRSS 54808 -> 54808 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #12: VmRSS 54808 -> 54808 kB (delta 0 kB)
+[OK]   [C2] the 6 MiB ids are refused as unknown sessions (session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found)
+[OK]   [C3] twelve 6 MiB ids plateau instead of accumulating (total=36856 kB over 12 calls (ceiling 81920 kB; an unbounded map adds ~6 MiB/call))
+[OK]   [D1] the first two calls pass the bucket (session_not_found / session_not_found)
+[OK]   [D2] the third call is rate_limited ({"error": {"code": "rate_limited", "message": "rate limit exceeded for scope \"operator\"", "hint": "retry after 998 ms"}})
+[OK]   [E1] status still answers after the id burst ({"result": {"drain": {"active": false, "remaining": 0}, "instance_id": "8b66d037-03df-4bd1-9412-81ea39232c70", "mode": "background", "pid": 8993, "sessions": {"dead": 0, "running": 0}, "socket": "/tmp)
+FAILS=0
+ratebuckets_rc=0
+VERDICT=PASS
+SCRIPT_RC=0
+
+== reading
+- [B] rounds 2 and 3 add exactly 0 kB on the fix; on the base they add 16,384 kB and 17,408 kB.
+  Round 1's growth on the fix (~7-8 MB) is allocator arena for the 1 MiB frames, not the map:
+  it does not repeat.
+- [C] twelve 6 MiB ids: base 103,428 kB total, climbing on most calls; fix 36,856 kB total in
+  three arena-sized jumps (11.3 / 13.3 / 12.3 MB, frame buffers) with zero on every other call
+  and a 54,808 kB peak. The fix's share is allocator arena, not map entries — the map never sees
+  these ids at all.
+- [D] both builds keep pacing (burst 2 reject, third call `rate_limited` with a retry hint), and
+  every id in [B]/[C] is answered `session_not_found`, so refusal behaviour is unchanged.
+- Residual, same class and not fixed here: `History` keeps an in-memory per-session map and a
+  session directory for a `tool.call` record naming a valid-but-unknown session id. Both are
+  keyed by client input too; the rate map was the sharpest (arbitrary key bytes retained with
+  no cleanup at all). Named for a follow-up, not scored in this leg.

@@ -475,6 +475,14 @@ impl RuntimeService {
         // The retention sweep's input: a durable "ended at" marker, never inferred from mtimes.
         self.history
             .mark_ended(&id, &scope_of, origin_of.as_str(), "closed");
+        // A closed session's pacing bucket dies with it: the map is keyed by caller-supplied
+        // ids, so it must stay proportional to live sessions rather than to every session ever
+        // run. The close may come from a wider scope than the one that created the session, so
+        // the creating scope's key is dropped too.
+        self.rate.forget(scope, &id);
+        if scope_of != scope {
+            self.rate.forget(&scope_of, &id);
+        }
         Ok(json!({ "id": id, "state": "closed" }))
     }
 
