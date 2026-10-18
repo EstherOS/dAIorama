@@ -100,6 +100,11 @@ async function refreshManagers() {
     state.sessions = [];
     state.session = null;
   }
+  // A single configured manager is the common operator setup: pick it (preferring a reachable
+  // one) instead of making the first screen an empty "pick a manager" prompt.
+  if (!state.manager && state.managers.length) {
+    state.manager = (state.managers.find((manager) => manager.ok) ?? state.managers[0]).name;
+  }
   renderManagers();
 }
 
