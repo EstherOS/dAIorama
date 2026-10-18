@@ -72,8 +72,10 @@ agent's own container), and this is its named delivery (C2).
   protocol version is its own semver; the compat table ships in `RELEASE-NOTES.md`,
   one `## <version>` section per release. A build test reads the section for the
   current `CARGO_PKG_VERSION` and fails when it is missing or a row disagrees with
-  the code (`Cargo.toml`, `ipc::PROTOCOL_VERSION`, the dashboard crate's version),
-  so a version bump cannot ship stale ranges.
+  the code (`Cargo.toml`, `ipc::PROTOCOL_VERSION`, the dashboard crate's version,
+  `release::MANIFEST_FORMAT`), so a version bump cannot ship stale ranges. A
+  supported-range cell follows the protocol's minor series; a range that spans
+  series is spelled out by hand and the test's prefix is updated with it.
 - **Dashboard is a separate module artifact** (below) — never a compile-time
   feature flag: prebuilt downloads don't shrink with flags, a real module
   shrinks the default download.

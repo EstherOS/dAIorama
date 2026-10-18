@@ -16,6 +16,7 @@ const SPEC_06: &str = include_str!("../docs/06-sessions-views.md");
 const SPEC_09: &str = include_str!("../docs/09-packaging.md");
 const RELEASE_NOTES: &str = include_str!("../RELEASE-NOTES.md");
 const IPC: &str = include_str!("../src/ipc/mod.rs");
+const RELEASE_SRC: &str = include_str!("../src/release.rs");
 const DASHBOARD_MANIFEST: &str = include_str!("../dashboard/Cargo.toml");
 const SPEC_10: &str = include_str!("../docs/10-operations.md");
 const IMAGE_NOTE: &str = include_str!("../p5/image/README.md");
@@ -663,6 +664,27 @@ fn release_notes_section<'a>(notes: &'a str, version: &str) -> &'a str {
     &rest[..end]
 }
 
+/// `release::MANIFEST_FORMAT` as a number (the binary has no lib target to import it from).
+fn manifest_format(source: &str) -> u64 {
+    let needle = "pub const MANIFEST_FORMAT: u64 = ";
+    let start = source
+        .find(needle)
+        .unwrap_or_else(|| panic!("release::MANIFEST_FORMAT is gone"));
+    let digits: String = source[start + needle.len()..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    digits.parse().expect("MANIFEST_FORMAT is not a number")
+}
+
+/// The protocol's minor series as a range prefix (`0.1.0` → `0.1.`).
+fn series_of(version: &str) -> String {
+    let mut parts = version.split('.');
+    let major = parts.next().unwrap_or_default();
+    let minor = parts.next().unwrap_or_default();
+    format!("{major}.{minor}.")
+}
+
 /// A compat-table row by its first cell, with markdown backticks stripped so a
 /// value compares to the code's constant directly.
 fn notes_row(section: &str, surface: &str) -> Vec<String> {
@@ -713,4 +735,36 @@ fn release_notes_carry_this_version_and_agree_with_the_code() {
 
     // The pointer is two-way: the doc the test reads is the doc 09 names.
     assert!(SPEC_09.contains("RELEASE-NOTES.md"), "{SPEC_09}");
+
+    // N1: the format cell is the build's constant, not a copied digit.
+    let format = manifest_format(RELEASE_SRC);
+    let row = notes_row(section, "Release manifest");
+    assert_eq!(
+        row[1],
+        format!("format: {format}"),
+        "the manifest row disagrees with release::MANIFEST_FORMAT: {row:?}"
+    );
+
+    // N1: a supported-range cell follows the released protocol series. A range that
+    // spans series is spelled out by hand, and this prefix is updated with it.
+    let series = series_of(&protocol);
+    for surface in ["Core binary (`daiorama`)", "RPC protocol"] {
+        let row = notes_row(section, surface);
+        assert!(
+            row[2].starts_with(&series),
+            "the {surface} range is outside the protocol series {series}: {row:?}"
+        );
+    }
+
+    // N2: exactly one section per version — a second heading would hide a stale table
+    // behind the first one `find` happens to return.
+    let heading = format!("## {version}");
+    let headings = RELEASE_NOTES
+        .lines()
+        .filter(|line| line.trim_end() == heading)
+        .count();
+    assert_eq!(
+        headings, 1,
+        "RELEASE-NOTES.md has {headings} `{heading}` sections"
+    );
 }
