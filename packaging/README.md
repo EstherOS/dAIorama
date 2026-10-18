@@ -173,6 +173,9 @@ release manifest records the exact core reference.
       --build-arg CORE_IMAGE=localhost/daiorama:dev \
       -f packaging/container/Containerfile.desktop -t localhost/daiorama-desktop:dev .
 
+For an offline build, place the pinned noVNC tarball in `packaging/novnc/` and add
+`--build-arg NOVNC_TARBALL=<file>`; `fetch.sh` verifies the same sha256 either way.
+
 It adds pinned Chromium and the session launcher at `/usr/local/bin/daiorama-browser` (built as a
 second bin of the root crate in a launcher-only stage), and its `CMD ["daiorama","serve"]` is the
 one documented exception to the no-default-command rule. A browser started in the core image
