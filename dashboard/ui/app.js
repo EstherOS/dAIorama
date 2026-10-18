@@ -255,12 +255,24 @@ async function openView() {
     });
     const view = await response.json();
     if (!response.ok || view.error) throw new Error(view.error || `HTTP ${response.status}`);
-    const url = view.address?.includes("://") ? view.address : `http://${view.address}`;
-    const target = view.credential ? `${url}${url.includes("?") ? "&" : "?"}credential=${encodeURIComponent(view.credential)}` : url;
     el("view-note").textContent = `generation ${view.generation ?? "?"} · opened`;
-    window.open(target, "_blank", "noopener");
+    window.open(viewTarget(view), "_blank", "noopener");
   } catch (error) {
     el("view-note").textContent = String(error);
+  }
+}
+
+/** The view URL to open. `get_view` answers an address that already carries the credential
+ * (05) *and* the credential as its own field, so appending blindly put two copies of the
+ * secret in the URL. Setting the parameter on the parsed address keeps exactly one. */
+function viewTarget(view) {
+  const base = view.address?.includes("://") ? view.address : `http://${view.address}`;
+  try {
+    const url = new URL(base);
+    if (view.credential) url.searchParams.set("credential", view.credential);
+    return url.toString();
+  } catch {
+    return base;
   }
 }
 
