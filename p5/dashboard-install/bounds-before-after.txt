@@ -1,0 +1,42 @@
+# Unpacked-artifact bounds — live before/after
+
+Two builds of the same verb, the same script, the same artifacts:
+
+- **pre-fix** = `spec/v1 @ cdc269a` (the tip before this slice)
+- **post-fix** = this slice's tip
+
+The artifacts are gzipped tars built on the spot: (a) 1 binary + 33 x 4 MiB
+zero members (~132 MiB unpacked, 137 KB on disk), (b) 1 binary + 4,096 empty
+files, (c) a real module binary. Paths below are scrubbed to `<root>`/`<bin>`.
+
+## post-fix
+
+```
+[OK]   (a) 132 MiB artifact refused, no module tree (136707 bytes on disk)
+[OK]   (b) 4,097-entry artifact refused, no module tree
+[OK]   (c) real artifact installs (0.1.0 | <root>/data/daiorama/default/modules/daiorama-dashboard/0.1.0)
+[OK]   (d) core execs the installed module (no connections)
+FAILS=0
+VERDICT=PASS
+```
+
+## pre-fix
+
+```
+[FAIL] (a) 132 MiB artifact refused :: exited 0: 0.1.0
+<root>/data/daiorama/default/modules/daiorama-dashboard/0.1.0
+[FAIL] (b) 4,097-entry artifact refused :: exited 0: 0.2.0
+<root>/data/daiorama/default/modules/daiorama-dashboard/0.2.0
+[FAIL] (c) real artifact installs :: module 0.1.0 is already installed at <root>/data/daiorama/default/modules/daiorama-dashboard/0.1.0; pass --force to replace it (bad_request)
+hint: check the request against 'daiorama <command> --help'
+[FAIL] (d) core execs the installed module :: dashboard module 0.2.0 does not match this dashboard (0.1.0); run 'daiorama dashboard install --version 0.1.0' (bad_request)
+hint: check the request against 'daiorama <command> --help'
+FAILS=4
+VERDICT=FAIL
+```
+
+Read the pair as the bound's proof: the pre-fix build installs both hostile
+shapes (a version directory exists afterwards), the post-fix build refuses
+each with its pinned 04 string and leaves no module tree. The (c)/(d) legs in
+the pre-fix run fail only because (b) already installed `0.2.0`; that is the
+same absence of a bound, seen from the other side.
