@@ -1053,6 +1053,12 @@ shape the trust story:
   agent's box. `verify --artifact` matches by name + sha256 and refuses an unknown name, so a
   digest cannot be paired with the wrong artifact.
 
+  **Known constraint (script verifier):** its row lookup is line-oriented. The generator emits one
+  object per line and the installer depends on that layout, so a *compact* multi-artifact manifest
+  would match the first `sha256` on the line and fail closed with a digest mismatch rather than
+  selecting the wrong row. A false refusal is the intended failure mode here; the binary verifier
+  parses JSON and does not share the constraint.
+
 *Rejected:* an example key in the trust list (it would be a usable anchor nobody reviewed); a
 `--trusted-key` CLI flag (verification would become caller-asserted); shelling out to `minisign`
 from the binary (two trust boundaries, one of them external); signing in the generator (key
