@@ -47,6 +47,11 @@ agent's own container), and this is its named delivery (C2).
 - **The checksum gate runs first.** The artifact is hashed before any path under
   `modules/` is created, so a mismatch installs nothing and leaves the module
   tree exactly as it was.
+- **The unpacked size is bounded too.** Member sizes are summed before anything
+  is written: past 128 MiB unpacked, or past 4,096 entries, the install refuses
+  with its pinned string and the stage is removed. The digest is still the trust
+  boundary — this is the volume-fill guard behind it, since a small artifact can
+  inflate far past its compressed size.
 - **Stage, then one rename:** the archive unpacks into
   `<data>/modules/daiorama-dashboard/.stage-<pid>/`; members must be relative
   regular files or directories (no links, no escapes), and the module binary
@@ -54,6 +59,10 @@ agent's own container), and this is its named delivery (C2).
 - Activation is one atomic symlink swap: `.active.tmp-<pid>` → `<version>` is
   renamed over `active`, so the link never names a missing directory (D1's read
   rule; the target is a single slug component).
+- Replacing the active version (`--force`) clears `active` first, so the window
+  reads "not installed" rather than a link dangling at a directory that is being
+  renamed away; a failed install restores the version directory and the link, so
+  the tree is exactly what it was.
 - An existing version directory refuses unless `--force`, and `--force` replaces
   a real directory only: a symlinked (or otherwise non-directory) version path is
   never replaced — a link the operator pointed elsewhere is not an install to

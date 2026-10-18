@@ -204,6 +204,12 @@ directory (read from the asset name when omitted); `--version <old>` with no
 artifact is the revert. `--from <path|url>` is withdrawn with the downloader:
 `--artifact` is the path, and there is no URL form to confuse it with.
 
+*Implementation depth (same slice's nits, 2026-10-18):* the unpacked tree is
+bounded independently of the artifact (128 MiB of declared member sizes, 4,096
+entries), and a `--force` replacement of the active version clears `active`
+before the old directory moves aside — a failure restores both, so the link
+never dangles and a refused install leaves the tree as it found it.
+
 ### C2 — Release manifest · adopted · home: 09
 Signed manifest (artifacts × triples × checksums); one multiplatform core
 binary (CLI + manager + bridge; bridge-as-subcommand) + separate dashboard

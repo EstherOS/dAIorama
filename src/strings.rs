@@ -293,6 +293,17 @@ pub fn artifact_entry_refused(name: &str) -> String {
 /// 04: the artifact has no module binary at its root (09).
 pub const ARTIFACT_MISSING_BINARY: &str = "artifact does not contain 'daiorama-dashboard'";
 
+/// The unpacked artifact exceeds its defense-in-depth budget (the digest is the trust
+/// boundary; this bound keeps a hostile-but-correct-hash artifact from filling the volume).
+pub fn artifact_expands_too_large(limit_mib: u64) -> String {
+    format!("artifact expands beyond {limit_mib} MiB; refusing")
+}
+
+/// A tar with an absurd entry count is refused the same way.
+pub fn artifact_too_many_entries(limit: usize) -> String {
+    format!("artifact carries more than {limit} entries; refusing")
+}
+
 /// 04: `dashboard install` is a local filesystem operation; `--remote` has nothing to install on.
 pub const DASHBOARD_INSTALL_LOCAL_ONLY: &str =
     "dashboard install is local-instance only; it cannot target a remote manager";
@@ -670,6 +681,14 @@ mod tests {
             (
                 fill(&bullet("artifact does not contain"), &[]),
                 ARTIFACT_MISSING_BINARY.to_string(),
+            ),
+            (
+                fill(&bullet("artifact expands beyond"), &[("limit", "128")]),
+                artifact_expands_too_large(128),
+            ),
+            (
+                fill(&bullet("artifact carries more than"), &[("limit", "4096")]),
+                artifact_too_many_entries(4096),
             ),
             (
                 fill(

@@ -146,6 +146,8 @@ these; wording changes are spec changes.
 - `module {version} is not installed at {path}` — `--version <old>` named nothing to re-activate.
 - `artifact entry refused: {name}` — an artifact member that is absolute, escapes the staging directory, or is not a regular file or directory.
 - `artifact does not contain 'daiorama-dashboard'` — the asset has no module binary at its root.
+- `artifact expands beyond {limit} MiB; refusing` — the artifact's declared member sizes sum past the unpacked budget (128 MiB): a volume-fill guard behind the digest gate (09).
+- `artifact carries more than {limit} entries; refusing` — an archive with more than 4,096 members is refused the same way.
 - `dashboard install is local-instance only; it cannot target a remote manager`
 - `dashboard install needs --artifact <tar.gz> and --sha256 <hex>, or --version <installed> to re-activate one`
 - `--artifact requires --sha256 <hex>: the artifact is verified before it is unpacked`
