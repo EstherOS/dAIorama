@@ -17,6 +17,7 @@ const SPEC_09: &str = include_str!("../docs/09-packaging.md");
 const RELEASE_NOTES: &str = include_str!("../RELEASE-NOTES.md");
 const IPC: &str = include_str!("../src/ipc/mod.rs");
 const RELEASE_SOURCE: &str = include_str!("../src/release.rs");
+const DASHBOARD_CLIENT: &str = include_str!("../dashboard/src/client.rs");
 const DASHBOARD_MANIFEST: &str = include_str!("../dashboard/Cargo.toml");
 const SPEC_10: &str = include_str!("../docs/10-operations.md");
 const IMAGE_NOTE: &str = include_str!("../p5/image/README.md");
@@ -653,6 +654,17 @@ fn const_str(source: &str, name: &str) -> String {
     rest[..end].to_string()
 }
 
+/// Reads a non-`pub` `const NAME: &str = "…";` (the dashboard module's own protocol floor).
+fn private_const_str(source: &str, name: &str) -> String {
+    let needle = format!("const {name}: &str = \"");
+    let start = source
+        .find(&needle)
+        .unwrap_or_else(|| panic!("{name} is not a string constant any more"));
+    let rest = &source[start + needle.len()..];
+    let end = rest.find('"').expect("an unterminated constant");
+    rest[..end].to_string()
+}
+
 /// Reads a `pub const NAME: u64 = N;` value out of a source file (same doc-pin pattern).
 fn const_u64(source: &str, name: &str) -> u64 {
     let needle = format!("pub const {name}: u64 = ");
@@ -742,17 +754,22 @@ fn release_notes_carry_this_version_and_agree_with_the_code() {
     // Compatible ranges are the MIN_SUPPORTED line, not hand-written prose.
     let min_supported = const_str(IPC, "MIN_SUPPORTED");
     let range = minor_range(&min_supported);
-    for surface in [
-        "Core binary (`daiorama`)",
-        "RPC protocol",
-        "Dashboard module",
-    ] {
+    for surface in ["Core binary (`daiorama`)", "RPC protocol"] {
         let row = notes_row(section, surface);
         assert_eq!(
             row[2], range,
             "the {surface} compatible range disagrees with MIN_SUPPORTED {min_supported}: {row:?}"
         );
     }
+    // The dashboard is its own artifact with its own protocol floor; pinning it to the core's
+    // would hide an independent bump.
+    let dashboard_min = private_const_str(DASHBOARD_CLIENT, "MIN_SUPPORTED");
+    let dashboard_range = minor_range(&dashboard_min);
+    let row = notes_row(section, "Dashboard module");
+    assert_eq!(
+        row[2], dashboard_range,
+        "the Dashboard module range disagrees with dashboard/src/client.rs MIN_SUPPORTED {dashboard_min}: {row:?}"
+    );
 
     // The manifest row is the format constant, both the label and the value.
     let manifest_format = const_u64(RELEASE_SOURCE, "MANIFEST_FORMAT");
