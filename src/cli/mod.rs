@@ -298,12 +298,20 @@ pub struct DashboardArgs {
 pub enum DashboardAction {
     /// Serve the dashboard (module must be installed).
     Serve,
-    /// Install the dashboard module.
+    /// Install the dashboard module from a release asset.
     Install {
+        /// The per-triple release asset (`daiorama-dashboard-<version>-<triple>.tar.gz`).
+        #[arg(long)]
+        artifact: Option<String>,
+        /// SHA-256 of the artifact, 64 hex characters. Required with --artifact.
+        #[arg(long)]
+        sha256: Option<String>,
+        /// Module version; read from the asset name when omitted.
         #[arg(long)]
         version: Option<String>,
+        /// Replace an already-installed version directory (never a symlink).
         #[arg(long)]
-        from: Option<String>,
+        force: bool,
     },
     /// Add a manager connection.
     Connect { address: String },
@@ -1321,58 +1329,105 @@ impl App {
 
     /// 04/09: the dashboard is a separate module artifact; the core CLI only locates and
     /// execs it (never a compile-time feature, never dashboard-aware code). A missing module
-    /// is the pinned refusal; a version skew is refused before exec.
+    /// is the pinned refusal; a version skew is refused before exec. `install` is the one
+    /// dashboard verb the core owns: until the module exists there is nothing to exec.
     fn cmd_dashboard(&self, args: DashboardAction) -> Result<Answer, ErrorEnvelope> {
         use std::os::unix::process::CommandExt;
-        let DashboardAction::Install { .. } = &args else {
+        if let DashboardAction::Install {
+            artifact,
+            sha256,
+            version,
+            force,
+        } = &args
+        {
+            if self.remote.is_some() {
+                return Err(ErrorEnvelope::bad_request(
+                    crate::strings::DASHBOARD_INSTALL_LOCAL_ONLY,
+                ));
+            }
             let paths = self.paths();
-            let version = crate::config::active_dashboard_module(&paths)
-                .ok_or_else(ErrorEnvelope::module_not_installed)?;
-            if version != crate::ipc::BINARY_VERSION {
-                return Err(ErrorEnvelope::bad_request(format!(
-                    "dashboard module {version} does not match this dashboard ({}); run 'daiorama dashboard install --version {}'",
-                    crate::ipc::BINARY_VERSION,
-                    crate::ipc::BINARY_VERSION
-                )));
-            }
-            let binary = paths
-                .modules_dir()
-                .join("daiorama-dashboard")
-                .join(&version)
-                .join("daiorama-dashboard");
-            let mut command = std::process::Command::new(&binary);
-            match args {
-                DashboardAction::Serve => {
-                    command.arg("serve");
+            let installed = match (artifact, sha256) {
+                (Some(artifact), Some(digest)) => crate::install::install(
+                    &paths,
+                    std::path::Path::new(artifact),
+                    digest,
+                    version.as_deref(),
+                    *force,
+                )?,
+                (Some(_), None) => {
+                    return Err(ErrorEnvelope::bad_request(
+                        crate::strings::DASHBOARD_INSTALL_NEEDS_SHA,
+                    ));
                 }
-                DashboardAction::Connect { address } => {
-                    command.args(["connect", &address]);
+                (None, Some(_)) => {
+                    return Err(ErrorEnvelope::bad_request(
+                        crate::strings::DASHBOARD_SHA_WITHOUT_ARTIFACT,
+                    ));
                 }
-                DashboardAction::Connections(list) => match list.action {
-                    ConnectionsAction::List => {
-                        command.arg("connections");
+                (None, None) => match version {
+                    Some(installed_version) => {
+                        crate::install::activate_existing(&paths, installed_version)?
                     }
-                    ConnectionsAction::Remove { name } => {
-                        command.args(["remove", &name]);
+                    None => {
+                        return Err(ErrorEnvelope::bad_request(
+                            crate::strings::DASHBOARD_INSTALL_NEEDS_INPUT,
+                        ));
                     }
                 },
-                DashboardAction::Token(token) => match token.action {
-                    TokenConnectionAction::Set { connection } => {
-                        command.args(["token", "set", &connection]);
-                    }
-                    TokenConnectionAction::Remove { connection } => {
-                        command.args(["token", "remove", &connection]);
-                    }
-                },
-                DashboardAction::Install { .. } => unreachable!("handled above"),
-            }
-            let error = command.exec();
-            return Err(ErrorEnvelope::internal(format!(
-                "cannot exec {}: {error}",
-                binary.display()
+            };
+            let version = installed.version;
+            let path = installed.dir.display().to_string();
+            return Ok(Answer::new(
+                json!({"version": version, "path": path}),
+                vec![version, path],
+            ));
+        }
+        let paths = self.paths();
+        let version = crate::config::active_dashboard_module(&paths)
+            .ok_or_else(ErrorEnvelope::module_not_installed)?;
+        if version != crate::ipc::BINARY_VERSION {
+            return Err(ErrorEnvelope::bad_request(format!(
+                "dashboard module {version} does not match this dashboard ({}); run 'daiorama dashboard install --version {}'",
+                crate::ipc::BINARY_VERSION,
+                crate::ipc::BINARY_VERSION
             )));
-        };
-        Err(ErrorEnvelope::not_implemented())
+        }
+        let binary = paths
+            .modules_dir()
+            .join("daiorama-dashboard")
+            .join(&version)
+            .join("daiorama-dashboard");
+        let mut command = std::process::Command::new(&binary);
+        match args {
+            DashboardAction::Serve => {
+                command.arg("serve");
+            }
+            DashboardAction::Connect { address } => {
+                command.args(["connect", &address]);
+            }
+            DashboardAction::Connections(list) => match list.action {
+                ConnectionsAction::List => {
+                    command.arg("connections");
+                }
+                ConnectionsAction::Remove { name } => {
+                    command.args(["remove", &name]);
+                }
+            },
+            DashboardAction::Token(token) => match token.action {
+                TokenConnectionAction::Set { connection } => {
+                    command.args(["token", "set", &connection]);
+                }
+                TokenConnectionAction::Remove { connection } => {
+                    command.args(["token", "remove", &connection]);
+                }
+            },
+            DashboardAction::Install { .. } => unreachable!("handled above"),
+        }
+        let error = command.exec();
+        Err(ErrorEnvelope::internal(format!(
+            "cannot exec {}: {error}",
+            binary.display()
+        )))
     }
 
     async fn cmd_token(&self, args: TokenArgs) -> Result<Answer, ErrorEnvelope> {
@@ -1809,10 +1864,10 @@ mod tests {
                 "daiorama",
                 "dashboard",
                 "install",
-                "--version",
-                "1.2.3",
-                "--from",
-                "/tmp/mod",
+                "--artifact",
+                "/tmp/daiorama-dashboard-0.1.0-x86_64-unknown-linux-gnu.tar.gz",
+                "--sha256",
+                "0000000000000000000000000000000000000000000000000000000000000000",
             ][..],
             &["daiorama", "dashboard", "connect", "host:8756"][..],
             &["daiorama", "dashboard", "connections", "list"][..],

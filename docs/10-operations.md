@@ -119,6 +119,12 @@ needed, and a half-staged tree is never served.
 
 ## Dashboard operator flows (D3)
 
+- **Install first:** `daiorama dashboard install --artifact <path.tar.gz>
+  --sha256 <hex>` from the release asset for this triple (09). Verify → stage →
+  one rename → one symlink swap; a refused install leaves the module tree as it
+  was, and the previous version stays installed, so `dashboard install --version
+  <old>` is the revert. The dashboard never appears as a side effect of anything
+  else.
 - `daiorama dashboard serve` — explicit start; the dashboard never appears as
   a side effect of `--view` (03).
 - Connections: `dashboard connect <address>`, `dashboard connections

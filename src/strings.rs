@@ -243,6 +243,70 @@ pub const SCOPE_REQUIRED: &str = "scope required: set DAIORAMA_SCOPE.";
 /// 04: dashboard module absent when a dashboard command needs it (09).
 pub const MODULE_NOT_INSTALLED: &str = "module not installed; run 'daiorama dashboard install'.";
 
+/// 04: `dashboard install`'s checksum gate — the artifact's bytes are not the ones the caller
+/// named. Checked before anything under `modules/` is created (09, D5).
+pub fn checksum_mismatch(expected: &str, actual: &str) -> String {
+    format!("artifact checksum mismatch: expected {expected}, got {actual}")
+}
+
+/// 04: `--sha256` is not a SHA-256 digest (09).
+pub fn invalid_sha256(raw: &str) -> String {
+    format!("invalid --sha256 {raw:?}; expected 64 hex characters")
+}
+
+/// 04: an artifact the installer will not read into memory to hash (09).
+pub fn artifact_too_large(bytes: u64, limit_mib: u64) -> String {
+    format!("artifact too large: {bytes} bytes (limit {limit_mib} MiB)")
+}
+
+/// 04: a module version outside the directory-name rule D1 reads (09).
+pub fn invalid_module_version(raw: &str) -> String {
+    format!("invalid module version {raw:?}")
+}
+
+/// 04: the asset name carries no version the installer can read (09).
+pub fn unknown_module_version(name: &str) -> String {
+    format!("cannot read a module version from {name:?}; pass --version")
+}
+
+/// 04: an existing version directory needs `--force` (09).
+pub fn module_already_installed(version: &str, path: &str) -> String {
+    format!("module {version} is already installed at {path}; pass --force to replace it")
+}
+
+/// 04: a version path that is a symlink — or anything but a real directory — is never
+/// replaced: a link the operator pointed somewhere else is not an install to overwrite (09).
+pub fn module_version_not_a_directory(path: &str) -> String {
+    format!("refusing to replace {path}: it is not a directory")
+}
+
+/// 04: `--version <old>` named a version that is not installed (09's revert path).
+pub fn module_version_not_installed(version: &str, path: &str) -> String {
+    format!("module {version} is not installed at {path}")
+}
+
+/// 04: an artifact entry that is not a plain relative file or directory (09).
+pub fn artifact_entry_refused(name: &str) -> String {
+    format!("artifact entry refused: {name}")
+}
+
+/// 04: the artifact has no module binary at its root (09).
+pub const ARTIFACT_MISSING_BINARY: &str = "artifact does not contain 'daiorama-dashboard'";
+
+/// 04: `dashboard install` is a local filesystem operation; `--remote` has nothing to install on.
+pub const DASHBOARD_INSTALL_LOCAL_ONLY: &str =
+    "dashboard install is local-instance only; it cannot target a remote manager";
+
+/// 04: neither an artifact nor a version to re-activate (the two input shapes of the verb).
+pub const DASHBOARD_INSTALL_NEEDS_INPUT: &str = "dashboard install needs --artifact <tar.gz> and --sha256 <hex>, or --version <installed> to re-activate one";
+
+/// 04: `--artifact` without its digest — nothing is unpacked unverified.
+pub const DASHBOARD_INSTALL_NEEDS_SHA: &str =
+    "--artifact requires --sha256 <hex>: the artifact is verified before it is unpacked";
+
+/// 04: `--sha256` with no artifact (a revert takes no digest).
+pub const DASHBOARD_SHA_WITHOUT_ARTIFACT: &str = "--sha256 applies only with --artifact";
+
 /// 04: view start refused — wayvnc unusable, port range exhausted, or front bind refused (05).
 pub fn view_unavailable(session: &str, reason: &str) -> String {
     format!("view unavailable for {session}: {reason}.")
@@ -522,6 +586,112 @@ mod tests {
             (
                 fill(&bullet("invalid scope template"), &[("raw", "dashbord")]),
                 invalid_scope_template("dashbord"),
+            ),
+            (
+                fill(
+                    &bullet("artifact checksum mismatch"),
+                    &[("expected", "3b1f"), ("actual", "9c42")],
+                ),
+                checksum_mismatch("3b1f", "9c42"),
+            ),
+            (
+                fill(&bullet("invalid --sha256"), &[("raw", "nothex")]),
+                invalid_sha256("nothex"),
+            ),
+            (
+                fill(
+                    &bullet("artifact too large"),
+                    &[("bytes", "150000000"), ("limit", "128")],
+                ),
+                artifact_too_large(150_000_000, 128),
+            ),
+            (
+                fill(&bullet("invalid module version"), &[("raw", "../escape")]),
+                invalid_module_version("../escape"),
+            ),
+            (
+                fill(
+                    &bullet("cannot read a module version from"),
+                    &[("name", "module.tar.gz")],
+                ),
+                unknown_module_version("module.tar.gz"),
+            ),
+            (
+                fill(
+                    &bullet("is already installed at"),
+                    &[
+                        ("version", "0.1.0"),
+                        (
+                            "path",
+                            "/data/daiorama/default/modules/daiorama-dashboard/0.1.0",
+                        ),
+                    ],
+                ),
+                module_already_installed(
+                    "0.1.0",
+                    "/data/daiorama/default/modules/daiorama-dashboard/0.1.0",
+                ),
+            ),
+            (
+                fill(
+                    &bullet("refusing to replace"),
+                    &[(
+                        "path",
+                        "/data/daiorama/default/modules/daiorama-dashboard/active",
+                    )],
+                ),
+                module_version_not_a_directory(
+                    "/data/daiorama/default/modules/daiorama-dashboard/active",
+                ),
+            ),
+            (
+                fill(
+                    &bullet("is not installed at"),
+                    &[
+                        ("version", "0.1.0"),
+                        (
+                            "path",
+                            "/data/daiorama/default/modules/daiorama-dashboard/0.1.0",
+                        ),
+                    ],
+                ),
+                module_version_not_installed(
+                    "0.1.0",
+                    "/data/daiorama/default/modules/daiorama-dashboard/0.1.0",
+                ),
+            ),
+            (
+                fill(
+                    &bullet("artifact entry refused"),
+                    &[("name", "../../etc/passwd")],
+                ),
+                artifact_entry_refused("../../etc/passwd"),
+            ),
+            (
+                fill(&bullet("artifact does not contain"), &[]),
+                ARTIFACT_MISSING_BINARY.to_string(),
+            ),
+            (
+                fill(
+                    &bullet("local-instance only; it cannot target a remote manager"),
+                    &[],
+                ),
+                DASHBOARD_INSTALL_LOCAL_ONLY.to_string(),
+            ),
+            (
+                fill(&bullet("dashboard install needs --artifact"), &[]),
+                DASHBOARD_INSTALL_NEEDS_INPUT.to_string(),
+            ),
+            (
+                fill(
+                    &bullet("requires --sha256 <hex>: the artifact is verified"),
+                    &[],
+                ),
+                DASHBOARD_INSTALL_NEEDS_SHA.to_string(),
+            ),
+            (
+                fill(&bullet("applies only with --artifact"), &[]),
+                DASHBOARD_SHA_WITHOUT_ARTIFACT.to_string(),
             ),
         ];
 

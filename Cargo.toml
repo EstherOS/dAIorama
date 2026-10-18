@@ -21,6 +21,10 @@ wayland-protocols-misc = { version = "=0.3.12", features = ["client"] }
 wayland-protocols-wlr = { version = "=0.3.12", features = ["client"] }
 tokio = { version = "=1.53.3", features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "process", "signal", "sync", "time"] }
 uuid = { version = "=1.28.0", features = ["v4"] }
+# P5 dashboard install: the release asset is a gzipped tar, unpacked by us so every entry is
+# checked (relative, file-or-directory) instead of trusting a shelled-out tar.
+flate2 = "=1.1.2"
+tar = "=0.4.44"
 
 [dev-dependencies]
 ron = "=0.12.2"
@@ -33,4 +37,7 @@ wayland-protocols = { version = "=0.32.13", features = ["client", "unstable"] }
 wayland-protocols-misc = { version = "=0.3.12", features = ["client"] }
 wayland-protocols-wlr = { version = "=0.3.12", features = ["client"] }
 tempfile = "=3.27.0"
+# Integration tests build their own release-asset tarballs for `dashboard install`.
+flate2 = "=1.1.2"
+tar = "=0.4.44"
 tokio = { version = "=1.53.3", features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "process", "signal", "sync", "time", "test-util"] }

@@ -18,9 +18,10 @@ slice have to answer before code.
   by this pre-read.
 - **Module field.** `status`/`readiness` carry `versions.dashboard_module?` (05) — the manager's
   report of the installed dashboard module version.
-- **Install mechanism (09).** `daiorama dashboard install` downloads a version-matched module
-  artifact into `<data>/modules/daiorama-dashboard/<version>/` and activates it by atomic
-  symlink swap; `dashboard serve` refuses with the pinned string when absent. `dashboard *` is
+- **Install mechanism (09).** `daiorama dashboard install` installs a version-matched release
+  asset (offline in v1: `--artifact` + `--sha256`) into
+  `<data>/modules/daiorama-dashboard/<version>/` and activates it by atomic symlink swap;
+  `dashboard serve` refuses with the pinned string when absent. `dashboard *` is
   currently `not_implemented` in the CLI — that is the implementation surface, not a design gap.
 - **Reserved query scope.** 10 (D3) pins that the dashboard queries as the reserved `dashboard`
   scope, not as `operator`.

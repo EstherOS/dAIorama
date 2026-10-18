@@ -10,6 +10,7 @@ mod cli;
 mod config;
 mod crypto;
 mod history;
+mod install;
 mod ipc;
 mod manager;
 mod mcp;
