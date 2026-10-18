@@ -1,0 +1,104 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 23.25s
+     Running unittests src/main.rs (/tmp/tc/debug/deps/daiorama-f49b6070bab017f5)
+
+running 15 tests
+test config::tests::capture_defaults_are_grim_and_wf_recorder ... ok
+test mcp::server::tests::non_capture_results_stay_plain_ok_values ... ok
+test mcp::server::tests::capture_payloads_map_to_content_types ... ok
+test config::tests::capture_commands_are_argv_arrays_and_empty_is_refused ... ok
+test runtime::capture::tests::base64_matches_the_rfc_vectors ... ok
+test runtime::service::tests::capture_of_a_session_without_a_live_env_is_session_dead ... ok
+test runtime::service::tests::capture_tools_answer_their_own_validation_now ... ok
+test runtime::capture::tests::a_nonzero_exit_is_capture_failed ... ok
+test runtime::capture::tests::a_big_file_is_refused_before_encoding ... ok
+test runtime::capture::tests::screenshot_reads_a_png_and_its_dimensions ... ok
+test runtime::capture::tests::an_empty_file_is_no_output ... ok
+test runtime::capture::tests::a_slow_starting_recorder_writes_its_first_byte_before_the_interrupt ... ok
+test runtime::capture::tests::a_clip_stops_at_the_duration_and_keeps_its_bytes ... ok
+test runtime::capture::tests::a_slow_command_times_out ... ok
+test runtime::service::tests::a_second_concurrent_capture_is_refused ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 278 filtered out; finished in 1.01s
+
+     Running unittests src/bin/daiorama-browser.rs (/tmp/tc/debug/deps/daiorama_browser-f28572b59bedc98e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+     Running tests/config_scope.rs (/tmp/tc/debug/deps/config_scope-d2cf189f99f39e86)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+     Running tests/daemon.rs (/tmp/tc/debug/deps/daemon-4a2769a19daabe16)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+
+     Running tests/dashboard.rs (/tmp/tc/debug/deps/dashboard-41d753140bb35b88)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.00s
+
+     Running tests/doctor.rs (/tmp/tc/debug/deps/doctor-c81410558d1fe8cf)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+     Running tests/fixtures.rs (/tmp/tc/debug/deps/fixtures-c9b5fceca3e2c1d1)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 27 filtered out; finished in 0.00s
+
+     Running tests/install_script.rs (/tmp/tc/debug/deps/install_script-b6f5e8a78408da07)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.00s
+
+     Running tests/mcp.rs (/tmp/tc/debug/deps/mcp-bafe58bb4acab46c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+     Running tests/mcp_listen.rs (/tmp/tc/debug/deps/mcp_listen-6344e57f74851827)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 22 filtered out; finished in 0.00s
+
+     Running tests/network.rs (/tmp/tc/debug/deps/network-7e764a81127ffe70)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+     Running tests/packaging.rs (/tmp/tc/debug/deps/packaging-80b8dff6967c5518)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 26 filtered out; finished in 0.00s
+
+     Running tests/release_manifest.rs (/tmp/tc/debug/deps/release_manifest-3f75b5e401daf516)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+     Running tests/release_script.rs (/tmp/tc/debug/deps/release_script-0eb6907ac843d871)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+

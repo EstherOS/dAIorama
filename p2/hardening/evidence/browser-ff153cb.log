@@ -1,0 +1,21 @@
+== [A] no runtime dir ==
+[OK]   a launcher with no XDG_RUNTIME_DIR exits 127 (127)
+[OK]   the refusal names XDG_RUNTIME_DIR
+== [B] no compositor IPC ==
+[OK]   no hyprctl exits 127 (127)
+[OK]   the refusal names the missing compositor IPC
+[OK]   no renderer file is written
+[OK]   the probe page is cleaned up
+== [C] a title on the compositor list is captured ==
+[OK]   the launcher keeps the browser's exit status (3)
+[OK]   the renderer line is the title suffix (renderer=llvmpipe (LLVM 17.0.6, 256 bits))
+[OK]   the renderer file is 0600 (600)
+[OK]   the probe page is cleaned up after capture
+[OK]   no temp renderer file is left behind (0)
+== [D] a timeout is not fatal ==
+[OK]   a capture timeout keeps the browser's exit status (3)
+[OK]   the timeout warns once
+[OK]   no renderer file after a timeout
+[OK]   the probe page is cleaned up after a timeout
+FAILS=0
+VERDICT=PASS

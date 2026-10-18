@@ -1,0 +1,42 @@
+[OK] arch/- hyprland row
+[OK] arch/- wayvnc row
+[OK] arch/- hyprland command is executable as printed
+[OK] arch/- hyprland command is carried by install-commands.md
+[OK] arch/- wayvnc command is executable as printed
+[OK] arch/- wayvnc command is carried by install-commands.md
+[OK] fedora/- hyprland row
+[OK] fedora/- wayvnc row
+[OK] fedora/- wayvnc command is executable as printed
+[OK] fedora/- wayvnc command is carried by install-commands.md
+[OK] debian/sid hyprland row
+[OK] debian/sid wayvnc row
+[OK] debian/sid hyprland command is executable as printed
+[OK] debian/sid hyprland command is carried by install-commands.md
+[OK] debian/sid wayvnc command is executable as printed
+[OK] debian/sid wayvnc command is carried by install-commands.md
+[OK] debian/forky hyprland row
+[OK] debian/forky wayvnc row
+[OK] debian/forky hyprland command is executable as printed
+[OK] debian/forky hyprland command is carried by install-commands.md
+[OK] debian/forky wayvnc command is executable as printed
+[OK] debian/forky wayvnc command is carried by install-commands.md
+[OK] debian/trixie hyprland row
+[OK] debian/trixie wayvnc row
+[OK] debian/trixie wayvnc command is executable as printed
+[OK] debian/trixie wayvnc command is carried by install-commands.md
+[OK] debian/bookworm hyprland row
+[OK] debian/bookworm wayvnc row
+[OK] ubuntu/resolute hyprland row
+[OK] ubuntu/resolute wayvnc row
+[OK] ubuntu/resolute wayvnc command is executable as printed
+[OK] ubuntu/resolute wayvnc command is carried by install-commands.md
+[OK] ubuntu/noble hyprland row
+[OK] ubuntu/noble wayvnc row
+[OK] ubuntu/noble wayvnc command is executable as printed
+[OK] ubuntu/noble wayvnc command is carried by install-commands.md
+[OK] ubuntu/jammy hyprland row
+[OK] ubuntu/jammy wayvnc row
+[OK] alpine/- hyprland row
+[OK] alpine/- wayvnc row
+FAILS=0
+OKS=40

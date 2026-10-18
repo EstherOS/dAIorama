@@ -1,0 +1,37 @@
+key key1: untrusted comment: minisign public key 2905EBED2C01A04F
+key key2: untrusted comment: minisign public key 59CF6186A0C2D740
+minisign: minisign 0.12
+installer: 10073 bytes
+tag: nocurl
+[FAIL] install over HTTP exits 0 :: rc=1 out= err=curl is required for a remote release base
+[FAIL] installed file exists :: /tmp/instlive/prefix/daiorama
+[FAIL] receipt names version/protocol/target
+[FAIL] receipt prints the sha256
+[FAIL] receipt names the trust anchor that verified :: key1=2905EBED2C01A04F out=''
+[FAIL] no temp file left in the prefix :: prefix absent
+[FAIL] failed re-install preserves the placed binary :: nothing was placed to preserve
+[FAIL] untrusted signer is refused :: rc=1 want 'signed by an untrusted key' in 'curl is required for a remote release base'
+[OK]   nothing placed: untrusted signer is refused
+[FAIL] untrusted-key message names the presented key id :: key2=59CF6186A0C2D740 err='curl is required for a remote release base'
+[FAIL] manifest version mismatch is refused :: rc=1 want 'does not match the requested' in 'curl is required for a remote release base'
+[OK]   nothing placed: manifest version mismatch is refused
+[FAIL] duplicate row is refused :: rc=1 want 'duplicate release manifest row' in 'curl is required for a remote release base'
+[OK]   nothing placed: duplicate row is refused
+[FAIL] row target mismatch is refused :: rc=1 want 'targets' in 'curl is required for a remote release base'
+[OK]   nothing placed: row target mismatch is refused
+[FAIL] short digest is refused :: rc=1 want 'is not a core artifact' in 'curl is required for a remote release base'
+[OK]   nothing placed: short digest is refused
+[FAIL] bad manifest format is refused :: rc=1 want 'unsupported release manifest format' in 'curl is required for a remote release base'
+[OK]   nothing placed: bad manifest format is refused
+[FAIL] over-cap metadata is refused before verification :: rc=1 err='curl is required for a remote release base'
+[OK]   over-cap artifact is refused
+[OK]   shipped installer refuses with an empty trust list
+[OK]   empty-trust refusal happens before any fetch
+[OK]   usage refusal: bad version
+[OK]   usage refusal: empty prefix
+[OK]   usage refusal: unknown target
+[OK]   usage refusal: unknown option
+[OK]   usage refusal: no version
+OKS=14 FAILS=15
+installlive_rc=15
+VERDICT=FAIL
