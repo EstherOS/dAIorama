@@ -1,0 +1,595 @@
+===================================================================
+## merged-tip battery — spec/v1 @ ae7c6ac   (2026-10-18)
+===================================================================
+Tip: ae7c6ac ("p5(release): signed manifest generator and verifier with an empty trust
+list"). Last pass in this series was 0b59add (PR #105). This is the tree both open
+release slices are cut from (#109 hardening was produced on this base), so it doubles as
+the pre-hardening baseline for that cross-verify.
+
+Delta since 0b59add: 80f6631 (#107 — the dashboard e2e tests bind the child to an ephemeral
+port it owns instead of a bind-then-close guess; two tests, 3/40 failures before, 0/40
+after), 67b884e (#106 — C2 manifest pre-read, docs only), ae7c6ac (#108 — `src/release.rs`:
+`release manifest` generator, `release verify` with `minisign-verify 0.3.0` and an embedded
+`packaging/release/trusted-keys`, CLI wiring, docs 04/09/11, fixtures and a 2-test CLI
+integration suite). Source delta is `src/release.rs`, `src/cli/mod.rs`, `Cargo.toml/lock`,
+one dashboard test file; the rest is docs, packaging and tests.
+
+Note: this battery measured ae7c6ac. While it ran, 1cf61fa (`packaging/release/verify.sh` +
+`tests/release_script.rs`, 277 lines, no core source) landed as the new tip; that script is
+not exercised here and is covered by its own agreement suite.
+
+Environment: fresh rust:slim containers (dai-mtipae7c gates, dai-mtipae7cl legs,
+dai-mtipae7cl3 the manifest-leg re-run), rustc 1.99.0 (b940084d7), cargo 1.99.0 (5f94df478),
+python3 3.13 + minisign (Debian), workspace mounted read-write at /src, `CARGO_TARGET_DIR=/tmp/t`
+(gates) / `/tmp/tc` (parallel capture) / `/tmp/tk` (the keyed rebuilds), cold in each container.
+Gate set: fmt, fmt --check, clippy --workspace --all-targets --locked -D warnings,
+build --workspace --bins, tests — then the live legs.
+
+Expected suite sequence: root — lib 271 (+6 ignored) · 5 · 7 · 8 · 9 · 3 · 27 · 7 · 22 · 6 · 25;
+member — 6 · 2 · 5. Total 405 tests, 0 failed.
+
+Live legs: dispatch-stall, rate-limit (16), history (27), dashboard-module D1 (20),
+scope-create D2 (56), dashboard-install D5 (50), browser D6 (15), install-rows C2 (40),
+plus a new release-manifest leg (C2, 56 assertions) that signs a generated manifest with a
+real minisign keypair and verifies it with three builds of the same tree (empty trust list /
+key1 / key1+key2).
+
+===================================================================
+## [0] gates — fmt, clippy, build, tests (container dai-mtipae7c)
+===================================================================
+
+rustc 1.99.0 (b940084d7 2026-09-28)
+cargo 1.99.0 (5f94df478 2026-08-27)
+Python 3.13.5
+Linux 7.1.4-200.fc44.x86_64 x86_64
+== [1] fmt
+fmt_rc=0
+fmt_check_rc=0
+== [2] clippy --workspace --all-targets --locked -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 17.12s
+clippy_rc=0
+== [3] build --workspace --bins
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 18.13s
+build_rc=0
+-rwxr-xr-x. 70897160 /tmp/t/debug/daiorama
+-rwxr-xr-x. 17212632 /tmp/t/debug/daiorama-browser
+-rwxr-xr-x. 25327128 /tmp/t/debug/daiorama-dashboard
+daiorama 0.1.0
+== [4] tests (root package)
+     Running unittests src/main.rs (/tmp/t/debug/deps/daiorama-f49b6070bab017f5)
+test result: ok. 271 passed; 0 failed; 6 ignored; 0 measured; 0 filtered out; finished in 3.62s
+     Running unittests src/bin/daiorama-browser.rs (/tmp/t/debug/deps/daiorama_browser-f28572b59bedc98e)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/config_scope.rs (/tmp/t/debug/deps/config_scope-d2cf189f99f39e86)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests/daemon.rs (/tmp/t/debug/deps/daemon-4a2769a19daabe16)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+     Running tests/dashboard.rs (/tmp/t/debug/deps/dashboard-41d753140bb35b88)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/doctor.rs (/tmp/t/debug/deps/doctor-c81410558d1fe8cf)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+     Running tests/fixtures.rs (/tmp/t/debug/deps/fixtures-c9b5fceca3e2c1d1)
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+     Running tests/mcp.rs (/tmp/t/debug/deps/mcp-bafe58bb4acab46c)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+     Running tests/mcp_listen.rs (/tmp/t/debug/deps/mcp_listen-6344e57f74851827)
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+     Running tests/network.rs (/tmp/t/debug/deps/network-7e764a81127ffe70)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.65s
+     Running tests/packaging.rs (/tmp/t/debug/deps/packaging-80b8dff6967c5518)
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/release_manifest.rs (/tmp/t/debug/deps/release_manifest-3f75b5e401daf516)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+tests_rc=0
+== [4b] tests (workspace, all targets, one pass)
+     Running unittests src/main.rs (/tmp/t/debug/deps/daiorama-d40f952089099ecd)
+test result: ok. 271 passed; 0 failed; 6 ignored; 0 measured; 0 filtered out; finished in 3.63s
+     Running unittests src/bin/daiorama-browser.rs (/tmp/t/debug/deps/daiorama_browser-023bc6b7982171e0)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/config_scope.rs (/tmp/t/debug/deps/config_scope-0bb1fe0eaa279f9c)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests/daemon.rs (/tmp/t/debug/deps/daemon-8eb9056dbd8e0fe2)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+     Running tests/dashboard.rs (/tmp/t/debug/deps/dashboard-0f7a145d95054253)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/doctor.rs (/tmp/t/debug/deps/doctor-7faab610e8c5a886)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+     Running tests/fixtures.rs (/tmp/t/debug/deps/fixtures-c65965d096002f93)
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+     Running tests/mcp.rs (/tmp/t/debug/deps/mcp-bdd36d0be703cbd9)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+     Running tests/mcp_listen.rs (/tmp/t/debug/deps/mcp_listen-23089d89d178fd38)
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+     Running tests/network.rs (/tmp/t/debug/deps/network-118036fec9fa9202)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.61s
+     Running tests/packaging.rs (/tmp/t/debug/deps/packaging-bd99487e41e54e45)
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/release_manifest.rs (/tmp/t/debug/deps/release_manifest-da60d5c49947823e)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running unittests src/main.rs (/tmp/t/debug/deps/daiorama_dashboard-b67e259ddd7343cd)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/cli.rs (/tmp/t/debug/deps/cli-f1ad6c04ff79eddd)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/e2e.rs (/tmp/t/debug/deps/e2e-efc5bc3d35d306a2)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.01s
+wtests_rc=0
+== [4c] capture suite under parallel load: 3 concurrent runs
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 269 filtered out; finished in 1.01s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 269 filtered out; finished in 1.01s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 269 filtered out; finished in 1.01s
+cap3=0
+cap2=0
+cap1=0
+== [4d] member suites (explicit package)
+     Running unittests src/main.rs (/tmp/t/debug/deps/daiorama_dashboard-c14a89ef8496b396)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/cli.rs (/tmp/t/debug/deps/cli-3668bcf4376739a8)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/e2e.rs (/tmp/t/debug/deps/e2e-2ca0fd03979f5430)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.01s
+member_rc=0
+ALLDONE_A
+
+===================================================================
+## [1] live legs — every probe (container dai-mtipae7cl)
+===================================================================
+
+daiorama 0.1.0
+== [4c] capture suite under parallel load: 3 concurrent cold runs
+     Running unittests src/main.rs (/tmp/tc/debug/deps/daiorama-f49b6070bab017f5)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 269 filtered out; finished in 1.01s
+     Running unittests src/main.rs (/tmp/tc/debug/deps/daiorama-f49b6070bab017f5)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 269 filtered out; finished in 1.01s
+     Running unittests src/main.rs (/tmp/tc/debug/deps/daiorama-f49b6070bab017f5)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 269 filtered out; finished in 1.01s
+cap2=0
+cap1=0
+cap3=0
+== [5] dispatch-stall
+binary=daiorama-ae7c6ac label=ae7c6ac
+status_latency_s=0.00 status=running
+create_elapsed_s=[15.02, 30.04, 40.03, 40.04]
+create_answer={"error": {"code": "internal", "message": "mutter parent did not present its wayland socket in time; mutter.log tail: "}}
+create_answer={"error": {"code": "internal", "message": "mutter parent did not present its wayland socket in time; mutter.log tail: "}}
+VERDICT=PASS fast_call_latency_s=0.00
+stall_rc=0
+== [6] rate-limit
+[OK]   [A1] first control call passes the gate ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [A2] second control call passes (burst 2) ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [A3] third control call is rate_limited ({"error": {"code": "rate_limited", "message": "rate limit exceeded for scope \"operator\"", "hint": "retry after 998 ms"}})
+[OK]   [A4] refusal carries a numeric retry-after hint (hint='retry after 998 ms')
+[OK]   [B1] session_status is exempt from the bucket ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [B2] screenshot is exempt from the bucket ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [C1] a different session has its own burst ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [D1] a refilled bucket passes again ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [E1] paced call passes after its wait ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [E2] the scope file was re-read per call (pace took effect, no restart) (elapsed=0.501s want ~0.50s)
+[OK]   [F1] first call passes ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [F2] a wait past max_wait_ms refuses ({"error": {"code": "rate_limited", "message": "rate limit exceeded for scope \"operator\"", "hint": "retry after 999 ms"}})
+[OK]   [F3] the refused wait did not park the caller (elapsed=0.001s)
+[OK]   [G1] at least one concurrent call passes the gate (passed=3 refused=3 other=0)
+[OK]   [G2] the queue bound refuses rather than parking the whole flood (passed=3 refused=3 other=0)
+[OK]   [G3] every answer arrives inside the parked wait bound (total=2.004s max_call=2.001s)
+FAILS=0
+rate_rc=0
+VERDICT=PASS
+ratelimit_rc=0
+== [7] history
+[OK]   [A1] a cold history answers an empty page ({"result": {"next_cursor": null, "records": []}})
+[OK]   [B1] six control calls wrote six records (n=6)
+[OK]   [B2] records are newest-first (tools=['key_tap', 'pointer_button_up', 'pointer_button_down', 'pointer_click', 'pointer_scroll', 'pointer_move'])
+[OK]   [B3] every record is a tool.call (events=['tool.call'])
+[OK]   [B4] detail carries the tool name only (no arguments) (details=[{'tool': 'key_tap'}, {'tool': 'pointer_button_up'}])
+[OK]   [B5] scope, origin and session id are carried (scope=operator origin=shell)
+[OK]   [B6] `at` is RFC 3339 UTC (at=2026-10-18T07:12:26Z)
+[OK]   [C1] limit 2 pages the six records as 2+2+2 (sizes=[2, 2, 2])
+[OK]   [C2] the pages concatenate to the full newest-first list (tools=['key_tap', 'pointer_button_up', 'pointer_button_down', 'pointer_click', 'pointer_scroll', 'pointer_move'])
+[OK]   [C3] no record repeats across pages (unique=6)
+[OK]   [C4] the last page has no cursor (cursor=None)
+[OK]   [D1] a garbage cursor is bad_request ({"error": {"code": "bad_request", "message": "invalid cursor", "hint": "check the request against 'daiorama <command> --help'"}})
+[OK]   [D2] a cursor without a session_id is bad_request ({"error": {"code": "bad_request", "message": "a cursor requires a session_id", "hint": "check the request against 'daiorama <command> --help'"}})
+[OK]   [E] hostile id '../../etc' is session_not_found ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [E] hostile id 's-1/../../s-2' is session_not_found ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [E] hostile id '..' is session_not_found ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [E] hostile id 'a/b' is session_not_found ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [E2] an unknown valid id is session_not_found ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [F1] a cross-session read returns both sessions' records (sessions=['s-hist-1', 's-hist-2'] n=8)
+[OK]   [F2] a cross-session read carries no cursor (null)
+[OK]   [F3] the second session's call is present in the cross-session read (tools=['key_tap', 'pointer_button_up', 'pointer_button_down', 'pointer_click', 'pointer_scroll', 'pointer_move', 'key_up', 'key_down'])
+[NOTE] cross-session ordering sorts on `at`, which is second-granular: records written in the same second tie and keep readdir order. In-session order is file order.
+[OK]   [G1] the live session dir is 0700 (0o700)
+[OK]   [G2] the live segment file is 0600 (0o600)
+[OK]   [H0] the rotating call still passes ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [H1] eight segments after rotation (pinned 8 x 4 MiB budget) (segments=8 files=['seg-0001.log', 'seg-0002.log', 'seg-0003.log', 'seg-0004.log', 'seg-0005.log', 'seg-0006.log', 'seg-0007.log', 'seg-0008.log'] total_bytes=4195309)
+[OK]   [H2] the oldest segment is the one dropped (files=['seg-0001.log', 'seg-0002.log', 'seg-0003.log', 'seg-0004.log', 'seg-0005.log', 'seg-0006.log', 'seg-0007.log', 'seg-0008.log'])
+[NOTE] rotation is exercised live by seeding the newest segment at the budget; the assertion is on the file count under the live root, not on the unit-test helper
+[OK]   [I1] the post-rotation record is readable (first={'at': '2026-10-18T07:12:26Z', 'detail': {'tool': 'pointer_move'}, 'event': 'tool.call', 'origin': 'shell', 'scope': 'operator', 'session_id': 's-rot'})
+FAILS=0
+history_rc=0
+== [8] dashboard-module (D1)
+[OK]   status and readiness agree (status=None readiness=None)
+[OK]   [A] no module installed: status/readiness report null (None)
+[OK]   status and readiness agree (status='2026.10.0' readiness='2026.10.0')
+[OK]   [B] install while running is visible with no restart ('2026.10.0')
+[OK]   status and readiness agree (status='2026.09.1' readiness='2026.09.1')
+[OK]   [C] a revert reports the other version (no cached link) ('2026.09.1')
+[OK]   status and readiness agree (status=None readiness=None)
+[OK]   [D] dangling link answers null, not an error (None)
+[OK]   status and readiness agree (status=None readiness=None)
+[OK]   [E] a parent-climbing target answers null (None)
+[OK]   status and readiness agree (status=None readiness=None)
+[OK]   [E] an absolute target outside the module directory answers null (None)
+[OK]   status and readiness agree (status=None readiness=None)
+[OK]   [E] the dot component answers null (None)
+[OK]   status and readiness agree (status=None readiness=None)
+[OK]   [E] a version name that is a file answers null (None)
+[OK]   status and readiness agree (status=None readiness=None)
+[OK]   [F] a non-version directory name answers null (None)
+[OK]   status and readiness agree (status='2026.10.0' readiness='2026.10.0')
+[OK]   [G] a valid install answers again after the refusal cases ('2026.10.0')
+[NOTE] the module link is under <data>/modules/daiorama-dashboard; status/readiness read it per call
+FAILS=0
+dashboard_module_rc=0
+VERDICT=PASS
+module_rc=0
+== [9] scope-create (D2)
+binary=/out/daiorama-ae7c6ac label=ae7c6ac port=18782
+=== [A] create --template dashboard ===
+[OK]   create exits 0
+[OK]   the answer is the path only ('/tmp/drscope.iond7zj3/config/daiorama/default/scopes/dashboard.ron\n')
+[OK]   file exists
+[OK]   file is 0600 (0o600)
+[OK]   dashboard template has visibility all
+[OK]   the file is commented
+[OK]   create writes no scope secret
+
+=== [B] refusals ===
+[OK]   second create refuses
+[OK]   refusal is the pinned string (scope "dashboard" already exists (bad_request)
+hint: check the request against 'daiorama <command> --help')
+[OK]   an existing scope file is left byte-identical
+[OK]   `../evil` refuses
+[OK]   `../evil` is `invalid scope name` (invalid scope name (bad_request)
+hint: check the request against 'daiorama <command> --help')
+[OK]   nothing escaped the scopes dir
+[OK]   uppercase name refuses (invalid scope name (bad_request)
+hint: check the request against 'daiorama <command> --help')
+[OK]   no file for the refused name
+[OK]   `--template Dashboard` refuses
+[OK]   template refusal is the pinned string (invalid scope template "Dashboard"; expected own, all, or dashboard (bad_request)
+hint: check the request against 'daiorama <command> --help')
+[OK]   no file for the refused template
+[OK]   create own exits 0
+[OK]   own file is 0600
+[OK]   own template has visibility own
+
+=== [C] first network start mints the credentials ===
+[OK]   manager socket appears (/tmp/drscope.iond7zj3/run/daiorama/default/manager.sock)
+[OK]   bridge accepts on the bound port (port 18782)
+[OK]   instance token file exists
+[OK]   instance token is 0600 (0o600)
+[OK]   secret for operator minted
+[OK]   secret for operator is 0600 (0o600)
+[OK]   secret for dashboard minted
+[OK]   secret for dashboard is 0600 (0o600)
+[OK]   secret for own minted
+[OK]   secret for own is 0600 (0o600)
+
+=== [D] the created scope authenticates a real call over TCP ===
+[OK]   initialize answers 200 (HTTP/1.1 200 OK)
+[OK]   initialize carries a result
+[OK]   list_capabilities answers 200 (HTTP/1.1 200 OK)
+[OK]   list_capabilities is not an error ({"id":7,"jsonrpc":"2.0","result":{"content":[],"structuredContent":{"always_on":["create_session","close_session","list_sessions","session_status","list_capabil)
+[OK]   capabilities carry the always-on set (['content', 'structuredContent'])
+[OK]   list_sessions answers 200 (HTTP/1.1 200 OK)
+[OK]   list_sessions is not an error ({"id":7,"jsonrpc":"2.0","result":{"content":[],"structuredContent":{"sessions":[]}}})
+[OK]   a foreign scope secret is 403 (HTTP/1.1 403 Forbidden)
+[OK]   the refusal names scope_auth_required ({"error":{"code":-32600,"data":{"code":"scope_auth_required","message":"scope \"dashboard\" requires its scope secret (Daiorama-Scope-Token header)"},"message":)
+[OK]   a missing scope secret is 403 (HTTP/1.1 403 Forbidden)
+[OK]   the missing-secret refusal is scope_auth_required ({"error":{"code":-32600,"data":{"code":"scope_auth_required","message":"scope \"dashboard\" requires its scope secret (Daiorama-Scope-Token header)"},"message":)
+[OK]   a wrong instance token is 403 (HTTP/1.1 403 Forbidden)
+[OK]   the identity refusal is token_required ({"error":{"code":-32600,"data":{"code":"token_required","hint":"run 'daiorama token show' on the manager host and set DAIORAMA_TOKEN","message":"token required )
+
+=== [E] a scope created while the bridge runs is usable at the NEXT start ===
+[OK]   late create exits 0
+[OK]   late has no secret while the bridge is up
+[OK]   late is refused before it has a secret (HTTP/1.1 403 Forbidden)
+[OK]   the refusal says the scope has no secret ({"error":{"code":-32600,"data":{"code":"scope_auth_required","hint":"create the scope secret file on the bridge host","message":"scope \"late\" has no secret; i)
+[OK]   the bridge rebinds (port 18782)
+[OK]   the next start mints the late secret
+[OK]   late secret is 0600
+[OK]   the instance token is unchanged by the rebind
+[OK]   the dashboard secret is unchanged by the rebind
+[OK]   the late scope answers after the rebind ({"id":7,"jsonrpc":"2.0","result":{"content":[],"structuredContent":{"sessions":[]}}})
+
+=== [F] no secret leaves a file that should not carry one ===
+[OK]   no credential appears in an HTTP answer
+[OK]   no credential appears in a scope file
+[NOTE] secrets checked: instance token + 3 scope secrets + late
+FAILS=0
+scope_create_rc=0
+VERDICT=PASS
+scopecreate_rc=0
+== [10] dashboard-install (D5)
+== [A] pre-install and input-shape refusals ==
+[OK]   module tree absent at a cold data root (ABSENT)
+[OK]   no module: the exec path refuses (module not installed; run 'daiorama dashboard install'. (module_not_installed))
+[OK]   --artifact without --sha256 refuses (--artifact requires --sha256 <hex>: the artifact is verified before it is unpacked (bad_request))
+[OK]   --sha256 without --artifact refuses (--sha256 applies only with --artifact (bad_request))
+[OK]   neither input refuses (dashboard install needs --artifact <tar.gz> and --sha256 <hex>, or --version <installed> to re-activate one (bad_request))
+[OK]   a remote target refuses install before touching disk (dashboard install is local-instance only; it cannot target a remote manager (bad_request))
+== [B] the checksum gate runs before anything under modules/ ==
+[OK]   malformed digest refuses (invalid --sha256 "nothex"; expected 64 hex characters (bad_request))
+[OK]   wrong 64-hex digest refuses (artifact checksum mismatch: expected 0000000000000000000000000000000000000000000000000000000000000000, got 8e7c6e5036e6526ea50149d538b7dffede2dc5b8606f400aeda82b757ee8154f (bad_request))
+[OK]   129 MiB artifact refuses on size, before hashing (artifact too large: 135266304 bytes (limit 128 MiB) (bad_request))
+[OK]   a non-tar artifact refuses (cannot read artifact /tmp/di-ae7c6ac/art/plain.txt: invalid gzip header (bad_request))
+[OK]   a directory is not an artifact (artifact /tmp/di-ae7c6ac/pkg/good is not a regular file (bad_request))
+== [C] hostile and incomplete members are refused, and nothing escapes ==
+[OK]   '../escape' member refuses (artifact entry refused: ../escape (bad_request))
+[OK]   no file escaped the staging dir
+[OK]   no file landed under the data root
+[OK]   an absolute member refuses (artifact entry refused: /tmp/di-abs-escape (bad_request))
+[OK]   the absolute member was not written
+[OK]   a symlink member refuses (artifact entry refused: daiorama-dashboard (bad_request))
+[OK]   a hardlink member refuses (artifact entry refused: daiorama-dashboard-link (bad_request))
+[OK]   an artifact without the module binary refuses (artifact does not contain 'daiorama-dashboard' (bad_request))
+[OK]   refusals left no staged or version directory behind (ABSENT)
+== [D] a real install ==
+[OK]   install exits 0 (0)
+[OK]   install prints exactly two lines (2)
+[OK]   line 1 is the version read from the asset name (0.1.0)
+[OK]   line 2 is the instance directory (/tmp/di-ae7c6ac/data/daiorama/default/modules/daiorama-dashboard/0.1.0)
+[OK]   active names one slug (0.1.0)
+[OK]   the installed binary is 0755 although the artifact carried 0644 (755)
+[OK]   the rest of the artifact landed beside it (<!doctype html><title>probe</title>)
+[OK]   no .stage-/ .old- leftovers (0.1.0 active )
+[OK]   the core execs the installed module (exit 0) (0)
+[OK]   the module answered for real (no connections)
+== [E] replace, second version, and revert ==
+[OK]   a second install of the same version refuses (module 0.1.0 is already installed at /tmp/di-ae7c6ac/data/daiorama/default/modules/daiorama-dashboard/0.1.0; pass --force to replace it (bad_request))
+[OK]   --force replaces the real directory (exit 0) (0)
+[OK]   --force keeps active on the same slug (0.1.0)
+[OK]   --force landed the new payload (asset v2)
+[OK]   --force leaves no .old- directory (0.1.0 active )
+[OK]   the exec path still works after --force (no connections)
+[OK]   a second version installs beside the first (exit 0) (0)
+[OK]   active switches to the new version (0.2.0)
+[OK]   the core refuses to exec a version-skewed module (dashboard module 0.2.0 does not match this dashboard (0.1.0); run 'daiorama dashboard install --version 0.1.0' (bad_request))
+[OK]   revert takes no digest and exits 0 (0)
+[OK]   revert prints the version and path (0.1.0)
+[OK]   active is back on 0.1.0 (0.1.0)
+[OK]   the exec path works again with no restart (no connections)
+[OK]   reverting to a version that is not installed refuses (module 9.9.9 is not installed at /tmp/di-ae7c6ac/data/daiorama/default/modules/daiorama-dashboard/9.9.9 (bad_request))
+== [F] version-directory safety ==
+[OK]   a symlinked version directory is never replaced (refusing to replace /tmp/di-ae7c6ac/data/daiorama/default/modules/daiorama-dashboard/9.9.9: it is not a directory (bad_request))
+[OK]   the symlink is intact (still points outside) (/tmp/di-ae7c6ac/outside)
+[OK]   --version refuses a path component (invalid module version "../escape" (bad_request))
+[OK]   --version refuses a dot (invalid module version "." (bad_request))
+== [G] one more real exec after every refusal ==
+[OK]   active unchanged (0.1.0)
+[OK]   the module still answers (no connections)
+FAILS=0
+VERDICT=PASS
+install_rc=0
+== [11] browser (D6)
+== [A] no runtime dir ==
+[OK]   a launcher with no XDG_RUNTIME_DIR exits 127 (127)
+[OK]   the refusal names XDG_RUNTIME_DIR
+== [B] no compositor IPC ==
+[OK]   no hyprctl exits 127 (127)
+[OK]   the refusal names the missing compositor IPC
+[OK]   no renderer file is written
+[OK]   the probe page is cleaned up
+== [C] a title on the compositor list is captured ==
+[OK]   the launcher keeps the browser's exit status (3)
+[OK]   the renderer line is the title suffix (renderer=llvmpipe (LLVM 17.0.6, 256 bits))
+[OK]   the renderer file is 0600 (600)
+[OK]   the probe page is cleaned up after capture
+[OK]   no temp renderer file is left behind (0)
+== [D] a timeout is not fatal ==
+[OK]   a capture timeout keeps the browser's exit status (3)
+[OK]   the timeout warns once
+[OK]   no renderer file after a timeout
+[OK]   the probe page is cleaned up after a timeout
+FAILS=0
+VERDICT=PASS
+browser_rc=0
+== [12] install rows (C2)
+[OK] arch/- hyprland row
+[OK] arch/- wayvnc row
+[OK] arch/- hyprland command is executable as printed
+[OK] arch/- hyprland command is carried by install-commands.md
+[OK] arch/- wayvnc command is executable as printed
+[OK] arch/- wayvnc command is carried by install-commands.md
+[OK] fedora/- hyprland row
+[OK] fedora/- wayvnc row
+[OK] fedora/- wayvnc command is executable as printed
+[OK] fedora/- wayvnc command is carried by install-commands.md
+[OK] debian/sid hyprland row
+[OK] debian/sid wayvnc row
+[OK] debian/sid hyprland command is executable as printed
+[OK] debian/sid hyprland command is carried by install-commands.md
+[OK] debian/sid wayvnc command is executable as printed
+[OK] debian/sid wayvnc command is carried by install-commands.md
+[OK] debian/forky hyprland row
+[OK] debian/forky wayvnc row
+[OK] debian/forky hyprland command is executable as printed
+[OK] debian/forky hyprland command is carried by install-commands.md
+[OK] debian/forky wayvnc command is executable as printed
+[OK] debian/forky wayvnc command is carried by install-commands.md
+[OK] debian/trixie hyprland row
+[OK] debian/trixie wayvnc row
+[OK] debian/trixie wayvnc command is executable as printed
+[OK] debian/trixie wayvnc command is carried by install-commands.md
+[OK] debian/bookworm hyprland row
+[OK] debian/bookworm wayvnc row
+[OK] ubuntu/resolute hyprland row
+[OK] ubuntu/resolute wayvnc row
+[OK] ubuntu/resolute wayvnc command is executable as printed
+[OK] ubuntu/resolute wayvnc command is carried by install-commands.md
+[OK] ubuntu/noble hyprland row
+[OK] ubuntu/noble wayvnc row
+[OK] ubuntu/noble wayvnc command is executable as printed
+[OK] ubuntu/noble wayvnc command is carried by install-commands.md
+[OK] ubuntu/jammy hyprland row
+[OK] ubuntu/jammy wayvnc row
+[OK] alpine/- hyprland row
+[OK] alpine/- wayvnc row
+FAILS=0
+OKS=40
+rows_rc=0
+
+-- first [13] attempt stopped on a probe bug (see [2]); the corrected run follows --
+
+===================================================================
+## [1b] release manifest leg, corrected (container dai-mtipae7cl3)
+===================================================================
+
+== [13] release manifest (C2)
+key key1: untrusted comment: minisign public key F1984AA65A5B1FBB
+key key2: untrusted comment: minisign public key DDCA014284DCB4D5
+exported tree from /out/ae7c6ac-src.tar: 500 entries
+keyed binary daiorama-key1: 69393104 bytes
+keyed binary daiorama-key12: 69393168 bytes
+-- trust list as built (tail):
+# trust anchor. Rotation adds the incoming key here beside the outgoing one; removal is a
+# deliberate later release.
+untrusted comment: minisign public key F1984AA65A5B1FBB
+RWS7H1tapkqY8WSgD+VuhwhYrzrlLWs9+rk7uw7I18fm2xbKyD41aMdK
+untrusted comment: minisign public key DDCA014284DCB4D5
+RWTVtNyEQgHK3ev9sytzNkQ97lyhF4gk44RyXS/SO9WeXIvo4Cx3Xz/w
+== C2 manifest live leg (ae7c6ac)
+plain=/out/daiorama-ae7c6ac
+key1=/tmp/daiorama-key1
+key12=/tmp/daiorama-key12
+version /out/daiorama-ae7c6ac: rc=0 daiorama 0.1.0
+version /tmp/daiorama-key1: rc=0 daiorama 0.1.0
+version /tmp/daiorama-key12: rc=0 daiorama 0.1.0
+[OK]   [G] manifest written
+[OK]   [G] generator names the output path
+[OK]   [G] manifest parses as JSON
+[OK]   [G] format is 1
+[OK]   [G] version carried
+[OK]   [G] protocol carried
+[OK]   [G] channel carried
+[OK]   [G] released_at carried verbatim
+[OK]   [G] two artifact rows
+[OK]   [G] daiorama-0.1.0-x86_64-unknown-linux-gnu.tar.gz: kind core
+[OK]   [G] daiorama-0.1.0-x86_64-unknown-linux-gnu.tar.gz: target
+[OK]   [G] daiorama-0.1.0-x86_64-unknown-linux-gnu.tar.gz: real sha256
+[OK]   [G] daiorama-0.1.0-x86_64-unknown-linux-gnu.tar.gz: real size
+[OK]   [G] daiorama-dashboard-0.1.0-x86_64-unknown-linux-gnu.tar.gz: kind dashboard
+[OK]   [G] daiorama-dashboard-0.1.0-x86_64-unknown-linux-gnu.tar.gz: target
+[OK]   [G] daiorama-dashboard-0.1.0-x86_64-unknown-linux-gnu.tar.gz: real sha256
+[OK]   [G] daiorama-dashboard-0.1.0-x86_64-unknown-linux-gnu.tar.gz: real size
+[OK]   [G] one asset row
+[OK]   [G] asset name
+[OK]   [G] asset real sha256
+[OK]   [G] facts.client_only false
+[OK]   [G] facts.components from the rows (sorted, unique)
+[OK]   [G] one artifact object per line (2 rows)
+[OK]   [G] one asset object per line (1 row)
+[OK]   [G] each artifact row is self-contained on its line
+[OK]   [P] every artifact row yields name+sha256 through a POSIX-only split
+[OK]   [P] the asset row is extractable and carries the tarball digest
+[NOTE] pinned no-space literal ("name":"…") present: False — the emitted row form is `"name": "` (space after the colon); the pre-read's installer sketch pinned the no-space form, so an installer must either be written against the emitted bytes or the generator changes. Recorded for the installer slice, not scored here.
+[OK]   [G] duplicate artifact basename refused
+[OK]   [E] empty trust list refuses before touching the signature
+key1 id=F1984AA65A5B1FBB key2 id=DDCA014284DCB4D5
+[OK]   [V] two distinct keys
+[OK]   [V] trusted key + good signature verifies
+[OK]   [V] version and protocol printed
+[OK]   [V] printed signer id is the id inside the public key
+[OK]   [V] no signature-only row claimed
+[OK]   [V] --json verifies
+[OK]   [V] --json carries version/protocol/key_id
+[OK]   [V] --json omits the artifact row when none was asked
+[OK]   [A] matching artifact verifies
+[OK]   [A] row printed with kind, name and sha256
+[OK]   [A] --json carries the matched row
+[OK]   [A] same-name different bytes refused on sha256
+[OK]   [A] unknown artifact name refused
+[OK]   [A] a listed row whose file is absent is refused on the read
+[OK]   [S] edited manifest is a signature failure, not a schema error
+[OK]   [S] re-signed unsupported format refused after the signature
+[OK]   [S] re-signed manifest missing a field is refused by name
+[OK]   [S] unparseable signature refused as invalid
+[OK]   [R] a key outside the list is named as untrusted
+[OK]   [R] rotation window: second key accepted once listed
+[OK]   [R] rotation window: outgoing key still accepted
+[OK]   [C] client-only manifest written
+[OK]   [C] client-only manifest verifies with no artifacts
+[OK]   [C] client-only manifest has no row to match
+[OK]   [G] empty version refused
+[OK]   [G] artifact spec without kind:target:path refused
+[OK]   [G] missing artifact file refused
+
+FAILS=0
+OKS=56
+C2-MANIFEST-DONE
+manifest_rc=0
+ALLDONE_L3
+
+
+===================================================================
+## [2] findings and notes
+===================================================================
+
+No product findings on this tree. Gates 405/0, eight live legs green, and the new C2
+manifest leg 56/56.
+
+- Gate counts as shipped: root 271 (+6 ignored) · 5 · 7 · 8 · 9 · 3 · 27 · 7 · 22 · 6 · 25,
+  member 6 · 2 · 5 — 405 tests, 0 failed, in both the root run and the single
+  `--workspace --all-targets` pass. `test result: ok` for every target.
+- Capture concurrency: three concurrent cold runs of the capture suite (8 tests each) all
+  rc 0 — the #103 fixture fix (exec `/bin/sh -c`, no ETXTBSY under parallel load) holds.
+- The eight carried legs are unchanged and green: dispatch-stall (fast call 0.00 s while
+  four creates park), rate-limit 16/16 (pace re-read per call, queue bound, parked waits),
+  history 27/27 (rotation still trims to 8 segments, 0700/0600), D1 module 20/20,
+  D2 scope-create 56/56, D5 dashboard-install 50/50, D6 browser 15/15, C2 install-rows
+  40/40 against the maintained table.
+
+### New leg — C2 release manifest, driven with a real keypair
+
+The unit suite pins `release.rs` against fixture bytes; nothing exercised the trust list the
+way an operator does. `p2/hardening/run-release-manifest.sh` generates two throwaway minisign
+keys and builds the same `git archive HEAD` tree three times, appending keys to
+`packaging/release/trusted-keys` between builds (the trust list is `include_str!`, so "trusts
+key X" is a build, not a flag). `probe-release-manifest.py` then drives the shipped binary:
+
+- **Generator:** valid JSON; one artifact object per line and one asset object per line;
+  real sha256/size for both artifacts and the asset; `facts.components` derived from the row
+  kinds; duplicate basenames refused (`appears twice`); an artifact spec that is not
+  `kind:target:path` refused; a missing input file refused.
+- **POSIX reader:** every artifact row and the asset row yield name+sha256 through a
+  quotes-split, no `jq` — the installer contract from the pre-read.
+- **Empty trust list:** refuses with `no trusted release key provisioned` before the
+  signature file is even read (measured with a signature that does not exist).
+- **Real signature:** a minisign signature over the generated bytes verifies; the printed
+  signer id equals the id inside the public key (byte order included); `--json` carries
+  version/protocol/key_id and no artifact when none was asked.
+- **Artifact matching:** matching file verifies and prints `artifact core <name> sha256 <hex>`;
+  a same-name file with one extra byte is refused on the digest; an unknown name is refused
+  by name; a listed row whose file is absent is refused on the read.
+- **Signature before parse:** an edited manifest reports `release signature verification
+  failed` (not a JSON error); a re-signed manifest with `format: 2` reports
+  `unsupported release manifest format 2`; a re-signed manifest missing `version` names the
+  field; an unparseable signature reports `invalid release signature`.
+- **Rotation:** a second key's signature is refused as `release signed by an untrusted key
+  <id>` by the key1-only build, and accepted by the key1+key2 build — the outgoing key stays
+  accepted in the same build. A client-only manifest (no artifacts) verifies, and asking for
+  an artifact against it is refused.
+
+Observation carried to the installer slice (not scored): at ae7c6ac the generator emits
+`"name": "…"` (space after the colon) while the pre-read's installer sketch pinned the
+no-space `"name":"…"` form. An installer written to that sketch would match nothing, so the
+row form has to be pinned to the emitted bytes — or the generator changed. This is the same
+divergence the hardening slice names; the leg asserts the POSIX-extractable property rather
+than one spacing so it survives whichever form merges.
+
+Harness notes (not product failures): the first run of the leg crashed on a probe bug — the
+artifact-row filter also matched asset rows (`len 3`, then a digest lookup for the asset
+label). The second run was green except one assertion whose expectation was wrong: a
+*missing* artifact file whose name is also not in the manifest correctly refuses as
+`artifact "…" is not in the manifest`, so the read-path case must use a name that is in the
+manifest and a path that is not. The third run is the one quoted here (56/56).
