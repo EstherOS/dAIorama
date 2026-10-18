@@ -194,7 +194,11 @@ max_queued = 64 }`. Default `pace` delays excess calls to the bucket rate in arr
 (input cadence stays human-plausible); `reject` fails `rate_limited` with `hint: retry after
 <ms> ms`. Pacing is bounded on both axes: a wait beyond `max_wait_ms`, or a call arriving while
 `max_queued` are already parked, is refused instead of queued — a flood degrades to refusals,
-never to a parked army. The counter lives in the manager, keyed by session. Pacing is also the
+never to a parked army. The counter lives in the manager, keyed by session; the map is bounded
+(4,096 buckets; a closed session's bucket is dropped at close, the least-recently-used quarter
+is evicted on overflow — a forgotten bucket starts full, exactly like a session never seen), and
+an id that could not name a session is never keyed at all, so a caller choosing its own ids
+cannot grow the manager's memory. Pacing is also the
 natural place for future input-cadence shaping. Capture is exempt from the bucket but serialized
 (one at a time per session).
 
