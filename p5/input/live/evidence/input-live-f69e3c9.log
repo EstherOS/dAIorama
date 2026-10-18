@@ -1,0 +1,156 @@
+######## [1] first key: pre-fix build (f69e3c9)
+dbus-daemon[7]: [session uid=0 pid=7 pidfd=5] Activating service name='ca.desrt.dconf' requested by ':1.1' (uid=0 pid=110 comm="Hyprland --i-am-really-stupid" label="unconfined_u:unconfined_r:spc_t:s0")
+dbus-daemon[7]: [session uid=0 pid=7 pidfd=5] Successfully activated service 'ca.desrt.dconf'
+binary: /out/daiorama-base
+session: 5f099ee5-d85e-4522-a9eb-4ac0e8efdd9b
+
+== type_text abcdef, twice (six characters each) ==
+call 1: delta=bcdef
+call 2: delta=bcdef
+
+== key_tap Return, twice (one press/release pair each) ==
+tap 1: delta=''
+tap 2: delta=''
+
+== every byte the client received ==
+0000000   b   c   d   e   f   b   c   d   e   f
+0000012
+RUN-DONE
+RC=0
+
+######## [2] first key: fixed build
+dbus-daemon[297]: [session uid=0 pid=297 pidfd=5] Activating service name='ca.desrt.dconf' requested by ':1.1' (uid=0 pid=402 comm="Hyprland --i-am-really-stupid" label="unconfined_u:unconfined_r:spc_t:s0")
+dbus-daemon[297]: [session uid=0 pid=297 pidfd=5] Successfully activated service 'ca.desrt.dconf'
+binary: /out/daiorama-input
+session: 715398ef-6b1f-433b-9546-bc285d277f77
+
+== type_text abcdef, twice (six characters each) ==
+call 1: delta=abcdef
+call 2: delta=abcdef
+
+== key_tap Return, twice (one press/release pair each) ==
+tap 1: delta=''
+tap 2: delta=''
+
+== every byte the client received ==
+0000000   a   b   c   d   e   f   a   b   c   d   e   f  \n  \n
+0000016
+RUN-DONE
+RC=0
+
+######## [3] shifted input: pre-fix build
+dbus-daemon[596]: [session uid=0 pid=596 pidfd=5] Activating service name='ca.desrt.dconf' requested by ':1.1' (uid=0 pid=699 comm="Hyprland --i-am-really-stupid" label="unconfined_u:unconfined_r:spc_t:s0")
+dbus-daemon[596]: [session uid=0 pid=596 pidfd=5] Successfully activated service 'ca.desrt.dconf'
+binary: /out/daiorama-base
+start bytes: 
+after type_text ABC!      :  a b c 1
+after key_tap X           :  a b c 1
+after type_text Hello,World:  a b c 1 h e l l o , w o r l d
+after key_tap exclam      :  a b c 1 h e l l o , w o r l d 1
+RUN-DONE
+RC=0
+
+######## [4] shifted input: fixed build
+dbus-daemon[884]: [session uid=0 pid=884 pidfd=5] Activating service name='ca.desrt.dconf' requested by ':1.1' (uid=0 pid=987 comm="Hyprland --i-am-really-stupid" label="unconfined_u:unconfined_r:spc_t:s0")
+dbus-daemon[884]: [session uid=0 pid=884 pidfd=5] Successfully activated service 'ca.desrt.dconf'
+binary: /out/daiorama-input
+start bytes: 
+after type_text ABC!      :  A B C !
+after key_tap X           :  A B C ! X
+after type_text Hello,World:  A B C ! X H e l l o , W o r l d
+after key_tap exclam      :  A B C ! X H e l l o , W o r l d !
+RUN-DONE
+RC=0
+
+######## [5] full input leg (fixed)
+
+== environment ==
+daiorama 0.1.0
+protocol 0.1.0 (min 0.1.0)
+Python 3.14.8
+Python 3.14.8
+[OK]   python3 for the stdio client
+
+== instance: config setup (core config + operator scope + secrets) ==
+config already exists at /root/.config/daiorama/default/config.ron; edit it with 'daiorama config edit'
+scope file already exists at /root/.config/daiorama/default/scopes/operator.ron
+next: 'daiorama doctor' for the environment check, then 'daiorama new'
+[NOTE] scope dir: /root/.config/daiorama/default/scopes
+[OK]   config setup wrote a scope file
+config valid: /root/.config/daiorama/default/config.ron
+scope "act" valid (0 tool grants, 3 category grants)
+scope "operator" valid (0 tool grants, 0 category grants)
+set limits.mode = off; takes effect at next manager start
+[OK]   rate limits off in the starter config
+
+== manager: serve ==
+[OK]   manager running (pid 1255)
+state: running
+mode: background
+pid: 1255
+socket: /tmp/xdg/daiorama/default/manager.sock
+binary: 0.1.0
+min_supported: 0.1.0
+protocol: 0.1.0
+sessions: 0 running, 0 dead
+drain: inactive
+instance_id: 488109ce-0a3f-4683-b6b7-fba71729da64
+
+== session 1: 1280x720 @ scale 1 ==
+dbus-daemon[1174]: [session uid=0 pid=1174 pidfd=5] Activating service name='ca.desrt.dconf' requested by ':1.1' (uid=0 pid=1324 comm="Hyprland --i-am-really-stupid" label="unconfined_u:unconfined_r:spc_t:s0")
+dbus-daemon[1174]: [session uid=0 pid=1174 pidfd=5] Successfully activated service 'ca.desrt.dconf'
+[NOTE] session id: d1771322-3915-45a0-a26a-b521de921f49
+[OK]   session 1 running
+[NOTE] rt=/tmp/dr-d1771322 sig=efb50993780079460b0cbed1363e2166a2de1d9f_1792331298_369617882 wayland=wayland-1
+[OK]   session 1 compositor socket and instance
+[NOTE] cursorpos baseline: 480, 270
+[OK]   hyprctl answers cursorpos
+[NOTE] pointer_move 300,200 (scale 1): cursorpos 480, 270 -> 300, 200 (asked 300,200)
+[OK]   pointer_move 300,200 (scale 1): compositor cursor at 300, 200
+[NOTE] pointer_move 900,600 (scale 1): cursorpos 300, 200 -> 900, 600 (asked 900,600)
+[OK]   pointer_move 900,600 (scale 1): compositor cursor at 900, 600
+[NOTE] pointer_move 1,1 (corner): cursorpos 900, 600 -> 1, 1 (asked 1,1)
+[OK]   pointer_move 1,1 (corner): compositor cursor at 1, 1
+
+== keyboard: type_text + key_tap + one-character names into a real terminal ==
+[OK]   foot window mapped in the session
+[OK]   type_text Hello, 42! (first character and every shifted one): client received  H e l l o , 4 2 !
+[OK]   key_tap Return (a one-pair call reaches the client): client received  H e l l o , 4 2 ! \n
+[OK]   key_tap a (one-character keysym name): client received  H e l l o , 4 2 ! \n a
+[OK]   key_tap X (shifted keysym name arrives shifted): client received  H e l l o , 4 2 ! \n a X
+
+== pointer button + scroll answer ok (no client target to observe) ==
+[OK]   pointer_click answered ok
+[OK]   pointer_scroll answered ok
+[OK]   pointer_button_down answered ok (drag primitive half)
+[OK]   pointer_button_up answered ok (drag primitive half)
+
+== session 2: 1280x720 @ scale 2 -- screenshot pixels vs logical space ==
+[NOTE] session id: 32204b1e-4d56-459f-aea6-a75f4ca7dcb7
+[OK]   session 2 running
+[NOTE] rt=/tmp/dr-32204b1e sig=efb50993780079460b0cbed1363e2166a2de1d9f_1792331306_737212950
+[NOTE] scale 2: cursorpos 480, 270 -> 150, 100 (asked 300,200 screenshot pixels = 150,100 logical)
+[OK]   scale 2 conversion: compositor cursor at 150, 100
+
+== teardown ==
+view: none
+renderer: verified
+instance_id: 488109ce-0a3f-4683-b6b7-fba71729da64
+[NOTE] session runtime dirs left: 0
+
+FAILS=0
+SCRIPT_RC=0
+
+######## [6] chord measurement (fixed)
+dbus-daemon[1779]: [session uid=0 pid=1779 pidfd=5] Activating service name='ca.desrt.dconf' requested by ':1.1' (uid=0 pid=1882 comm="Hyprland --i-am-really-stupid" label="unconfined_u:unconfined_r:spc_t:s0")
+dbus-daemon[1779]: [session uid=0 pid=1779 pidfd=5] Successfully activated service 'ca.desrt.dconf'
+== chord across calls: key_down Shift_L / key_tap x / key_up Shift_L ==
+client bytes: x
+CHORD=broken (tap arrived unshifted: the modifier died with its one-call device)
+
+== control: shift inside one call (key_tap of a shifted keysym name) ==
+client bytes: xX
+SHIFTED_TAP=works
+RUN-DONE
+RC=0
+RUN-DONE
