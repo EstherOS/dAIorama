@@ -16,6 +16,7 @@ const SPEC_06: &str = include_str!("../docs/06-sessions-views.md");
 const SPEC_09: &str = include_str!("../docs/09-packaging.md");
 const RELEASE_NOTES: &str = include_str!("../RELEASE-NOTES.md");
 const IPC: &str = include_str!("../src/ipc/mod.rs");
+const RELEASE_SOURCE: &str = include_str!("../src/release.rs");
 const DASHBOARD_MANIFEST: &str = include_str!("../dashboard/Cargo.toml");
 const SPEC_10: &str = include_str!("../docs/10-operations.md");
 const IMAGE_NOTE: &str = include_str!("../p5/image/README.md");
@@ -652,9 +653,36 @@ fn const_str(source: &str, name: &str) -> String {
     rest[..end].to_string()
 }
 
+/// Reads a `pub const NAME: u64 = N;` value out of a source file (same doc-pin pattern).
+fn const_u64(source: &str, name: &str) -> u64 {
+    let needle = format!("pub const {name}: u64 = ");
+    let start = source
+        .find(&needle)
+        .unwrap_or_else(|| panic!("{name} is not a u64 constant any more"));
+    let rest = &source[start + needle.len()..];
+    let end = rest.find(';').expect("an unterminated constant");
+    rest[..end].trim().parse().expect("a numeric constant")
+}
+
+/// The `MAJOR.MINOR.x` line a `MIN_SUPPORTED` version defines: the range a compat row means.
+fn minor_range(version: &str) -> String {
+    let mut parts = version.split('.');
+    let major = parts.next().expect("a major version");
+    let minor = parts.next().expect("a minor version");
+    format!("{major}.{minor}.x")
+}
+
 /// One `## <version>` section of RELEASE-NOTES.md, up to the next `## ` heading.
 fn release_notes_section<'a>(notes: &'a str, version: &str) -> &'a str {
     let heading = format!("## {version}");
+    let occurrences = notes
+        .lines()
+        .filter(|line| line.trim_end() == heading)
+        .count();
+    assert_eq!(
+        occurrences, 1,
+        "RELEASE-NOTES.md must carry exactly one `{heading}` section, found {occurrences}"
+    );
     let start = notes.find(&heading).unwrap_or_else(|| {
         panic!("RELEASE-NOTES.md has no `{heading}` section: a version bump needs notes")
     });
@@ -710,6 +738,27 @@ fn release_notes_carry_this_version_and_agree_with_the_code() {
         row[1], dashboard_version,
         "the dashboard row disagrees with dashboard/Cargo.toml: {row:?}"
     );
+
+    // Compatible ranges are the MIN_SUPPORTED line, not hand-written prose.
+    let min_supported = const_str(IPC, "MIN_SUPPORTED");
+    let range = minor_range(&min_supported);
+    for surface in [
+        "Core binary (`daiorama`)",
+        "RPC protocol",
+        "Dashboard module",
+    ] {
+        let row = notes_row(section, surface);
+        assert_eq!(
+            row[2], range,
+            "the {surface} compatible range disagrees with MIN_SUPPORTED {min_supported}: {row:?}"
+        );
+    }
+
+    // The manifest row is the format constant, both the label and the value.
+    let manifest_format = const_u64(RELEASE_SOURCE, "MANIFEST_FORMAT");
+    let row = notes_row(section, "Release manifest");
+    assert_eq!(row[1], format!("format: {manifest_format}"), "{row:?}");
+    assert_eq!(row[2], manifest_format.to_string(), "{row:?}");
 
     // The pointer is two-way: the doc the test reads is the doc 09 names.
     assert!(SPEC_09.contains("RELEASE-NOTES.md"), "{SPEC_09}");
