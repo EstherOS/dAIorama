@@ -36,6 +36,7 @@ while [ "$#" -gt 0 ]; do
         --prefix)
             [ "$#" -ge 2 ] || usage
             prefix=${2%/}
+            [ -n "$prefix" ] || { echo "--prefix must not be empty" >&2; exit 1; }
             prefix_given=1
             shift 2
             ;;
@@ -140,38 +141,48 @@ if ! command -v sha256sum >/dev/null 2>&1; then
     exit 1
 fi
 
-fetch() { # fetch <name> <dest>
+fetch() { # fetch <name> <dest> <cap-bytes>
+    cap=$3
     case $base in
         *://*)
             if ! command -v curl >/dev/null 2>&1; then
                 echo "curl is required for a remote release base" >&2
                 exit 1
             fi
-            if ! curl -fsSL --max-filesize 1048576 "$base/$1" -o "$2"; then
+            if ! curl -fsSL --max-filesize "$cap" "$base/$1" -o "$2"; then
                 echo "cannot fetch $base/$1" >&2
                 exit 1
             fi
             ;;
         *)
+            # Refuse before copying: a local mirror that hands over a 4 GiB file should not
+            # fill the temp dir just to be rejected afterwards.
+            if [ -f "$base/$1" ]; then
+                local_size=$(wc -c <"$base/$1" | tr -d ' ')
+                if [ "$local_size" -gt "$cap" ]; then
+                    echo "release file $1 is larger than $cap bytes" >&2
+                    exit 1
+                fi
+            fi
             if ! cp "$base/$1" "$2" 2>/dev/null; then
                 echo "cannot read $base/$1" >&2
                 exit 1
             fi
             ;;
     esac
-    # The verifiers bound manifest and signature at 1 MiB; an installer that reads a release
-    # file unbounded can be made to fill the disk before the signature is checked.
     size=$(wc -c <"$2" | tr -d ' ')
-    if [ "$size" -gt 1048576 ]; then
-        echo "release file $1 is larger than 1 MiB" >&2
+    if [ "$size" -gt "$cap" ]; then
+        echo "release file $1 is larger than $cap bytes" >&2
         exit 1
     fi
 }
 
 manifest=$work/daiorama-release-$version.json
 signature=$manifest.minisig
-fetch "daiorama-release-$version.json" "$manifest"
-fetch "daiorama-release-$version.json.minisig" "$signature"
+# Metadata is small by contract (the verifiers bound it at 1 MiB); the artifact is a binary
+# and gets the installer's own 128 MiB ceiling, never the metadata cap.
+fetch "daiorama-release-$version.json" "$manifest" 1048576
+fetch "daiorama-release-$version.json.minisig" "$signature" 1048576
 
 # The signature is the whole trust decision: the exit code is the contract, its output is not
 # parsed. Try each anchor; a signature chains to exactly one key id, so at most one succeeds.
@@ -256,7 +267,7 @@ if [ -z "$expected" ] || [ "$kind" != core ]; then
     exit 1
 fi
 
-fetch "$name" "$work/$name"
+fetch "$name" "$work/$name" 134217728
 actual=$(sha256sum "$work/$name" | awk '{ print $1 }')
 if [ "$actual" != "$expected" ]; then
     echo "artifact \"$name\" sha256 $actual does not match the manifest row $expected" >&2
