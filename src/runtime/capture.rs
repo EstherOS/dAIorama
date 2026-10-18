@@ -55,10 +55,16 @@ fn run(
     let started = Instant::now();
     let deadline = started + budget;
     let mut signalled = false;
+    // SIGINT is a finalize request, not a start pistol: a recorder that has not written its
+    // first byte yet (slow exec/scheduler under load) must get that byte out first, or the
+    // finalize produces an empty container. The grace keeps the stop bound honest for a
+    // recorder that never writes at all.
+    const FIRST_BYTE_GRACE: Duration = Duration::from_secs(1);
     loop {
         if let Some(stop_after) = stop_after
             && !signalled
             && started.elapsed() >= stop_after
+            && (out_has_bytes(out) || started.elapsed() >= stop_after + FIRST_BYTE_GRACE)
         {
             // SIGINT lets a recorder flush its container; the exit status afterwards is not
             // the capture's verdict (the bytes are).
@@ -161,6 +167,12 @@ pub fn screenshot(
     let (width, height) = png_dimensions(&bytes)
         .ok_or_else(|| ErrorEnvelope::capture_failed("capture failed: not a PNG"))?;
     Ok((bytes, width, height))
+}
+
+fn out_has_bytes(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .map(|meta| meta.is_file() && meta.len() > 0)
+        .unwrap_or(false)
 }
 
 /// One clip: the recorder runs for `duration`, then SIGINT finalizes the container.
@@ -294,6 +306,23 @@ mod tests {
         let error =
             screenshot(&env(dir.path()), &script, Duration::from_secs(1), 1024).unwrap_err();
         assert!(error.message.contains("timed out after 1s"), "{error:?}");
+    }
+
+    #[test]
+    fn a_slow_starting_recorder_writes_its_first_byte_before_the_interrupt() {
+        let dir = tempfile::tempdir().unwrap();
+        // The write lands well after the nominal stop; the harness waits for the first byte
+        // instead of racing the child's startup with SIGINT.
+        let script = write_script(dir.path(), "sleep 0.15; printf x > \"$1\"; sleep 30");
+        let bytes = clip(
+            &env(dir.path()),
+            &script,
+            Duration::from_secs(5),
+            Duration::from_millis(50),
+            1024,
+        )
+        .unwrap();
+        assert_eq!(bytes, b"x");
     }
 
     #[test]
