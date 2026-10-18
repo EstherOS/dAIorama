@@ -33,6 +33,24 @@ agent's own container), and this is its named delivery (C2).
   sha256 before any digest is trusted. Both are cold verbs: local files only, no
   network, no writes except the generator's `--out`.
 - **Second verifier (release automation):** `packaging/release/verify.sh <manifest> <signature> [artifact]` uses the distribution `minisign` and the same trust list, and is the independent check release automation runs beside the binary. It reads the list from the file tree, refuses an empty list with the same string, distinguishes an untrusted key id from a bad signature, and matches artifacts by basename + sha256. Exit 0 verified, 1 refusal, 2 usage.
+- **Manifest bytes (format 1)**: one JSON document plus a detached minisign
+  signature. Fields: `format` (1), `version` (core semver), `protocol` (semver),
+  `channel` (`stable` | `beta`), `released_at` (RFC 3339 UTC,
+  `YYYY-MM-DDTHH:MM:SSZ`), `artifacts[] {name, target, kind, sha256, size}`,
+  `assets[] {name, sha256, size}`, and
+  `facts {client_only, manager_platforms, components}`. `kind` is `core`,
+  `dashboard` or `image`; a binary row carries a Rust target triple
+  (`x86_64`/`aarch64` × `gnu`/`musl`), an image row a platform (`linux/amd64`,
+  `linux/arm64`) and the manifest digest in `sha256` (never a tag). At least one
+  artifact row is required — a client-only release still ships the client binary.
+  One artifact/asset object per line with no whitespace inside an object and a
+  fixed key order, so an installer reads a row without `jq`:
+  `grep -F '"name":"daiorama-<version>-<target>"'` then
+  `sed -n 's/.*"sha256":"\([0-9a-f]\{64\}\)".*/\1/p'`. The verifier validates
+  every row after the signature verifies (unknown target/kind/channel, a bad
+  digest shape, a bad `released_at`, a duplicate row and a missing pinned field
+  are refusals), bounds the manifest and signature at 1 MiB before reading them,
+  and hashes `--artifact` through the installer's bounded path (128 MiB).
 - **Install-command table (maintained)**: `packaging/install-commands.md` —
   distro/release → exact command → version, with explicit "not packaged / out
   of range" rows (the Fedora ≥ f43 Hyprland case renders "not packaged for this

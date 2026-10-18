@@ -1,0 +1,15 @@
+== pre-fix (merged ae7c6ac)
+-- pinned grep -F count (expect 1):
+0
+-- pinned sed digest (expect 64 hex):
+-- artifact line:
+    {"name": "daiorama-0.1.0-x86_64-unknown-linux-gnu","target": "x86_64-unknown-linux-gnu","kind": "core","sha256": "5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef","size": 1024}
+
+== post-fix (p5/release-hardening-esther)
+-- pinned grep -F count (expect 1):
+1
+-- pinned sed digest (expect 64 hex):
+5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef
+-- artifact line:
+    {"name":"daiorama-0.1.0-x86_64-unknown-linux-gnu","target":"x86_64-unknown-linux-gnu","kind":"core","sha256":"5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef","size":1024}
+
