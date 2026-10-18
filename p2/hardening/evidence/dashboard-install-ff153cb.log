@@ -1,0 +1,59 @@
+== [A] pre-install and input-shape refusals ==
+[OK]   module tree absent at a cold data root (ABSENT)
+[OK]   no module: the exec path refuses (module not installed; run 'daiorama dashboard install'. (module_not_installed))
+[OK]   --artifact without --sha256 refuses (--artifact requires --sha256 <hex>: the artifact is verified before it is unpacked (bad_request))
+[OK]   --sha256 without --artifact refuses (--sha256 applies only with --artifact (bad_request))
+[OK]   neither input refuses (dashboard install needs --artifact <tar.gz> and --sha256 <hex>, or --version <installed> to re-activate one (bad_request))
+[OK]   a remote target refuses install before touching disk (dashboard install is local-instance only; it cannot target a remote manager (bad_request))
+== [B] the checksum gate runs before anything under modules/ ==
+[OK]   malformed digest refuses (invalid --sha256 "nothex"; expected 64 hex characters (bad_request))
+[OK]   wrong 64-hex digest refuses (artifact checksum mismatch: expected 0000000000000000000000000000000000000000000000000000000000000000, got 19c6f07cbadfdd321822bf55fc4d41dff8f3250abc4562b2d47400c92da32a32 (bad_request))
+[OK]   129 MiB artifact refuses on size, before hashing (artifact too large: 135266304 bytes (limit 128 MiB) (bad_request))
+[OK]   a non-tar artifact refuses (cannot read artifact /tmp/di-ff153cb/art/plain.txt: invalid gzip header (bad_request))
+[OK]   a directory is not an artifact (artifact /tmp/di-ff153cb/pkg/good is not a regular file (bad_request))
+== [C] hostile and incomplete members are refused, and nothing escapes ==
+[OK]   '../escape' member refuses (artifact entry refused: ../escape (bad_request))
+[OK]   no file escaped the staging dir
+[OK]   no file landed under the data root
+[OK]   an absolute member refuses (artifact entry refused: /tmp/di-abs-escape (bad_request))
+[OK]   the absolute member was not written
+[OK]   a symlink member refuses (artifact entry refused: daiorama-dashboard (bad_request))
+[OK]   a hardlink member refuses (artifact entry refused: daiorama-dashboard-link (bad_request))
+[OK]   an artifact without the module binary refuses (artifact does not contain 'daiorama-dashboard' (bad_request))
+[OK]   refusals left no staged or version directory behind (ABSENT)
+== [D] a real install ==
+[OK]   install exits 0 (0)
+[OK]   install prints exactly two lines (2)
+[OK]   line 1 is the version read from the asset name (0.1.0)
+[OK]   line 2 is the instance directory (/tmp/di-ff153cb/data/daiorama/default/modules/daiorama-dashboard/0.1.0)
+[OK]   active names one slug (0.1.0)
+[OK]   the installed binary is 0755 although the artifact carried 0644 (755)
+[OK]   the rest of the artifact landed beside it (<!doctype html><title>probe</title>)
+[OK]   no .stage-/ .old- leftovers (0.1.0 active )
+[OK]   the core execs the installed module (exit 0) (0)
+[OK]   the module answered for real (no connections)
+== [E] replace, second version, and revert ==
+[OK]   a second install of the same version refuses (module 0.1.0 is already installed at /tmp/di-ff153cb/data/daiorama/default/modules/daiorama-dashboard/0.1.0; pass --force to replace it (bad_request))
+[OK]   --force replaces the real directory (exit 0) (0)
+[OK]   --force keeps active on the same slug (0.1.0)
+[OK]   --force landed the new payload (asset v2)
+[OK]   --force leaves no .old- directory (0.1.0 active )
+[OK]   the exec path still works after --force (no connections)
+[OK]   a second version installs beside the first (exit 0) (0)
+[OK]   active switches to the new version (0.2.0)
+[OK]   the core refuses to exec a version-skewed module (dashboard module 0.2.0 does not match this dashboard (0.1.0); run 'daiorama dashboard install --version 0.1.0' (bad_request))
+[OK]   revert takes no digest and exits 0 (0)
+[OK]   revert prints the version and path (0.1.0)
+[OK]   active is back on 0.1.0 (0.1.0)
+[OK]   the exec path works again with no restart (no connections)
+[OK]   reverting to a version that is not installed refuses (module 9.9.9 is not installed at /tmp/di-ff153cb/data/daiorama/default/modules/daiorama-dashboard/9.9.9 (bad_request))
+== [F] version-directory safety ==
+[OK]   a symlinked version directory is never replaced (refusing to replace /tmp/di-ff153cb/data/daiorama/default/modules/daiorama-dashboard/9.9.9: it is not a directory (bad_request))
+[OK]   the symlink is intact (still points outside) (/tmp/di-ff153cb/outside)
+[OK]   --version refuses a path component (invalid module version "../escape" (bad_request))
+[OK]   --version refuses a dot (invalid module version "." (bad_request))
+== [G] one more real exec after every refusal ==
+[OK]   active unchanged (0.1.0)
+[OK]   the module still answers (no connections)
+FAILS=0
+VERDICT=PASS
