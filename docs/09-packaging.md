@@ -69,7 +69,11 @@ agent's own container), and this is its named delivery (C2).
   the release codename (sid/forky carry it; stable does not), not the id alone.
 - **One multiplatform core binary** containing CLI + manager + bridge (bridge
   is a subcommand, also standalone-invokable). Versioned as core semver. The
-  protocol version is its own semver; the compat table ships in `RELEASE-NOTES.md`.
+  protocol version is its own semver; the compat table ships in `RELEASE-NOTES.md`,
+  one `## <version>` section per release. A build test reads the section for the
+  current `CARGO_PKG_VERSION` and fails when it is missing or a row disagrees with
+  the code (`Cargo.toml`, `ipc::PROTOCOL_VERSION`, the dashboard crate's version),
+  so a version bump cannot ship stale ranges.
 - **Dashboard is a separate module artifact** (below) — never a compile-time
   feature flag: prebuilt downloads don't shrink with flags, a real module
   shrinks the default download.

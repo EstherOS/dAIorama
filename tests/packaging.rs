@@ -14,6 +14,9 @@ const NOVNC_FETCH: &str = include_str!("../packaging/novnc/fetch.sh");
 const NOVNC_NOTE: &str = include_str!("../p5/novnc/README.md");
 const SPEC_06: &str = include_str!("../docs/06-sessions-views.md");
 const SPEC_09: &str = include_str!("../docs/09-packaging.md");
+const RELEASE_NOTES: &str = include_str!("../RELEASE-NOTES.md");
+const IPC: &str = include_str!("../src/ipc/mod.rs");
+const DASHBOARD_MANIFEST: &str = include_str!("../dashboard/Cargo.toml");
 const SPEC_10: &str = include_str!("../docs/10-operations.md");
 const IMAGE_NOTE: &str = include_str!("../p5/image/README.md");
 const ENTRYPOINT: &str = include_str!("../packaging/container/entrypoint.sh");
@@ -635,4 +638,79 @@ fn spec_09_and_the_runbook_name_the_table() {
         "{SPEC_09}"
     );
     assert!(README.contains("install-commands.md"), "{README}");
+}
+
+/// Reads a `pub const NAME: &str = "…";` value out of a source file (the binary is
+/// bin-only, so the constants are read as text — the doc-pin pattern).
+fn const_str(source: &str, name: &str) -> String {
+    let needle = format!("pub const {name}: &str = \"");
+    let start = source
+        .find(&needle)
+        .unwrap_or_else(|| panic!("{name} is not a string constant any more"));
+    let rest = &source[start + needle.len()..];
+    let end = rest.find('"').expect("an unterminated constant");
+    rest[..end].to_string()
+}
+
+/// One `## <version>` section of RELEASE-NOTES.md, up to the next `## ` heading.
+fn release_notes_section<'a>(notes: &'a str, version: &str) -> &'a str {
+    let heading = format!("## {version}");
+    let start = notes.find(&heading).unwrap_or_else(|| {
+        panic!("RELEASE-NOTES.md has no `{heading}` section: a version bump needs notes")
+    });
+    let rest = &notes[start + heading.len()..];
+    let end = rest.find("\n## ").unwrap_or(rest.len());
+    &rest[..end]
+}
+
+/// A compat-table row by its first cell, with markdown backticks stripped so a
+/// value compares to the code's constant directly.
+fn notes_row(section: &str, surface: &str) -> Vec<String> {
+    let needle = format!("| {surface} |");
+    let line = section
+        .lines()
+        .find(|line| line.starts_with(&needle))
+        .unwrap_or_else(|| panic!("the compat table lost its `{surface}` row:\n{section}"));
+    line.trim_matches('|')
+        .split('|')
+        .map(|cell| cell.trim().trim_matches('`').to_string())
+        .collect()
+}
+
+#[test]
+fn release_notes_carry_this_version_and_agree_with_the_code() {
+    // 09: the compat table is the release's contract. A bump that forgets its
+    // section, or a row that drifts from the build, fails here — the note is not
+    // hand-copied text that ages silently.
+    let version = env!("CARGO_PKG_VERSION");
+    let section = release_notes_section(RELEASE_NOTES, version);
+
+    let core = notes_row(section, "Core binary (`daiorama`)");
+    assert_eq!(
+        core[1], version,
+        "the core row disagrees with Cargo.toml: {core:?}"
+    );
+
+    let protocol = const_str(IPC, "PROTOCOL_VERSION");
+    let row = notes_row(section, "RPC protocol");
+    assert_eq!(
+        row[1], protocol,
+        "the protocol row disagrees with ipc::PROTOCOL_VERSION: {row:?}"
+    );
+
+    // The dashboard builds as its own artifact, so its version comes from its own
+    // manifest, not the core package.
+    let dashboard_version = DASHBOARD_MANIFEST
+        .lines()
+        .find_map(|line| line.strip_prefix("version = \""))
+        .map(|rest| rest.trim_end_matches('"'))
+        .expect("dashboard/Cargo.toml names a version");
+    let row = notes_row(section, "Dashboard module");
+    assert_eq!(
+        row[1], dashboard_version,
+        "the dashboard row disagrees with dashboard/Cargo.toml: {row:?}"
+    );
+
+    // The pointer is two-way: the doc the test reads is the doc 09 names.
+    assert!(SPEC_09.contains("RELEASE-NOTES.md"), "{SPEC_09}");
 }
