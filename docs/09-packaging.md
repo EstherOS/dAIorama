@@ -69,7 +69,7 @@ agent's own container), and this is its named delivery (C2).
   the release codename (sid/forky carry it; stable does not), not the id alone.
 - **One multiplatform core binary** containing CLI + manager + bridge (bridge
   is a subcommand, also standalone-invokable). Versioned as core semver. The
-  protocol version is its own semver; the compat table ships with release notes.
+  protocol version is its own semver; the compat table ships in `RELEASE-NOTES.md`.
 - **Dashboard is a separate module artifact** (below) — never a compile-time
   feature flag: prebuilt downloads don't shrink with flags, a real module
   shrinks the default download.
