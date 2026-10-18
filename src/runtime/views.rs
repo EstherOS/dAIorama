@@ -667,8 +667,24 @@ pub struct StartedView {
 }
 
 impl ViewManager {
+    /// The live view for a session, if any. A view whose wayvnc has exited is **not** live:
+    /// 06 says view death marks the view `down`, leaves the session running, and the next
+    /// `get_view` starts a fresh one with a new generation — so an exited child is reaped here
+    /// (front stopped, entry dropped) rather than handed back as a working address. Without
+    /// this, a crashed wayvnc leaves the front serving the page and `get_view` answering the
+    /// same generation forever; the operator's reload cannot recover without a manual stop.
     pub fn running(&self, session_id: &str) -> Option<(u16, u16, u64)> {
-        let views = self.views.lock().expect("view lock");
+        let mut views = self.views.lock().expect("view lock");
+        let exit = views
+            .get_mut(session_id)
+            // `try_wait` errors only when the child cannot be interrogated; keep the view then.
+            .map(|view| matches!(view.child.try_wait(), Ok(Some(_))))?;
+        if exit {
+            if let Some(view) = views.remove(session_id) {
+                view.front.stop();
+            }
+            return None;
+        }
         views
             .get(session_id)
             .map(|view| (view.front.front_port, view.front.vnc_port, view.generation))
