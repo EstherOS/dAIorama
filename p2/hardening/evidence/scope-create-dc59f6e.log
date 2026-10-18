@@ -1,0 +1,76 @@
+binary=/tmp/t/debug/daiorama label=dc59f6e port=18770
+=== [A] create --template dashboard ===
+[OK]   create exits 0
+[OK]   the answer is the path only ('/tmp/drscope._0st7me0/config/daiorama/default/scopes/dashboard.ron\n')
+[OK]   file exists
+[OK]   file is 0600 (0o600)
+[OK]   dashboard template has visibility all
+[OK]   the file is commented
+[OK]   create writes no scope secret
+
+=== [B] refusals ===
+[OK]   second create refuses
+[OK]   refusal is the pinned string (scope "dashboard" already exists (bad_request)
+hint: check the request against 'daiorama <command> --help')
+[OK]   an existing scope file is left byte-identical
+[OK]   `../evil` refuses
+[OK]   `../evil` is `invalid scope name` (invalid scope name (bad_request)
+hint: check the request against 'daiorama <command> --help')
+[OK]   nothing escaped the scopes dir
+[OK]   uppercase name refuses (invalid scope name (bad_request)
+hint: check the request against 'daiorama <command> --help')
+[OK]   no file for the refused name
+[OK]   `--template Dashboard` refuses
+[OK]   template refusal is the pinned string (invalid scope template "Dashboard"; expected own, all, or dashboard (bad_request)
+hint: check the request against 'daiorama <command> --help')
+[OK]   no file for the refused template
+[OK]   create own exits 0
+[OK]   own file is 0600
+[OK]   own template has visibility own
+
+=== [C] first network start mints the credentials ===
+[OK]   manager socket appears (/tmp/drscope._0st7me0/run/daiorama/default/manager.sock)
+[OK]   bridge accepts on the bound port (port 18770)
+[OK]   instance token file exists
+[OK]   instance token is 0600 (0o600)
+[OK]   secret for operator minted
+[OK]   secret for operator is 0600 (0o600)
+[OK]   secret for dashboard minted
+[OK]   secret for dashboard is 0600 (0o600)
+[OK]   secret for own minted
+[OK]   secret for own is 0600 (0o600)
+
+=== [D] the created scope authenticates a real call over TCP ===
+[OK]   initialize answers 200 (HTTP/1.1 200 OK)
+[OK]   initialize carries a result
+[OK]   list_capabilities answers 200 (HTTP/1.1 200 OK)
+[OK]   list_capabilities is not an error ({"id":7,"jsonrpc":"2.0","result":{"content":[],"structuredContent":{"always_on":["create_session","close_session","list_sessions","session_status","list_capabil)
+[OK]   capabilities carry the always-on set (['content', 'structuredContent'])
+[OK]   list_sessions answers 200 (HTTP/1.1 200 OK)
+[OK]   list_sessions is not an error ({"id":7,"jsonrpc":"2.0","result":{"content":[],"structuredContent":{"sessions":[]}}})
+[OK]   a foreign scope secret is 403 (HTTP/1.1 403 Forbidden)
+[OK]   the refusal names scope_auth_required ({"error":{"code":-32600,"data":{"code":"scope_auth_required","message":"scope \"dashboard\" requires its scope secret (Daiorama-Scope-Token header)"},"message":)
+[OK]   a missing scope secret is 403 (HTTP/1.1 403 Forbidden)
+[OK]   the missing-secret refusal is scope_auth_required ({"error":{"code":-32600,"data":{"code":"scope_auth_required","message":"scope \"dashboard\" requires its scope secret (Daiorama-Scope-Token header)"},"message":)
+[OK]   a wrong instance token is 403 (HTTP/1.1 403 Forbidden)
+[OK]   the identity refusal is token_required ({"error":{"code":-32600,"data":{"code":"token_required","hint":"run 'daiorama token show' on the manager host and set DAIORAMA_TOKEN","message":"token required )
+
+=== [E] a scope created while the bridge runs is usable at the NEXT start ===
+[OK]   late create exits 0
+[OK]   late has no secret while the bridge is up
+[OK]   late is refused before it has a secret (HTTP/1.1 403 Forbidden)
+[OK]   the refusal says the scope has no secret ({"error":{"code":-32600,"data":{"code":"scope_auth_required","hint":"create the scope secret file on the bridge host","message":"scope \"late\" has no secret; i)
+[OK]   the bridge rebinds (port 18770)
+[OK]   the next start mints the late secret
+[OK]   late secret is 0600
+[OK]   the instance token is unchanged by the rebind
+[OK]   the dashboard secret is unchanged by the rebind
+[OK]   the late scope answers after the rebind ({"id":7,"jsonrpc":"2.0","result":{"content":[],"structuredContent":{"sessions":[]}}})
+
+=== [F] no secret leaves a file that should not carry one ===
+[OK]   no credential appears in an HTTP answer
+[OK]   no credential appears in a scope file
+[NOTE] secrets checked: instance token + 3 scope secrets + late
+FAILS=0
+scope_create_rc=0
+VERDICT=PASS
