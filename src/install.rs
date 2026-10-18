@@ -231,7 +231,7 @@ pub fn install(
     let dir = parent.join(&version);
     activate(&parent, &version).map_err(|err| {
         ErrorEnvelope::bad_request(format!(
-            "{}; version {version} is installed but active is absent — re-run install to activate it",
+            "{}; version {version} is installed but active is absent or unusable — re-run install to activate it",
             err.message
         ))
     })?;
@@ -588,6 +588,39 @@ mod tests {
         assert!(
             !paths.modules_dir().exists(),
             "the refused install left the modules directory behind (N1)"
+        );
+    }
+
+    #[test]
+    fn a_blocked_active_path_reports_installed_but_unusable() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = Paths::for_env(
+            Some(&root.path().join("config")),
+            Some(&root.path().join("data")),
+            Some(root.path()),
+            "t",
+        );
+        // A foreign occupant where the link belongs: a non-empty directory. The bytes
+        // install, the swap fails, and the error names the state instead of implying rollback.
+        let parent = paths.modules_dir().join("daiorama-dashboard");
+        std::fs::create_dir_all(parent.join("active")).unwrap();
+        std::fs::write(parent.join("active").join("occupied"), "x").unwrap();
+        let artifact = artifact_with(
+            root.path(),
+            "daiorama-dashboard-0.2.0-x86_64-unknown-linux-gnu.tar.gz",
+            "module",
+        );
+        let sha = file_sha256(&artifact).unwrap();
+        let err = install(&paths, &artifact, &sha, None, false)
+            .err()
+            .expect("activation must fail");
+        assert!(
+            err.message.contains("absent or unusable"),
+            "the state is named: {err:?}"
+        );
+        assert!(
+            parent.join("0.2.0").join("daiorama-dashboard").is_file(),
+            "the version bytes are installed"
         );
     }
 }
