@@ -1,0 +1,104 @@
+===================================================================
+## merged-tip pass — spec/v1 @ aaaf544   (2026-10-18)
+===================================================================
+Tip: aaaf544 ("docs(release): 0.1.0 release notes + the A7 compat table"). Last full pass in
+this series was dc59f6e (PR #115). Source delta since dc59f6e: #116 the install script
+(`packaging/release/install.sh`, 296 lines, `tests/install_script.rs` 740), #117 rate bucket
+bounds (`src/runtime/rate.rs`), #118 history bounds (`src/history.rs`, `src/runtime/service.rs`
+`session_known`), plus the #119/#120 documentation.
+
+Environment: fresh `rust:slim` containers — `dai-mtipaaaf-gate` (base tree), `-gatefix`
+(patched tree), `-legs` (changed-surface legs), `-instlive` (install leg), rustc 1.99.0
+(b940084d7), cargo 1.99.0 (5f94df478), python3 3.13.5 + minisign 0.12 (Debian), workspace at
+/src, `CARGO_TARGET_DIR=/tmp/t` cold in each container. Gate set: fmt, fmt --check, clippy
+--workspace --all-targets --locked -D warnings, build --workspace --bins, test --workspace.
+
+===================================================================
+## [1] Finding (fixed on this branch): the B9 pacing test fails at the merged tip under load
+===================================================================
+The base tree's gate is red, first suite:
+
+  test runtime::service::tests::control_calls_are_paced_by_the_default_bucket ... FAILED
+  panicked: the 41st call was paced: 11.296909ms
+  test result: FAILED. 286 passed; 1 failed; 6 ignored
+
+Not a product defect: the bucket refills continuously, so a single call's wait is only what is
+left of the current token period (`wait = (1 - tokens) / per_sec`). 11.296909 ms at 20/s means
+the bucket held 0.774 tokens when the 41st call arrived — i.e. the 40-call drain itself took
+~39 ms under the full-suite load, handing the next call a 0.8-token head start. The assertion
+(>= 35 ms) assumes the drain is ~free; it holds on an idle box and fails when the gate container
+is loaded. The same test passes 6/6 alone (`-pace`) and 4/4 at `--test-threads=32` (`-repro2`),
+so the red run is the loaded case, not a broken tip.
+
+Fix: measure a span instead of one call's remainder — drain the default burst (40), then time
+20 further calls; 20 tokens at 50 ms each cost >= 18 periods even after two tokens of refill
+(>= 900 ms), asserted at >= 700 ms for margin. A regression that stops pacing (20 calls in tens
+of milliseconds) cannot pass it.
+
+Gates on the fixed tree (`gate-aaaf544-fixed.log`): fmt 0 · fmt-check 0 · clippy 0 · build 0 ·
+test 0 — 17 suites, **447 passed / 0 failed / 6 ignored**, matching the merged ledger for
+e07e784. Base-tree log kept as `gate-aaaf544-base-red.log` (rc=101 at the first suite).
+
+===================================================================
+## [2] New live leg: the install script over a real HTTP base and a real keypair
+===================================================================
+`p2/hardening/run-install-live.sh` + `probe-install-live.py` (32 assertions, 0 failed).
+The in-tree suite stubs `minisign` on PATH and uses `--base <dir>`; this leg runs what an
+operator runs: `curl` against `http://127.0.0.1:<port>`, two real minisign keypairs
+(`minisign -G`), the "provisioned" copy of the shipped script trusting key1 only, and the
+shipped script as-is for the empty-trust case.
+
+  [P] fetch -> verify -> read facts -> select row -> hash -> place; installed bytes equal the
+      artifact, mode 0755, receipt names version/protocol/target, the sha256 and the anchor id
+      that verified; no `.daiorama.tmp.*` left in the prefix;
+  [C] a second install whose signed row does not match the served bytes is refused and the
+      placed binary is unchanged byte-for-byte;
+  [R] over the same HTTP wire: untrusted signer (message names the presented key id), version
+      mismatch, duplicate row, row-target mismatch, short digest, bad format, over-cap metadata
+      (1 MiB + 1), over-cap artifact (128 MiB + 1, refused on Content-Length) — nothing placed
+      in any of them;
+  [E] the shipped installer with its empty trust list refuses `no trusted release key
+      provisioned` before any fetch (base pointed at a dead port, no fetch error);
+  [V] bad version / empty prefix / unknown target (rc 1), unknown option / no version (rc 2).
+
+Raw: `install-live-aaaf544.log`. Prerequisite note: the leg container needs `curl`, `python3`
+and `minisign`; `curl` is documented as an installer prerequisite in `packaging/README.md`
+("download path only"), and a bench without it gets the script's own
+`curl is required for a remote release base` refusal — observed in the first run of this leg.
+
+===================================================================
+## [3] Changed-surface legs — three probes are stale against the merged invented-id semantics
+===================================================================
+`run-changed-aaaf544.sh` drives the legs that own the source moved since dc59f6e:
+
+  dispatch-stall  rc=0   (dispatch-stall-aaaf544.log)
+  history-bound   rc=0   (history-bound-aaaf544.log) — #118's bound holds: invented ids leave
+                          no directory, the cache stays bounded
+  rate-buckets    rc=1   (rate-buckets-aaaf544.log) — memory assertions all green
+                          (rounds 2-3 delta 0 kB, twelve 6 MiB ids plateau at 35.8 MB); the
+                          only failure is [D2] "third call is rate_limited"
+  rate-limit      rc=5   (rate-limit-aaaf544.log) — [A3]/[A4] no `rate_limited`, [E2] no pace
+                          wait, [F2] no max_wait refusal, [G2] no queue-bound refusal
+  history         rc=1   (history-aaaf544.log) — [B1] "six control calls wrote six records" n=0,
+                          and the cases built on it
+
+Mechanism (one cause, not five): #117 made the bucket gate skip ids that cannot name a session
+and #118 made `session_known` (live registry **or** durable history) gate both pacing and
+recording. Every one of these probes drives control calls for **invented** ids (`s-1`,
+`s-hist-1`, …) on a bench that cannot create a real session (no compositor in `rust:slim`), so
+after the two merges those calls earn no bucket and write no record — by design, and the
+merged behavior is what #118 was approved for. The legs need a known-session fixture: seed
+`<history>/<id>/seg-00001.jsonl` with one record before the calls (`recorded_scope` reads the
+first segment, which makes the id known without creating a session), and filter that seed out
+of the record assertions.
+
+Follow-up claimed on the board as `P5-LEG-PROBES-KNOWN-SESSION`. Until it lands, the shipped
+pacing and history-recording paths have no live leg at this tip — the two unit suites still
+cover them (447 green), and `history-bound` still proves the invented-id refusals.
+
+===================================================================
+## [0] Raw gate logs
+===================================================================
+`gate-aaaf544-base-red.log`  — unpatched aaaf544: fmt 0 · fmt-check 0 · clippy 0 · build 0 ·
+                               test rc=101 (bin suite 286/1/6) — the pacing failure
+`gate-aaaf544-fixed.log`     — this branch: the same gate set, 447 passed / 0 failed / 6 ignored

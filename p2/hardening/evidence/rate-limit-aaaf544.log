@@ -1,0 +1,20 @@
+[OK]   [A1] first control call passes the gate ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [A2] second control call passes (burst 2) ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[FAIL] [A3] third control call is rate_limited :: {"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}}
+[FAIL] [A4] refusal carries a numeric retry-after hint :: hint='list sessions to find one'
+[OK]   [B1] session_status is exempt from the bucket ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [B2] screenshot is exempt from the bucket ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [C1] a different session has its own burst ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [D1] a refilled bucket passes again ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [E1] paced call passes after its wait ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[FAIL] [E2] the scope file was re-read per call (pace took effect, no restart) :: elapsed=0.000s want ~0.50s
+[OK]   [F1] first call passes ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[FAIL] [F2] a wait past max_wait_ms refuses :: {"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}}
+[OK]   [F3] the refused wait did not park the caller (elapsed=0.000s)
+[OK]   [G1] at least one concurrent call passes the gate (passed=6 refused=0 other=0)
+[FAIL] [G2] the queue bound refuses rather than parking the whole flood :: passed=6 refused=0 other=0
+[OK]   [G3] every answer arrives inside the parked wait bound (total=0.004s max_call=0.001s)
+[NOTE] no refusal under six concurrent calls: either dispatch serialized the connections or the queue bound did not engage -- both are findings at this tip
+FAILS=5
+rate_rc=5
+VERDICT=FAIL

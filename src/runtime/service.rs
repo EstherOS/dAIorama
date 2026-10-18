@@ -3682,8 +3682,15 @@ mod tests {
         );
     }
 
-    /// B9: control-class calls spend bucket tokens; the 41st call at the defaults (40 burst,
-    /// 20/s) waits for its token instead of running instantly.
+    /// B9: control-class calls spend bucket tokens; calls past the burst at the defaults (40
+    /// burst, 20/s) are paced at one token period each instead of running instantly.
+    ///
+    /// The bucket refills continuously, so a single call's wait is only what is left of the
+    /// current token period: a 40-call drain that itself takes ~40 ms hands the next call a
+    /// ~0.8-token head start and it returns in ~11 ms (measured on a loaded gate container).
+    /// Measure a span instead — 20 calls past the burst cost at least 18 token periods even
+    /// if the drain earned two tokens back, and a regression that stops pacing (20 calls in
+    /// tens of milliseconds) cannot pass it.
     #[test]
     fn control_calls_are_paced_by_the_default_bucket() {
         let tmp = tempfile::tempdir().unwrap();
@@ -3698,15 +3705,17 @@ mod tests {
             );
         }
         let started = std::time::Instant::now();
-        let _ = result(
-            &service,
-            "pointer_move",
-            Some(json!({ "session_id": id, "x": 0, "y": 0 })),
-        );
+        for _ in 0..20 {
+            let _ = result(
+                &service,
+                "pointer_move",
+                Some(json!({ "session_id": id, "x": 0, "y": 0 })),
+            );
+        }
+        let elapsed = started.elapsed();
         assert!(
-            started.elapsed() >= std::time::Duration::from_millis(35),
-            "the 41st call was paced: {:?}",
-            started.elapsed()
+            elapsed >= std::time::Duration::from_millis(700),
+            "20 calls past the burst were paced: {elapsed:?}"
         );
     }
 
