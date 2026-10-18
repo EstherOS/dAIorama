@@ -169,7 +169,9 @@ pub fn install(
     };
 
     // 3. Stage beside the module tree; the tree itself is untouched until the rename.
-    let parent = paths.modules_dir().join("daiorama-dashboard");
+    let modules = paths.modules_dir();
+    let modules_existed = modules.is_dir();
+    let parent = modules.join("daiorama-dashboard");
     let parent_existed = parent.is_dir();
     std::fs::create_dir_all(&parent).map_err(|err| {
         ErrorEnvelope::bad_request(format!("cannot create {}: {err}", parent.display()))
@@ -215,12 +217,24 @@ pub fn install(
         if !parent_existed {
             let _ = std::fs::remove_dir(&parent);
         }
+        // N1: the level above it too — `remove_dir` only succeeds while empty, so a modules
+        // directory that held other things (or existed before) is untouched.
+        if !modules_existed {
+            let _ = std::fs::remove_dir(&modules);
+        }
         return Err(err);
     }
 
-    // 4. Activate, and report the version and path only.
+    // 4. Activate, and report the version and path only. A failure here cannot roll the
+    // bytes back (the previous tree is gone); name the state so the operator knows a
+    // re-run is the recovery.
     let dir = parent.join(&version);
-    activate(&parent, &version)?;
+    activate(&parent, &version).map_err(|err| {
+        ErrorEnvelope::bad_request(format!(
+            "{}; version {version} is installed but active is absent — re-run install to activate it",
+            err.message
+        ))
+    })?;
     Ok(Installed { version, dir })
 }
 
@@ -570,6 +584,10 @@ mod tests {
         assert!(
             !paths.modules_dir().join("daiorama-dashboard").exists(),
             "the refused install created the module tree anyway"
+        );
+        assert!(
+            !paths.modules_dir().exists(),
+            "the refused install left the modules directory behind (N1)"
         );
     }
 }
