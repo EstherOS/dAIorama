@@ -241,12 +241,18 @@ mod tests {
         b'R', 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00,
     ];
 
-    fn write_script(dir: &Path, body: &str) -> Vec<String> {
-        let path = dir.join("capture.sh");
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        vec![path.display().to_string()]
+    /// A configured capture argv that runs `body` under `/bin/sh`, with the output path as
+    /// `$1` (the runner appends it last). The body runs as `-c` text, never as a script file
+    /// this process wrote: exec'ing a file written here races every other thread's fork (the
+    /// child inherits the open write handle), which surfaces as `Text file busy (os error 26)`
+    /// on a loaded machine. Nothing in these legs depends on the argv being a file.
+    fn fixture(body: &str) -> Vec<String> {
+        vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            body.to_string(),
+            "capture-fixture".to_string(),
+        ]
     }
 
     #[test]
@@ -263,7 +269,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("tiny.png");
         std::fs::write(&out, TINY_PNG).unwrap();
-        let script = write_script(dir.path(), &format!("cp {} \"$1\"", out.display()));
+        let script = fixture(&format!("cp {} \"$1\"", out.display()));
         let (bytes, width, height) =
             screenshot(&env(dir.path()), &script, Duration::from_secs(5), 1024).unwrap();
         assert_eq!(bytes, TINY_PNG);
@@ -273,7 +279,7 @@ mod tests {
     #[test]
     fn a_nonzero_exit_is_capture_failed() {
         let dir = tempfile::tempdir().unwrap();
-        let script = write_script(dir.path(), "exit 3");
+        let script = fixture("exit 3");
         let error =
             screenshot(&env(dir.path()), &script, Duration::from_secs(5), 1024).unwrap_err();
         assert_eq!(error.code, crate::ipc::ErrorCode::CaptureFailed);
@@ -283,7 +289,7 @@ mod tests {
     #[test]
     fn an_empty_file_is_no_output() {
         let dir = tempfile::tempdir().unwrap();
-        let script = write_script(dir.path(), "touch \"$1\"");
+        let script = fixture("touch \"$1\"");
         let error =
             screenshot(&env(dir.path()), &script, Duration::from_secs(5), 1024).unwrap_err();
         assert!(error.message.contains("no output"), "{error:?}");
@@ -292,7 +298,7 @@ mod tests {
     #[test]
     fn a_big_file_is_refused_before_encoding() {
         let dir = tempfile::tempdir().unwrap();
-        let script = write_script(dir.path(), "head -c 2048 /dev/zero > \"$1\"");
+        let script = fixture("head -c 2048 /dev/zero > \"$1\"");
         let error =
             screenshot(&env(dir.path()), &script, Duration::from_secs(5), 1000).unwrap_err();
         assert_eq!(error.code, crate::ipc::ErrorCode::BadRequest);
@@ -302,7 +308,7 @@ mod tests {
     #[test]
     fn a_slow_command_times_out() {
         let dir = tempfile::tempdir().unwrap();
-        let script = write_script(dir.path(), "sleep 30");
+        let script = fixture("sleep 30");
         let error =
             screenshot(&env(dir.path()), &script, Duration::from_secs(1), 1024).unwrap_err();
         assert!(error.message.contains("timed out after 1s"), "{error:?}");
@@ -313,7 +319,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // The write lands well after the nominal stop; the harness waits for the first byte
         // instead of racing the child's startup with SIGINT.
-        let script = write_script(dir.path(), "sleep 0.15; printf x > \"$1\"; sleep 30");
+        let script = fixture("sleep 0.15; printf x > \"$1\"; sleep 30");
         let bytes = clip(
             &env(dir.path()),
             &script,
@@ -329,7 +335,7 @@ mod tests {
     fn a_clip_stops_at_the_duration_and_keeps_its_bytes() {
         let dir = tempfile::tempdir().unwrap();
         // Write a byte, then sleep: the SIGINT after 200 ms ends it; the file is the artifact.
-        let script = write_script(dir.path(), "printf x > \"$1\"; sleep 30");
+        let script = fixture("printf x > \"$1\"; sleep 30");
         let bytes = clip(
             &env(dir.path()),
             &script,

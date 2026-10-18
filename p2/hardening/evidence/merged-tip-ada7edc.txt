@@ -1,0 +1,495 @@
+===================================================================
+## merged-tip battery — spec/v1 @ ada7edc   (2026-10-18)
+===================================================================
+Tip: ada7edc ("p5(status): reword the desktop bullet — root refusal closed, reference-box
+legs remain"). Last pass in this series was cdc269a; the delta since then is a functional
+one, not docs-only.
+
+Delta (cdc269a -> 8c9f7ba -> c2a3d81 -> 7eb2bef -> bec79da -> 2e5d5e0 -> 5e27aa8 ->
+27beea6 -> 41da8b0 -> 92d3fcf -> ada7edc): install hardening (`modules/` cleanup on a refused
+first install, absent-or-unusable activation named, blocked-activation test, unpacked-size
+budget), the dashboard UI follow-ups, the desktop Containerfile with its seed entrypoint plus
+the F1/N1 fixes (`--no-sandbox` only at `geteuid() == 0`, offline noVNC tarball), the clip
+first-byte fix, and the STATUS refresh. Source changed in `src/install.rs`,
+`src/runtime/capture.rs`, `src/cli/mod.rs`, `src/config/*`; the rest is packaging, docs and
+tests.
+
+Environment: fresh rust:slim containers (dai-mtipada7, -b, -c, -d, -e), rustc 1.99.0
+(b940084d7), cargo 1.99.0, python3 3.13.5 (installed for the probe legs), workspace mounted
+read-write at /src, `CARGO_TARGET_DIR=/tmp/t` cold in each container. Gate set: fmt,
+fmt --check, clippy --all-targets --locked -D warnings, build, tests — then the live legs.
+The crate is a package-rooted workspace: bare `cargo test` covers the root package only, so
+the member suites are run explicitly (`-p daiorama-dashboard`) AND verified in one pass with
+`--workspace`.
+
+Expected suite sequence: root — lib 263 (+6 ignored) · browser 5 · config_scope 7 · daemon 8 ·
+dashboard 9 · doctor 3 · fixtures 27 · mcp 7 · mcp_listen 22 · network 6 · packaging 22;
+member — lib 6 · cli 2 · e2e 5. Total 392 tests, 0 failed.
+
+===================================================================
+## [0] raw run — gates, capture concurrency, every live leg
+===================================================================
+
+== environment
+rustc 1.99.0 (b940084d7 2026-09-28)
+cargo 1.99.0 (5f94df478 2026-08-27)
+Python 3.13.5
+Linux 7.1.4-200.fc44.x86_64 x86_64
+== [1] fmt
+fmt_rc=0
+fmt_check_rc=0
+== [2] clippy (workspace, all targets, -D warnings)
+    Checking ron v0.12.2
+    Checking wayland-protocols v0.32.13
+    Checking wayland-protocols-wlr v0.3.12
+    Checking wayland-protocols-misc v0.3.12
+    Checking daiorama v0.1.0 (/src)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 17.27s
+clippy_rc=0
+== [3] build (all three bins)
+   Compiling wayland-protocols-wlr v0.3.12
+   Compiling daiorama v0.1.0 (/src)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 21.64s
+build_rc=0
+== [4] tests (workspace, all targets)
+     Running unittests src/main.rs (/tmp/t/debug/deps/daiorama-0808ced3265afa9d)
+test result: ok. 263 passed; 0 failed; 6 ignored; 0 measured; 0 filtered out; finished in 3.62s
+     Running unittests src/bin/daiorama-browser.rs (/tmp/t/debug/deps/daiorama_browser-08d88e2d3a9ab779)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/config_scope.rs (/tmp/t/debug/deps/config_scope-e92fa35a605eaa65)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/daemon.rs (/tmp/t/debug/deps/daemon-8a87d0697c3e699f)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+     Running tests/dashboard.rs (/tmp/t/debug/deps/dashboard-7e07f754ee4828a6)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/doctor.rs (/tmp/t/debug/deps/doctor-01cdde407670db80)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+     Running tests/fixtures.rs (/tmp/t/debug/deps/fixtures-d2f51e49f8939472)
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+     Running tests/mcp.rs (/tmp/t/debug/deps/mcp-5a637a1bf2912adf)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+     Running tests/mcp_listen.rs (/tmp/t/debug/deps/mcp_listen-08592d1a3c2151d0)
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+     Running tests/network.rs (/tmp/t/debug/deps/network-c1e59b2592f2ea9e)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.16s
+     Running tests/packaging.rs (/tmp/t/debug/deps/packaging-92fafdbb6a26a834)
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+tests_rc=0
+== [4b] capture suite: one serial run, then three concurrent runs
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 261 filtered out; finished in 1.01s
+serial_rc=0
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 261 filtered out; finished in 1.01s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 261 filtered out; finished in 1.01s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 261 filtered out; finished in 1.01s
+clip3=0
+clip2=0
+clip1=0
+cp: cannot stat '/tmp/t/debug/daiorama-dashboard': No such file or directory
+daiorama 0.1.0
+== [5] dispatch-stall
+binary=daiorama-mtipada7 label=mtipada7
+status_latency_s=0.00 status=running
+create_elapsed_s=[15.02, 30.04, 40.01, 40.04]
+create_answer={"error": {"code": "internal", "message": "mutter parent did not present its wayland socket in time; mutter.log tail: "}}
+create_answer={"error": {"code": "internal", "message": "mutter parent did not present its wayland socket in time; mutter.log tail: "}}
+VERDICT=PASS fast_call_latency_s=0.00
+stall_rc=0
+== [6] rate-limit
+[OK]   [A1] first control call passes the gate ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [A2] second control call passes (burst 2) ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [A3] third control call is rate_limited ({"error": {"code": "rate_limited", "message": "rate limit exceeded for scope \"operator\"", "hint": "retry after 998 ms"}})
+[OK]   [A4] refusal carries a numeric retry-after hint (hint='retry after 998 ms')
+[OK]   [B1] session_status is exempt from the bucket ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [B2] screenshot is exempt from the bucket ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [C1] a different session has its own burst ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [D1] a refilled bucket passes again ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [E1] paced call passes after its wait ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [E2] the scope file was re-read per call (pace took effect, no restart) (elapsed=0.500s want ~0.50s)
+[OK]   [F1] first call passes ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [F2] a wait past max_wait_ms refuses ({"error": {"code": "rate_limited", "message": "rate limit exceeded for scope \"operator\"", "hint": "retry after 999 ms"}})
+[OK]   [F3] the refused wait did not park the caller (elapsed=0.001s)
+[OK]   [G1] at least one concurrent call passes the gate (passed=3 refused=3 other=0)
+[OK]   [G2] the queue bound refuses rather than parking the whole flood (passed=3 refused=3 other=0)
+[OK]   [G3] every answer arrives inside the parked wait bound (total=2.004s max_call=2.001s)
+FAILS=0
+rate_rc=0
+VERDICT=PASS
+ratelimit_rc=0
+== [7] history
+[OK]   [A1] a cold history answers an empty page ({"result": {"next_cursor": null, "records": []}})
+[OK]   [B1] six control calls wrote six records (n=6)
+[OK]   [B2] records are newest-first (tools=['key_tap', 'pointer_button_up', 'pointer_button_down', 'pointer_click', 'pointer_scroll', 'pointer_move'])
+[OK]   [B3] every record is a tool.call (events=['tool.call'])
+[OK]   [B4] detail carries the tool name only (no arguments) (details=[{'tool': 'key_tap'}, {'tool': 'pointer_button_up'}])
+[OK]   [B5] scope, origin and session id are carried (scope=operator origin=shell)
+[OK]   [B6] `at` is RFC 3339 UTC (at=2026-10-18T04:19:28Z)
+[OK]   [C1] limit 2 pages the six records as 2+2+2 (sizes=[2, 2, 2])
+[OK]   [C2] the pages concatenate to the full newest-first list (tools=['key_tap', 'pointer_button_up', 'pointer_button_down', 'pointer_click', 'pointer_scroll', 'pointer_move'])
+[OK]   [C3] no record repeats across pages (unique=6)
+[OK]   [C4] the last page has no cursor (cursor=None)
+[OK]   [D1] a garbage cursor is bad_request ({"error": {"code": "bad_request", "message": "invalid cursor", "hint": "check the request against 'daiorama <command> --help'"}})
+[OK]   [D2] a cursor without a session_id is bad_request ({"error": {"code": "bad_request", "message": "a cursor requires a session_id", "hint": "check the request against 'daiorama <command> --help'"}})
+[OK]   [E] hostile id '../../etc' is session_not_found ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [E] hostile id 's-1/../../s-2' is session_not_found ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [E] hostile id '..' is session_not_found ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [E] hostile id 'a/b' is session_not_found ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [E2] an unknown valid id is session_not_found ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [F1] a cross-session read returns both sessions' records (sessions=['s-hist-1', 's-hist-2'] n=8)
+[OK]   [F2] a cross-session read carries no cursor (null)
+[OK]   [F3] the second session's call is present in the cross-session read (tools=['key_tap', 'pointer_button_up', 'pointer_button_down', 'pointer_click', 'pointer_scroll', 'pointer_move', 'key_up', 'key_down'])
+[NOTE] cross-session ordering sorts on `at`, which is second-granular: records written in the same second tie and keep readdir order. In-session order is file order.
+[OK]   [G1] the live session dir is 0700 (0o700)
+[OK]   [G2] the live segment file is 0600 (0o600)
+[OK]   [H0] the rotating call still passes ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [H1] eight segments after rotation (pinned 8 x 4 MiB budget) (segments=8 files=['seg-0001.log', 'seg-0002.log', 'seg-0003.log', 'seg-0004.log', 'seg-0005.log', 'seg-0006.log', 'seg-0007.log', 'seg-0008.log'] total_bytes=4195309)
+[OK]   [H2] the oldest segment is the one dropped (files=['seg-0001.log', 'seg-0002.log', 'seg-0003.log', 'seg-0004.log', 'seg-0005.log', 'seg-0006.log', 'seg-0007.log', 'seg-0008.log'])
+[NOTE] rotation is exercised live by seeding the newest segment at the budget; the assertion is on the file count under the live root, not on the unit-test helper
+[OK]   [I1] the post-rotation record is readable (first={'at': '2026-10-18T04:19:28Z', 'detail': {'tool': 'pointer_move'}, 'event': 'tool.call', 'origin': 'shell', 'scope': 'operator', 'session_id': 's-rot'})
+FAILS=0
+history_rc=0
+== [8] dashboard-module (D1)
+[OK]   status and readiness agree (status=None readiness=None)
+[OK]   [A] no module installed: status/readiness report null (None)
+[OK]   status and readiness agree (status='2026.10.0' readiness='2026.10.0')
+[OK]   [B] install while running is visible with no restart ('2026.10.0')
+[OK]   status and readiness agree (status='2026.09.1' readiness='2026.09.1')
+[OK]   [C] a revert reports the other version (no cached link) ('2026.09.1')
+[OK]   status and readiness agree (status=None readiness=None)
+[OK]   [D] dangling link answers null, not an error (None)
+[OK]   status and readiness agree (status=None readiness=None)
+[OK]   [E] a parent-climbing target answers null (None)
+[OK]   status and readiness agree (status=None readiness=None)
+[OK]   [E] an absolute target outside the module directory answers null (None)
+[OK]   status and readiness agree (status=None readiness=None)
+[OK]   [E] the dot component answers null (None)
+[OK]   status and readiness agree (status=None readiness=None)
+[OK]   [E] a version name that is a file answers null (None)
+[OK]   status and readiness agree (status=None readiness=None)
+[OK]   [F] a non-version directory name answers null (None)
+[OK]   status and readiness agree (status='2026.10.0' readiness='2026.10.0')
+[OK]   [G] a valid install answers again after the refusal cases ('2026.10.0')
+[NOTE] the module link is under <data>/modules/daiorama-dashboard; status/readiness read it per call
+FAILS=0
+dashboard_module_rc=0
+VERDICT=PASS
+module_rc=0
+== [9] scope-create (D2)
+binary=/out/daiorama-mtipada7 label=mtipada7 port=18791
+=== [A] create --template dashboard ===
+[OK]   create exits 0
+[OK]   the answer is the path only ('/tmp/drscope.4zm8f0p2/config/daiorama/default/scopes/dashboard.ron\n')
+[OK]   file exists
+[OK]   file is 0600 (0o600)
+[OK]   dashboard template has visibility all
+[OK]   the file is commented
+[OK]   create writes no scope secret
+
+=== [B] refusals ===
+[OK]   second create refuses
+[OK]   refusal is the pinned string (scope "dashboard" already exists (bad_request)
+hint: check the request against 'daiorama <command> --help')
+[OK]   an existing scope file is left byte-identical
+[OK]   `../evil` refuses
+[OK]   `../evil` is `invalid scope name` (invalid scope name (bad_request)
+hint: check the request against 'daiorama <command> --help')
+[OK]   nothing escaped the scopes dir
+[OK]   uppercase name refuses (invalid scope name (bad_request)
+hint: check the request against 'daiorama <command> --help')
+[OK]   no file for the refused name
+[OK]   `--template Dashboard` refuses
+[OK]   template refusal is the pinned string (invalid scope template "Dashboard"; expected own, all, or dashboard (bad_request)
+hint: check the request against 'daiorama <command> --help')
+[OK]   no file for the refused template
+[OK]   create own exits 0
+[OK]   own file is 0600
+[OK]   own template has visibility own
+
+=== [C] first network start mints the credentials ===
+[OK]   manager socket appears (/tmp/drscope.4zm8f0p2/run/daiorama/default/manager.sock)
+[OK]   bridge accepts on the bound port (port 18791)
+[OK]   instance token file exists
+[OK]   instance token is 0600 (0o600)
+[OK]   secret for operator minted
+[OK]   secret for operator is 0600 (0o600)
+[OK]   secret for dashboard minted
+[OK]   secret for dashboard is 0600 (0o600)
+[OK]   secret for own minted
+[OK]   secret for own is 0600 (0o600)
+
+=== [D] the created scope authenticates a real call over TCP ===
+[OK]   initialize answers 200 (HTTP/1.1 200 OK)
+[OK]   initialize carries a result
+[OK]   list_capabilities answers 200 (HTTP/1.1 200 OK)
+[OK]   list_capabilities is not an error ({"id":7,"jsonrpc":"2.0","result":{"content":[],"structuredContent":{"always_on":["create_session","close_session","list_sessions","session_status","list_capabil)
+[OK]   capabilities carry the always-on set (['content', 'structuredContent'])
+[OK]   list_sessions answers 200 (HTTP/1.1 200 OK)
+[OK]   list_sessions is not an error ({"id":7,"jsonrpc":"2.0","result":{"content":[],"structuredContent":{"sessions":[]}}})
+[OK]   a foreign scope secret is 403 (HTTP/1.1 403 Forbidden)
+[OK]   the refusal names scope_auth_required ({"error":{"code":-32600,"data":{"code":"scope_auth_required","message":"scope \"dashboard\" requires its scope secret (Daiorama-Scope-Token header)"},"message":)
+[OK]   a missing scope secret is 403 (HTTP/1.1 403 Forbidden)
+[OK]   the missing-secret refusal is scope_auth_required ({"error":{"code":-32600,"data":{"code":"scope_auth_required","message":"scope \"dashboard\" requires its scope secret (Daiorama-Scope-Token header)"},"message":)
+[OK]   a wrong instance token is 403 (HTTP/1.1 403 Forbidden)
+[OK]   the identity refusal is token_required ({"error":{"code":-32600,"data":{"code":"token_required","hint":"run 'daiorama token show' on the manager host and set DAIORAMA_TOKEN","message":"token required )
+
+=== [E] a scope created while the bridge runs is usable at the NEXT start ===
+[OK]   late create exits 0
+[OK]   late has no secret while the bridge is up
+[OK]   late is refused before it has a secret (HTTP/1.1 403 Forbidden)
+[OK]   the refusal says the scope has no secret ({"error":{"code":-32600,"data":{"code":"scope_auth_required","hint":"create the scope secret file on the bridge host","message":"scope \"late\" has no secret; i)
+[OK]   the bridge rebinds (port 18791)
+[OK]   the next start mints the late secret
+[OK]   late secret is 0600
+[OK]   the instance token is unchanged by the rebind
+[OK]   the dashboard secret is unchanged by the rebind
+[OK]   the late scope answers after the rebind ({"id":7,"jsonrpc":"2.0","result":{"content":[],"structuredContent":{"sessions":[]}}})
+
+=== [F] no secret leaves a file that should not carry one ===
+[OK]   no credential appears in an HTTP answer
+[OK]   no credential appears in a scope file
+[NOTE] secrets checked: instance token + 3 scope secrets + late
+FAILS=0
+scope_create_rc=0
+VERDICT=PASS
+scopecreate_rc=0
+== [10] dashboard-install (D5)
+== [A] pre-install and input-shape refusals ==
+[OK]   module tree absent at a cold data root (ABSENT)
+[OK]   no module: the exec path refuses (module not installed; run 'daiorama dashboard install'. (module_not_installed))
+[OK]   --artifact without --sha256 refuses (--artifact requires --sha256 <hex>: the artifact is verified before it is unpacked (bad_request))
+[OK]   --sha256 without --artifact refuses (--sha256 applies only with --artifact (bad_request))
+[OK]   neither input refuses (dashboard install needs --artifact <tar.gz> and --sha256 <hex>, or --version <installed> to re-activate one (bad_request))
+[OK]   a remote target refuses install before touching disk (dashboard install is local-instance only; it cannot target a remote manager (bad_request))
+== [B] the checksum gate runs before anything under modules/ ==
+[OK]   malformed digest refuses (invalid --sha256 "nothex"; expected 64 hex characters (bad_request))
+[OK]   wrong 64-hex digest refuses (artifact checksum mismatch: expected 0000000000000000000000000000000000000000000000000000000000000000, got 840cfc0015d065dd20d2c8b93a90679782fde6bec9e7b114d0894bea4938080e (bad_request))
+[OK]   129 MiB artifact refuses on size, before hashing (artifact too large: 135266304 bytes (limit 128 MiB) (bad_request))
+[OK]   a non-tar artifact refuses (cannot read artifact /tmp/di-mtipada7/art/plain.txt: invalid gzip header (bad_request))
+[OK]   a directory is not an artifact (artifact /tmp/di-mtipada7/pkg/good is not a regular file (bad_request))
+== [C] hostile and incomplete members are refused, and nothing escapes ==
+[OK]   '../escape' member refuses (artifact entry refused: ../escape (bad_request))
+[OK]   no file escaped the staging dir
+[OK]   no file landed under the data root
+[OK]   an absolute member refuses (artifact entry refused: /tmp/di-abs-escape (bad_request))
+[OK]   the absolute member was not written
+[OK]   a symlink member refuses (artifact entry refused: daiorama-dashboard (bad_request))
+[OK]   a hardlink member refuses (artifact entry refused: daiorama-dashboard-link (bad_request))
+[OK]   an artifact without the module binary refuses (artifact does not contain 'daiorama-dashboard' (bad_request))
+[OK]   refusals left no staged or version directory behind (ABSENT)
+== [D] a real install ==
+[OK]   install exits 0 (0)
+[OK]   install prints exactly two lines (2)
+[OK]   line 1 is the version read from the asset name (0.1.0)
+[OK]   line 2 is the instance directory (/tmp/di-mtipada7/data/daiorama/default/modules/daiorama-dashboard/0.1.0)
+[OK]   active names one slug (0.1.0)
+[OK]   the installed binary is 0755 although the artifact carried 0644 (755)
+[OK]   the rest of the artifact landed beside it (<!doctype html><title>probe</title>)
+[OK]   no .stage-/ .old- leftovers (0.1.0 active )
+[OK]   the core execs the installed module (exit 0) (0)
+[OK]   the module answered for real (no connections)
+== [E] replace, second version, and revert ==
+[OK]   a second install of the same version refuses (module 0.1.0 is already installed at /tmp/di-mtipada7/data/daiorama/default/modules/daiorama-dashboard/0.1.0; pass --force to replace it (bad_request))
+[OK]   --force replaces the real directory (exit 0) (0)
+[OK]   --force keeps active on the same slug (0.1.0)
+[OK]   --force landed the new payload (asset v2)
+[OK]   --force leaves no .old- directory (0.1.0 active )
+[OK]   the exec path still works after --force (no connections)
+[OK]   a second version installs beside the first (exit 0) (0)
+[OK]   active switches to the new version (0.2.0)
+[OK]   the core refuses to exec a version-skewed module (dashboard module 0.2.0 does not match this dashboard (0.1.0); run 'daiorama dashboard install --version 0.1.0' (bad_request))
+[OK]   revert takes no digest and exits 0 (0)
+[OK]   revert prints the version and path (0.1.0)
+[OK]   active is back on 0.1.0 (0.1.0)
+[OK]   the exec path works again with no restart (no connections)
+[OK]   reverting to a version that is not installed refuses (module 9.9.9 is not installed at /tmp/di-mtipada7/data/daiorama/default/modules/daiorama-dashboard/9.9.9 (bad_request))
+== [F] version-directory safety ==
+[OK]   a symlinked version directory is never replaced (refusing to replace /tmp/di-mtipada7/data/daiorama/default/modules/daiorama-dashboard/9.9.9: it is not a directory (bad_request))
+[OK]   the symlink is intact (still points outside) (/tmp/di-mtipada7/outside)
+[OK]   --version refuses a path component (invalid module version "../escape" (bad_request))
+[OK]   --version refuses a dot (invalid module version "." (bad_request))
+== [G] one more real exec after every refusal ==
+[OK]   active unchanged (0.1.0)
+[OK]   the module still answers (no connections)
+FAILS=0
+VERDICT=PASS
+install_rc=0
+== [11] browser (D6)
+== [A] no runtime dir ==
+[OK]   a launcher with no XDG_RUNTIME_DIR exits 127 (127)
+[OK]   the refusal names XDG_RUNTIME_DIR
+== [B] no compositor IPC ==
+[OK]   no hyprctl exits 127 (127)
+[OK]   the refusal names the missing compositor IPC
+[OK]   no renderer file is written
+[OK]   the probe page is cleaned up
+== [C] a title on the compositor list is captured ==
+[OK]   the launcher keeps the browser's exit status (3)
+[OK]   the renderer line is the title suffix (renderer=llvmpipe (LLVM 17.0.6, 256 bits))
+[OK]   the renderer file is 0600 (600)
+[OK]   the probe page is cleaned up after capture
+[OK]   no temp renderer file is left behind (0)
+== [D] a timeout is not fatal ==
+[OK]   a capture timeout keeps the browser's exit status (3)
+[OK]   the timeout warns once
+[OK]   no renderer file after a timeout
+[OK]   the probe page is cleaned up after a timeout
+FAILS=0
+VERDICT=PASS
+browser_rc=0
+ALLDONE
+
+===================================================================
+## [1] member suites (explicit package) and the single-pass workspace run
+===================================================================
+
+== workspace view
+workspace_members: ['daiorama', 'daiorama-dashboard']
+== member tests (explicit package)
+     Running unittests src/main.rs (/tmp/t/debug/deps/daiorama_dashboard-c14a89ef8496b396)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/cli.rs (/tmp/t/debug/deps/cli-3668bcf4376739a8)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/e2e.rs (/tmp/t/debug/deps/e2e-2ca0fd03979f5430)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.03s
+member_tests_rc=0
+== build the member bin
+   Compiling daiorama-dashboard v0.1.0 (/src/dashboard)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.45s
+member_build_rc=0
+-rwxr-xr-x. 22742000 /tmp/t/debug/daiorama-dashboard
+member bin copied
+49fe610072bcf1b601539122bf81ae3a19ab92a1cde5fde5183fe92071c4885d  /out/daiorama-dashboard-mtipada7
+0d666388fa5ccf0ba8730cfe0cb2a29bec0159367c3ac1b14ff46cfc2680fd93  /out/daiorama-mtipada7
+== D5 re-run with the bin built from this tree
+== [A] pre-install and input-shape refusals ==
+[OK]   module tree absent at a cold data root (ABSENT)
+[OK]   no module: the exec path refuses (module not installed; run 'daiorama dashboard install'. (module_not_installed))
+[OK]   --artifact without --sha256 refuses (--artifact requires --sha256 <hex>: the artifact is verified before it is unpacked (bad_request))
+[OK]   --sha256 without --artifact refuses (--sha256 applies only with --artifact (bad_request))
+[OK]   neither input refuses (dashboard install needs --artifact <tar.gz> and --sha256 <hex>, or --version <installed> to re-activate one (bad_request))
+[OK]   a remote target refuses install before touching disk (dashboard install is local-instance only; it cannot target a remote manager (bad_request))
+== [B] the checksum gate runs before anything under modules/ ==
+[OK]   malformed digest refuses (invalid --sha256 "nothex"; expected 64 hex characters (bad_request))
+[OK]   wrong 64-hex digest refuses (artifact checksum mismatch: expected 0000000000000000000000000000000000000000000000000000000000000000, got f90e4ec4d62e42bae0b9014bb318bd0f9eb82fff08d75a78cb5cff5fd4ecfa71 (bad_request))
+[OK]   129 MiB artifact refuses on size, before hashing (artifact too large: 135266304 bytes (limit 128 MiB) (bad_request))
+[OK]   a non-tar artifact refuses (cannot read artifact /tmp/di-mtipada7/art/plain.txt: invalid gzip header (bad_request))
+[OK]   a directory is not an artifact (artifact /tmp/di-mtipada7/pkg/good is not a regular file (bad_request))
+== [C] hostile and incomplete members are refused, and nothing escapes ==
+[OK]   '../escape' member refuses (artifact entry refused: ../escape (bad_request))
+[OK]   no file escaped the staging dir
+[OK]   no file landed under the data root
+[OK]   an absolute member refuses (artifact entry refused: /tmp/di-abs-escape (bad_request))
+[OK]   the absolute member was not written
+[OK]   a symlink member refuses (artifact entry refused: daiorama-dashboard (bad_request))
+[OK]   a hardlink member refuses (artifact entry refused: daiorama-dashboard-link (bad_request))
+[OK]   an artifact without the module binary refuses (artifact does not contain 'daiorama-dashboard' (bad_request))
+[OK]   refusals left no staged or version directory behind (ABSENT)
+== [D] a real install ==
+[OK]   install exits 0 (0)
+[OK]   install prints exactly two lines (2)
+[OK]   line 1 is the version read from the asset name (0.1.0)
+[OK]   line 2 is the instance directory (/tmp/di-mtipada7/data/daiorama/default/modules/daiorama-dashboard/0.1.0)
+[OK]   active names one slug (0.1.0)
+[OK]   the installed binary is 0755 although the artifact carried 0644 (755)
+[OK]   the rest of the artifact landed beside it (<!doctype html><title>probe</title>)
+[OK]   no .stage-/ .old- leftovers (0.1.0 active )
+[OK]   the core execs the installed module (exit 0) (0)
+[OK]   the module answered for real (no connections)
+== [E] replace, second version, and revert ==
+[OK]   a second install of the same version refuses (module 0.1.0 is already installed at /tmp/di-mtipada7/data/daiorama/default/modules/daiorama-dashboard/0.1.0; pass --force to replace it (bad_request))
+[OK]   --force replaces the real directory (exit 0) (0)
+[OK]   --force keeps active on the same slug (0.1.0)
+[OK]   --force landed the new payload (asset v2)
+[OK]   --force leaves no .old- directory (0.1.0 active )
+[OK]   the exec path still works after --force (no connections)
+[OK]   a second version installs beside the first (exit 0) (0)
+[OK]   active switches to the new version (0.2.0)
+[OK]   the core refuses to exec a version-skewed module (dashboard module 0.2.0 does not match this dashboard (0.1.0); run 'daiorama dashboard install --version 0.1.0' (bad_request))
+[OK]   revert takes no digest and exits 0 (0)
+[OK]   revert prints the version and path (0.1.0)
+[OK]   active is back on 0.1.0 (0.1.0)
+[OK]   the exec path works again with no restart (no connections)
+[OK]   reverting to a version that is not installed refuses (module 9.9.9 is not installed at /tmp/di-mtipada7/data/daiorama/default/modules/daiorama-dashboard/9.9.9 (bad_request))
+== [F] version-directory safety ==
+[OK]   a symlinked version directory is never replaced (refusing to replace /tmp/di-mtipada7/data/daiorama/default/modules/daiorama-dashboard/9.9.9: it is not a directory (bad_request))
+[OK]   the symlink is intact (still points outside) (/tmp/di-mtipada7/outside)
+[OK]   --version refuses a path component (invalid module version "../escape" (bad_request))
+[OK]   --version refuses a dot (invalid module version "." (bad_request))
+== [G] one more real exec after every refusal ==
+[OK]   active unchanged (0.1.0)
+[OK]   the module still answers (no connections)
+FAILS=0
+VERDICT=PASS
+install_rc=0
+ALLDONE
+
+--- single pass, all members ---
+== cargo test --locked --workspace --all-targets
+     Running unittests src/main.rs (/tmp/t/debug/deps/daiorama-c33f11e6e689f0db)
+test result: ok. 263 passed; 0 failed; 6 ignored; 0 measured; 0 filtered out; finished in 3.62s
+     Running unittests src/bin/daiorama-browser.rs (/tmp/t/debug/deps/daiorama_browser-c872068d12390094)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/config_scope.rs (/tmp/t/debug/deps/config_scope-6fd32c59c66175fc)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests/daemon.rs (/tmp/t/debug/deps/daemon-00feb1602b3e2052)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+     Running tests/dashboard.rs (/tmp/t/debug/deps/dashboard-59f4a5f49ae36729)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+     Running tests/doctor.rs (/tmp/t/debug/deps/doctor-0c733490d160c522)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+     Running tests/fixtures.rs (/tmp/t/debug/deps/fixtures-e2c818e4d09b464b)
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+     Running tests/mcp.rs (/tmp/t/debug/deps/mcp-cf82ce95c60788a0)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+     Running tests/mcp_listen.rs (/tmp/t/debug/deps/mcp_listen-b69d65486271c102)
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+     Running tests/network.rs (/tmp/t/debug/deps/network-91ad90893266054a)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.36s
+     Running tests/packaging.rs (/tmp/t/debug/deps/packaging-a46d2089d7ff4f2d)
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running unittests src/main.rs (/tmp/t/debug/deps/daiorama_dashboard-b67e259ddd7343cd)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/cli.rs (/tmp/t/debug/deps/cli-f1ad6c04ff79eddd)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/e2e.rs (/tmp/t/debug/deps/e2e-efc5bc3d35d306a2)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.03s
+ws_rc=0
+ALLDONE
+
+===================================================================
+## [2] findings
+===================================================================
+
+1. **Gate instability fixed — `Text file busy` in the capture legs (test fixtures).**
+   The capture tests pointed the runner at a `capture.sh` this process wrote. Under load
+   (`cargo test` x3 concurrently on a cold cache) 2 of 3 runs failed with
+   `capture failed: cannot start /tmp/.tmpXXXX/capture.sh: Text file busy (os error 26)` —
+   a thread's fork duplicates the open write handle of another thread's freshly written
+   fixture, and exec refuses while any handle on that inode is open for writing. Serial runs
+   were green, so the flake only ever showed under parallel load. The fixtures now run their
+   body as `/bin/sh -c <body> ... <out>` (`$1` is still the output path the runner appends),
+   so no process execs a file it wrote. After the fix: one serial + three concurrent runs of
+   the capture suite = 4/4 green (8 tests each), and the full workspace run is unaffected.
+   This is a fixture-level fix, not a behaviour change to `run()`.
+
+2. **D5 probe drift after #95.** `run-dashboard-install.sh` still expected a refused first
+   install to leave an *empty* `modules/daiorama-dashboard/` behind (the nit measured at
+   cdc269a). #95 changed the contract: a refused first install removes both levels it
+   created, which the in-tree contract test pins (`!modules(..).exists()` in
+   `tests/dashboard.rs`). Eight assertions in sections [B]/[C] therefore reported false reds.
+   The probe now asserts `ABSENT`, and the D5 leg is 50/50 green on this tip.
+
+3. **A first attempt of this battery was red for a harness reason, not a product one:** the
+   runner's build step did not build the `daiorama-dashboard` member binary (`cargo build
+   --bins` at a package root builds the root package's bins only), so the D5 leg's tarballs
+   had no module binary and 37 assertions failed. Re-run with the member built explicitly is
+   the pass recorded above. Nothing in `src/` was involved.
+
+4. **Not covered here (reference-box work, unchanged):** the real compositor/pixel oracle at
+   two resolutions plus scale 2, a real Chromium window through `daiorama-browser`, the four
+   launcher failure legs on hardware, and a Containerfile build. This pass is a merged-tip
+   regression battery; it does not claim any of those.
+
+Verdict: **PASS** — 392 tests, 0 failed, fmt/clippy clean; live legs dispatch-stall,
+rate-limit (16), history (27), dashboard-module D1 (20), scope-create D2 (56),
+dashboard-install D5 (50) and browser D6 (15) all green; capture suite 4/4 under parallel
+load.
