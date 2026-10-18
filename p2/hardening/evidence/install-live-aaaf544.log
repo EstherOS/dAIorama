@@ -1,0 +1,40 @@
+key key1: untrusted comment: minisign public key D3BFAEAE4AC06C2B
+key key2: untrusted comment: minisign public key 2CE8860122E6C86F
+minisign: minisign 0.12
+installer: 10073 bytes
+tag: aaaf544
+[OK]   install over HTTP exits 0
+[OK]   installed file exists
+[OK]   installed bytes are the artifact
+[OK]   installed file is executable
+[OK]   receipt names version/protocol/target
+[OK]   receipt prints the sha256
+[OK]   receipt names the trust anchor that verified
+[OK]   no temp file left in the prefix
+[OK]   digest mismatch is refused
+[OK]   placed binary unchanged after the refusal
+[OK]   untrusted signer is refused
+[OK]   nothing placed: untrusted signer is refused
+[OK]   untrusted-key message names the presented key id
+[OK]   manifest version mismatch is refused
+[OK]   nothing placed: manifest version mismatch is refused
+[OK]   duplicate row is refused
+[OK]   nothing placed: duplicate row is refused
+[OK]   row target mismatch is refused
+[OK]   nothing placed: row target mismatch is refused
+[OK]   short digest is refused
+[OK]   nothing placed: short digest is refused
+[OK]   bad manifest format is refused
+[OK]   nothing placed: bad manifest format is refused
+[OK]   over-cap metadata is refused before verification
+[OK]   over-cap artifact is refused
+[OK]   shipped installer refuses with an empty trust list
+[OK]   empty-trust refusal happens before any fetch
+[OK]   usage refusal: bad version
+[OK]   usage refusal: empty prefix
+[OK]   usage refusal: unknown target
+[OK]   usage refusal: unknown option
+[OK]   usage refusal: no version
+OKS=32 FAILS=0
+installlive_rc=0
+VERDICT=PASS

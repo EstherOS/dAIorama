@@ -1,0 +1,28 @@
+[OK]   [A1] manager is running (pid=2393)
+[OBS]  [A2] baseline VmRSS = 10772 kB
+[OBS]  [B1] round 1: 16 x 1 MiB ids in 0.71s; VmRSS 10772 -> 17968 kB (delta 7196 kB)
+[OBS]  [B2] round 2: 16 x 1 MiB ids in 0.72s; VmRSS 17968 -> 17968 kB (delta 0 kB)
+[OBS]  [B3] round 3: 16 x 1 MiB ids in 0.74s; VmRSS 17968 -> 17968 kB (delta 0 kB)
+[OK]   [B4] every id answered `session_not_found` (the frame passed the gate) ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [B5] a second round of fresh ids does not grow the manager (round2 delta=0 kB (bound 2048 kB))
+[OK]   [B6] a third round stays flat (steady state, not a slower leak) (round3 delta=0 kB (bound 2048 kB))
+[OBS]  [C1] 6 MiB id #1: VmRSS 17968 -> 18984 kB (delta 1016 kB)
+[OBS]  [C1] 6 MiB id #2: VmRSS 18984 -> 41512 kB (delta 22528 kB)
+[OBS]  [C1] 6 MiB id #3: VmRSS 41512 -> 53804 kB (delta 12292 kB)
+[OBS]  [C1] 6 MiB id #4: VmRSS 53804 -> 53804 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #5: VmRSS 53804 -> 53804 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #6: VmRSS 53804 -> 53804 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #7: VmRSS 53804 -> 53804 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #8: VmRSS 53804 -> 53804 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #9: VmRSS 53804 -> 53804 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #10: VmRSS 53804 -> 53804 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #11: VmRSS 53804 -> 53804 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #12: VmRSS 53804 -> 53804 kB (delta 0 kB)
+[OK]   [C2] the 6 MiB ids are refused as unknown sessions (session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found)
+[OK]   [C3] twelve 6 MiB ids plateau instead of accumulating (total=35836 kB over 12 calls (ceiling 81920 kB; an unbounded map adds ~6 MiB/call))
+[OK]   [D1] the first two calls pass the bucket (session_not_found / session_not_found)
+[FAIL] [D2] the third call is rate_limited :: {"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}}
+[OK]   [E1] status still answers after the id burst ({"result": {"drain": {"active": false, "remaining": 0}, "instance_id": "055a8273-968f-40c9-943e-ffa4c67b048d", "mode": "background", "pid": 2393, "sessions": {"dead": 0, "running": 0}, "socket": "/tmp)
+FAILS=1
+ratebuckets_rc=1
+VERDICT=FAIL

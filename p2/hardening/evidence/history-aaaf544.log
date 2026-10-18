@@ -1,0 +1,27 @@
+[OK]   [A1] a cold history answers an empty page ({"result": {"next_cursor": null, "records": []}})
+[FAIL] [B1] six control calls wrote six records :: n=0
+[FAIL] [B2] records are newest-first :: tools=[]
+[OK]   [B3] every record is a tool.call (events=[])
+[OK]   [B4] detail carries the tool name only (no arguments) (details=[])
+[OK]   [B5] scope, origin and session id are carried (scope=None origin=None)
+[OK]   [B6] `at` is RFC 3339 UTC (at=None)
+[FAIL] [C1] limit 2 pages the six records as 2+2+2 :: sizes=[0]
+[FAIL] [C2] the pages concatenate to the full newest-first list :: tools=[]
+[FAIL] [C3] no record repeats across pages :: unique=0
+[OK]   [C4] the last page has no cursor (cursor=None)
+[FAIL] [D1] a garbage cursor is bad_request :: {"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}}
+[OK]   [D2] a cursor without a session_id is bad_request ({"error": {"code": "bad_request", "message": "a cursor requires a session_id", "hint": "check the request against 'daiorama <command> --help'"}})
+[OK]   [E] hostile id '../../etc' is session_not_found ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [E] hostile id 's-1/../../s-2' is session_not_found ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [E] hostile id '..' is session_not_found ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [E] hostile id 'a/b' is session_not_found ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [E2] an unknown valid id is session_not_found ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[FAIL] [F1] a cross-session read returns both sessions' records :: sessions=[] n=0
+[OK]   [F2] a cross-session read carries no cursor (null)
+[FAIL] [F3] the second session's call is present in the cross-session read :: tools=[]
+[NOTE] cross-session ordering sorts on `at`, which is second-granular: records written in the same second tie and keep readdir order. In-session order is file order.
+Traceback (most recent call last):
+  File "/src/p2/hardening/probe-history.py", line 298, in <module>
+    dir_mode = os.stat(session_dir).st_mode & 0o777
+               ~~~~~~~^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/tmp/dr-history-aaaf544/data/daiorama/default/history/s-hist-1'
