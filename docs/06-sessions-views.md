@@ -137,7 +137,10 @@ Off by default (`reaper.idle = off`). When enabled with a duration:
 
 Append-only log of sessions and control calls. Records carry **scope**, origin
 (`shell` | `mcp`), timestamps, and cause where relevant; control-call
-arguments are not recorded. Reads obey the same scoping rule as sessions
+arguments are not recorded. A control call naming a session the manager cannot
+resolve (neither live nor in its history) is refused before it can create history
+state — no record and no directory, so a caller choosing its own ids cannot grow the
+log. Reads obey the same scoping rule as sessions
 (own-scope by default; per-scope `sessions.visibility`, 08). The dashboard is a **named
 scope** with an explicit, documented broad-read grant — configured deliberately,
 never default. Storage mechanics (buffered writes, rotation, retention,

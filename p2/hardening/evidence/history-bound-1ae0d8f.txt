@@ -1,0 +1,7 @@
+[OK]   [A] every invented id is session_not_found (192 calls)
+[OK]   [B] history root holds no session directory (/tmp/dr-historybound-bound/data/daiorama/default/history: [])
+[OK]   [C] VmRSS is flat across rounds (10672 kB -> 10688 kB)
+[OK]   [D] manager still answers status ({'result': {'drain': {'active': False, 'remaining': 0}, 'instance_id': '63df97ae-7cff-4444-b4ef-69fcc877ecc3', 'mode': ')
+FAILS=0
+historybound_rc=0
+VERDICT=PASS
