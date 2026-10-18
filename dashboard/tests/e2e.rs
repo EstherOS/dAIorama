@@ -12,11 +12,6 @@ fn ui_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("ui")
 }
 
-fn free_port() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    listener.local_addr().unwrap().port()
-}
-
 /// A manager that answers the frame protocol; every call must carry the instance token and the
 /// `dashboard` scope secret, so a missing field fails the test the same way a real manager does.
 fn fake_manager() -> (u16, std::thread::JoinHandle<()>) {
@@ -78,13 +73,19 @@ fn serve(stream: TcpStream) {
     }
 }
 
+/// Start the module on an ephemeral port and read the address it actually bound.
+///
+/// Picking a free port in the test and passing it to the child is a race: four tests run in
+/// parallel in this binary, and between `TcpListener::bind(:0)` returning and the child binding,
+/// a sibling can take the port — the child then exits, or the test talks to the sibling's server
+/// until that sibling finishes. `--bind 127.0.0.1:0` moves the choice into the child (the kernel
+/// assigns a port nothing else can hold), and the module already announces it on stderr.
 fn start_module(config: &Path, ui: &Path) -> (Child, u16) {
-    let port = free_port();
-    let child = Command::new(binary())
+    let mut child = Command::new(binary())
         .args([
             "serve",
             "--bind",
-            &format!("127.0.0.1:{port}"),
+            "127.0.0.1:0",
             "--ui",
             ui.to_str().unwrap(),
             "--config",
@@ -94,12 +95,44 @@ fn start_module(config: &Path, ui: &Path) -> (Child, u16) {
         .stderr(Stdio::piped())
         .spawn()
         .expect("module starts");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while TcpStream::connect(("127.0.0.1", port)).is_err() {
-        assert!(Instant::now() < deadline, "module never bound");
-        std::thread::sleep(Duration::from_millis(25));
+    let stderr = child.stderr.take().expect("stderr is piped");
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stderr);
+        let mut seen = String::new();
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) | Err(_) => {
+                    let _ = tx.send(Err(seen));
+                    return;
+                }
+                Ok(_) => {}
+            }
+            if let Some(port) = line
+                .strip_prefix("dashboard on http://127.0.0.1:")
+                .and_then(|tail| tail.trim().parse::<u16>().ok())
+            {
+                let _ = tx.send(Ok(port));
+                // Drain for the rest of the child's life: a full pipe would block it.
+                let mut rest = Vec::new();
+                let _ = reader.read_to_end(&mut rest);
+                return;
+            }
+            seen.push_str(&line);
+        }
+    });
+    match rx.recv_timeout(Duration::from_secs(10)) {
+        Ok(Ok(port)) => (child, port),
+        Ok(Err(seen)) => {
+            let _ = child.kill();
+            panic!("module exited before announcing its address; stderr: {seen}")
+        }
+        Err(_) => {
+            let _ = child.kill();
+            panic!("module never announced its address within 10 s")
+        }
     }
-    (child, port)
 }
 
 fn http(port: u16, request: &str) -> String {
