@@ -1,0 +1,20 @@
+[NOTE] seeded closed-session records for the five ids this leg drives
+[OK]   [A1] first control call passes the gate ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [A2] second control call passes (burst 2) ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [A3] third control call is rate_limited ({"error": {"code": "rate_limited", "message": "rate limit exceeded for scope \"operator\"", "hint": "retry after 998 ms"}})
+[OK]   [A4] refusal carries a numeric retry-after hint (hint='retry after 998 ms')
+[OK]   [B1] session_status is exempt from the bucket ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [B2] screenshot is exempt from the bucket ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [C1] a different session has its own burst ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [D1] a refilled bucket passes again ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [E1] paced call passes after its wait ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [E2] the scope file was re-read per call (pace took effect, no restart) (elapsed=0.501s want ~0.50s)
+[OK]   [F1] first call passes ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [F2] a wait past max_wait_ms refuses ({"error": {"code": "rate_limited", "message": "rate limit exceeded for scope \"operator\"", "hint": "retry after 999 ms"}})
+[OK]   [F3] the refused wait did not park the caller (elapsed=0.001s)
+[OK]   [G1] at least one concurrent call passes the gate (passed=3 refused=3 other=0)
+[OK]   [G2] the queue bound refuses rather than parking the whole flood (passed=3 refused=3 other=0)
+[OK]   [G3] every answer arrives inside the parked wait bound (total=2.004s max_call=2.002s)
+FAILS=0
+rate_rc=0
+VERDICT=PASS

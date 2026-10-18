@@ -1,0 +1,29 @@
+[OK]   [A1] manager is running (pid=9710)
+[OBS]  [A2] baseline VmRSS = 10760 kB
+[OBS]  [B1] round 1: 16 x 1 MiB ids in 0.73s; VmRSS 10760 -> 16944 kB (delta 6184 kB)
+[OBS]  [B2] round 2: 16 x 1 MiB ids in 0.71s; VmRSS 16944 -> 16944 kB (delta 0 kB)
+[OBS]  [B3] round 3: 16 x 1 MiB ids in 0.76s; VmRSS 16944 -> 16944 kB (delta 0 kB)
+[OK]   [B4] every id answered `session_not_found` (the frame passed the gate) ({"error": {"code": "session_not_found", "message": "session not found", "hint": "list sessions to find one"}})
+[OK]   [B5] a second round of fresh ids does not grow the manager (round2 delta=0 kB (bound 2048 kB))
+[OK]   [B6] a third round stays flat (steady state, not a slower leak) (round3 delta=0 kB (bound 2048 kB))
+[OBS]  [C1] 6 MiB id #1: VmRSS 16944 -> 17960 kB (delta 1016 kB)
+[OBS]  [C1] 6 MiB id #2: VmRSS 17960 -> 43552 kB (delta 25592 kB)
+[OBS]  [C1] 6 MiB id #3: VmRSS 43552 -> 55844 kB (delta 12292 kB)
+[OBS]  [C1] 6 MiB id #4: VmRSS 55844 -> 55844 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #5: VmRSS 55844 -> 55844 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #6: VmRSS 55844 -> 55844 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #7: VmRSS 55844 -> 55844 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #8: VmRSS 55844 -> 40608 kB (delta -15236 kB)
+[OBS]  [C1] 6 MiB id #9: VmRSS 40608 -> 40608 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #10: VmRSS 40608 -> 52772 kB (delta 12164 kB)
+[OBS]  [C1] 6 MiB id #11: VmRSS 52772 -> 52772 kB (delta 0 kB)
+[OBS]  [C1] 6 MiB id #12: VmRSS 52772 -> 52772 kB (delta 0 kB)
+[OK]   [C2] the 6 MiB ids are refused as unknown sessions (session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found / session_not_found)
+[OK]   [C3] twelve 6 MiB ids plateau instead of accumulating (total=35828 kB over 12 calls (ceiling 81920 kB; an unbounded map adds ~6 MiB/call))
+[OBS]  [D] seeded a closed-session record for sess-pace
+[OK]   [D1] the first two calls pass the bucket (session_not_found / session_not_found)
+[OK]   [D2] the third call is rate_limited ({"error": {"code": "rate_limited", "message": "rate limit exceeded for scope \"operator\"", "hint": "retry after 998 ms"}})
+[OK]   [E1] status still answers after the id burst ({"result": {"drain": {"active": false, "remaining": 0}, "instance_id": "2b81d950-b9b6-41db-8b18-265ba61bd541", "mode": "background", "pid": 9710, "sessions": {"dead": 0, "running": 0}, "socket": "/tmp)
+FAILS=0
+ratebuckets_rc=0
+VERDICT=PASS

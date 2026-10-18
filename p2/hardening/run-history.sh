@@ -2,10 +2,10 @@
 # History live leg: one real `daiorama serve` process, a real unix socket, records written by
 # `dispatch()` for control-class calls, and `list_history` read back over the same socket.
 #
-# No compositor and no session are needed: `dispatch()` records `tool.call` for the nine
-# control-class tools before any session lookup, so a session id that does not exist still
-# produces records. The tools' answer (`internal / not implemented yet`) is the expected
-# pass-through in this build; what this leg measures is the history path around it.
+# No compositor and no live session are needed: `dispatch()` records `tool.call` for the nine
+# control-class tools before any session lookup, but since #118 only for an id that can name a
+# session. The probe seeds one `session.created` line per id (`known_session`) -- a session
+# that closed earlier -- and filters that line out of its `tool.call` counts.
 #
 # Usage: run-history.sh <binary> <label>
 set -u

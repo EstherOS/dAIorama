@@ -6,6 +6,11 @@ exercises the shipped path instead: a real manager process, real frames, the sco
 on disk read per call (`scope_definition()`), and the check ordering in `dispatch()`
 (control-class calls spend a token before anything else).
 
+Every session id here is a *closed* session seeded by `known_session`: since #117/#118 the
+gate spends a token only for an id that can name a session, and this bench has no compositor
+to create a live one. The handler still answers `session_not_found` (asserted below), so what
+the leg measures is the bucket in front of it.
+
 Cases:
   [A] reject mode, per_sec 1, burst 2 -- two control calls pass, the third answers
       `rate_limited` with a numeric `retry after <N> ms` hint.
@@ -19,7 +24,7 @@ Cases:
   [G] 6 concurrent control calls, burst 1, max_queued 2 -- the flood degrades to
       refusals instead of parking everyone, and answers inside the parked wait bound.
 
-Usage: probe-rate-limit.py <manager.sock> <operator.ron path>
+Usage: probe-rate-limit.py <manager.sock> <operator.ron path> <instance data dir>
 Prints [OK]/[FAIL] per assertion, a note per observation, and FAILS=<n>.
 Exit code = FAILS (capped at 120).
 """
@@ -30,8 +35,11 @@ import sys
 import threading
 import time
 
+import known_session
+
 SOCK = sys.argv[1]
 SCOPE_FILE = sys.argv[2]
+DATA = sys.argv[3]
 SCOPE = "operator"
 PROTO = "0.1.0"
 
@@ -149,6 +157,16 @@ def retry_hint_ms(reply):
     except ValueError:
         return None
 
+
+# ---------------------------------------------------------------------------
+# Fixture: the ids this leg drives must be ones the manager *knows*. Since #117/#118 the
+# bucket is keyed only for an id that can name a session (live registry or durable history);
+# with no compositor on this bench, a seeded `session.created` line is what a previously
+# closed session leaves behind.
+# ---------------------------------------------------------------------------
+for session_id in ("sess-a", "sess-b", "sess-p", "sess-w", "sess-flood"):
+    known_session.seed(DATA, session_id)
+note("seeded closed-session records for the five ids this leg drives")
 
 # ---------------------------------------------------------------------------
 # [A] reject: burst 2, then a refusal carrying the retry hint

@@ -8,18 +8,20 @@ across *repeated* identical loads. Allocator retention reaches a steady state af
 repetition; a map that keeps every key keeps growing. So the assertion is flatness of the
 second and third repetitions, not an absolute delta.
 
-Every id used here is one no session can have (longer than the store's 128-byte bound), so
-every answer is `session_not_found`: the frame is accepted, the gate runs, nothing else does.
+Every growth id here is one no session can have (longer than the store's 128-byte bound), so
+it is never keyed: the frame is accepted, the gate validates the id, and nothing else happens.
+That is the #117 bound under test. `sess-pace` in [D] is the opposite fixture -- a closed
+session seeded by `known_session`, so the pacing assertion still has a real bucket to spend.
 
 Cases:
   [A] baseline VmRSS after a handshake.
   [B] three rounds of 16 control calls with unique 1 MiB ids -- the last two rounds must be
       flat. An unbounded map adds ~1.5 MiB per call, every round.
   [C] two control calls carrying a 6 MiB id; the second must be flat (single-call amplifier).
-  [D] a real session id still paces: burst 2 reject, the third call `rate_limited`.
+  [D] a seeded known session still paces: burst 2 reject, the third call `rate_limited`.
   [E] the manager is still healthy afterwards (`status` answers).
 
-Usage: probe-rate-buckets.py <manager.sock> <manager-pid> <operator.ron path>
+Usage: probe-rate-buckets.py <manager.sock> <manager-pid> <operator.ron path> <data dir>
 Prints [OK]/[FAIL]/[OBS] and FAILS=<n>. Exit code = FAILS (capped at 120).
 """
 import json
@@ -27,9 +29,12 @@ import socket
 import sys
 import time
 
+import known_session
+
 SOCK = sys.argv[1]
 PID = int(sys.argv[2])
 SCOPE_FILE = sys.argv[3]
+DATA = sys.argv[4]
 SCOPE = "operator"
 PROTO = "0.1.0"
 
@@ -212,8 +217,10 @@ finally:
     s.close()
 
 # ---------------------------------------------------------------------------
-# [D] pacing still works for a real id
+# [D] pacing still works for a known (previously closed) session
 # ---------------------------------------------------------------------------
+known_session.seed(DATA, "sess-pace")
+obs("[D] seeded a closed-session record for sess-pace")
 reject_scope()
 s, f = connect()
 try:
