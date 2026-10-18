@@ -1,0 +1,186 @@
+===================================================================
+## merged-tip battery — spec/v1 @ dc59f6e   (2026-10-18)
+===================================================================
+Tip: dc59f6e ("p5(release): strip stray carriage returns from 09"). Last pass in this
+series was ae7c6ac (PR #111). The release line is software-closed on this tree: manifest
+generator (file + digest rows), in-process verifier, distribution-minisign script verifier,
+trust anchors and the image-row shape all landed.
+
+Delta since ae7c6ac: 1cf61fa (#110 — `packaging/release/verify.sh` + `tests/release_script.rs`:
+the distribution-minisign second implementation, 277 lines, no core source), cc7cb9d (#113 —
+the approved hardening: 1 MiB manifest/signature bounds, 128 MiB bounded artifact hash, full
+row validation, compact one-object-per-line bytes, refusals pinned in 04/09), 7206523 (#112 —
+line-oriented script constraint in 11, docs only), e715e5d (#114 — `release manifest
+--image <platform>:<digest>` digest rows: pinned slug name, platform target, `size: 0`
+sentinel, `--artifact` refusing toward `--image`), dc59f6e (five stray CR bytes stripped
+from 09; docs only). Source delta: `src/release.rs`, `src/cli/mod.rs`, `tests/release_script.rs`.
+
+Environment: fresh rust:slim containers (dai-mtipdc59-gate gates, dai-mtipdc59-legs the
+carried legs, dai-mtipdc59-rel the release-line leg), rustc 1.99.0 (b940084d7), cargo 1.99.0
+(5f94df478), python3 3.13.5 + minisign 0.12 (Debian), workspace mounted read-write at /src,
+`CARGO_TARGET_DIR=/tmp/t` (gates and legs) / `/tmp/tc` (parallel capture) / `/tmp/tk` (keyed
+rebuild), cold in each container. Gate set: fmt, fmt --check, clippy --workspace
+--all-targets --locked -D warnings, build --workspace --bins, test --workspace.
+
+Expected suite sequence: root — lib 280 (+6 ignored) · 5 · 7 · 8 · 9 · 3 · 27 · 7 · 22 · 6 · 25 · 6 · 3 · 6 · 2 · 5;
+total 421 tests, 0 failed.
+
+Live legs: dispatch-stall, rate-limit (16), history (27), dashboard-module D1 (20), scope-create
+D2 (56), dashboard-install D5 (50), browser D6 (15), install-rows C2 (40), capture suite 3×
+concurrent cold, plus a new release-line leg (57 assertions) that generates a manifest with a
+file row and two image digest rows, signs it with a real minisign keypair, and runs both
+verifiers on the same bytes.
+
+Per-leg logs are committed next to this file (`<leg>-dc59f6e.log`); the gate log is
+`gate-dc59f6e.log`.
+
+===================================================================
+## [0] gates — fmt, clippy, build, tests (container dai-mtipdc59-gate)
+===================================================================
+rustc rustc 1.99.0 (b940084d7 2026-09-28)
+cargo cargo 1.99.0 (5f94df478 2026-08-27)
+rc=0
+rc=0
+rc=0
+rc=0
+rc=0
+test result: ok. 280 passed; 0 failed; 6 ignored; 0 measured; 0 filtered out; finished in 3.63s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.24s
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.01s
+GATE_FAILS=0
+
+===================================================================
+## [1] carried live legs — all green (container dai-mtipdc59-legs)
+===================================================================
+dispatch-stall               run-dispatch-stall.sh              PASS (status 0.00 s while four create_session calls block)
+rate-limit                   run-rate-limit.sh                  16 assertions, FAILS=0, VERDICT=PASS
+history                      run-history.sh                     27 assertions, FAILS=0
+dashboard-module             run-dashboard-module.sh            20 assertions, FAILS=0, VERDICT=PASS
+scope-create                 run-scope-create.sh                56 assertions, FAILS=0, VERDICT=PASS
+dashboard-install            run-dashboard-install.sh           50 assertions, FAILS=0, VERDICT=PASS
+browser                      run-browser.sh                     15 assertions, FAILS=0, VERDICT=PASS
+install-rows                 run-install-rows.sh                40 assertions, FAILS=0
+capture (3x parallel cold)   cargo test --locked capture        3/3 runs rc=0
+
+===================================================================
+## [2] new release-line leg (container dai-mtipdc59-rel)
+===================================================================
+key key1: untrusted comment: minisign public key 14450906633C0F68
+key key2: untrusted comment: minisign public key 249AE45F38EDC20A
+exported tree: tar of /src (no git in this bench)
+-- trust list as built (tail):
+# deliberate later release.
+untrusted comment: minisign public key 14450906633C0F68
+RWRoDzxjBglFFDL8CzIv4Oh2/+f8IROc619p6T18XedlbBSnnHlZheLr
+keyed binary: 69795448 bytes
+minisign: minisign 0.12
+== C2 release-line live leg (dc59f6e)
+binary=/tmp/daiorama-key1
+script=/tmp/c2linesrc/packaging/release/verify.sh
+key1=14450906633C0F68 key2=249AE45F38EDC20A
+version: rc=0 daiorama 0.1.0
+[OK]   [G] manifest with a file row and two image rows written
+[OK]   [G] generator names the output path
+[OK]   [G] manifest parses as JSON
+[OK]   [G] format is 1
+[OK]   [G] protocol carried verbatim
+[OK]   [G] three artifact rows
+[OK]   [G] file row: kind core
+[OK]   [G] file row: target triple
+[OK]   [G] file row: real sha256
+[OK]   [G] file row: real size
+[OK]   [G] image linux/amd64: pinned slug name
+[OK]   [G] image linux/amd64: target is the platform
+[OK]   [G] image linux/amd64: kind image
+[OK]   [G] image linux/amd64: registry digest verbatim
+[OK]   [G] image linux/amd64: size 0 sentinel
+[OK]   [G] image linux/arm64: pinned slug name
+[OK]   [G] image linux/arm64: target is the platform
+[OK]   [G] image linux/arm64: kind image
+[OK]   [G] image linux/arm64: registry digest verbatim
+[OK]   [G] image linux/arm64: size 0 sentinel
+[OK]   [G] facts.components lists file kinds only
+[OK]   [G] facts.client_only false
+[OK]   [G] rows are compact (no space after the colon)
+[OK]   [G] POSIX grep -F finds the image row by pinned name
+[OK]   [G] POSIX sed extracts the image digest from that row
+[OK]   [G] every artifact row is one object on one line
+[OK]   [GR] a tag where a digest belongs is refused
+[OK]   [GR] a 63-character digest is refused
+[OK]   [GR] an uppercase digest is refused
+[OK]   [GR] an unbuilt platform is refused
+[OK]   [GR] the same platform twice is a duplicate row
+[OK]   [GR] an image row cannot be built from a file
+[OK]   [GR] an empty manifest is refused
+[OK]   [V] signed image-carrying manifest verifies
+[OK]   [V] version and protocol printed
+[OK]   [V] printed signer id is the id inside the public key
+[OK]   [V] --json carries version/protocol/key_id
+[OK]   [V] the file row verifies with --artifact
+[OK]   [V] row printed with kind, name and sha256
+[OK]   [V] a file named like an image row cannot satisfy it
+[OK]   [V] an image row with no file behind it is refused on the read
+[OK]   [V] same-name different bytes refused on sha256
+[OK]   [S] script verifies the same generated bytes
+[OK]   [S] script prints version and protocol
+[OK]   [S] script names the same signer as the binary
+[OK]   [S] script verifies the file row with the artifact argument
+[OK]   [S] script prints kind, name and sha256
+[OK]   [S] script refuses tampered bytes on the digest
+[OK]   [S] script refuses an artifact name that is not a row
+[OK]   [S] script names an untrusted signer by id
+[OK]   [S] script reports a trusted-key bad signature as a verification failure
+[OK]   [S] empty trust list refuses before the minisign dependency is checked
+[OK]   [S] a provisioned list without minisign names the missing dependency
+[OK]   [S] a one-argument call is a usage error (exit 2)
+[OK]   [S] an unreadable manifest is refused
+
+[NOTE] divergence probe (observations, not scored):
+  binary on a file row with size 0: rc=1 err='release manifest field "size" has invalid value "daiorama-0.1.0-x86_64-unknown-linux-gnu.tar.gz" (bad_request)\nhint: check the request against \'daiorama <comman'
+[OK]   [D] binary refuses a file row with the image size sentinel after the signature
+  script on the same bytes: rc=0 out='manifest 0.1.0 (protocol 0.1.0)\nsigned by 14450906633C0F68' err=''
+[OK]   [D] the script is a signature/format/artifact check: it does not re-validate row schema
+  image row bytes cannot be satisfied by a file in either implementation: the
+  registry digest is not a hash of any local artifact, so name matching alone
+  cannot pass. That is the intended `size: 0`/`kind: image` semantic.
+
+FAILS=0
+OKS=57
+C2-RELEASE-LINE-DONE
+
+
+===================================================================
+## [3] notes
+===================================================================
+- **Image rows are digest rows, live.** The generator accepts only the two platforms the lane
+  builds, only 64 lowercase hex, refuses a tag as `invalid sha256`, and writes the pinned slug
+  name with `size: 0`. Both verifiers accept the row; neither can be satisfied by a local file,
+  which is the intended semantic (a registry digest is not a hash of any artifact).
+- **The two implementations agree on the same freshly generated bytes**: same signer id, same
+  artifact digest, same split between "untrusted key <id>" and "release signature verification
+  failed", and the script refuses an empty trust list before it looks for `minisign`.
+- **Divergence, recorded not scored:** the script is a signature/format/artifact-digest check
+  (09 line 35 describes exactly that) and does not re-validate row schema. On a re-signed
+  manifest whose file row carries `size: 0`, the binary refuses with `field "size" has invalid
+  value` while the script accepts. Installs still refuse on the binary side; if the script is
+  ever asked to be a full second verifier this is the gap to close.
+- **The previous pass's byte-form note is resolved:** cc7cb9d makes the generator emit
+  `"name":"…"` with no space, matching the pinned `grep -F` extractor in 09 (checked here on the
+  image row too, which is the row an installer will read for digests).
+- No product defect was found on this tree. The three probe defects fixed during the run were
+  mine (the harness ran in a bench without `git`, a crafted signature had an all-zero key id, and
+  a narrowed `PATH` broke `dirname` before the intended assertion); the corrected run is the one
+  quoted above.

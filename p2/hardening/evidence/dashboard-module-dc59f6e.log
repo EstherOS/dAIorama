@@ -1,0 +1,24 @@
+[OK]   status and readiness agree (status=None readiness=None)
+[OK]   [A] no module installed: status/readiness report null (None)
+[OK]   status and readiness agree (status='2026.10.0' readiness='2026.10.0')
+[OK]   [B] install while running is visible with no restart ('2026.10.0')
+[OK]   status and readiness agree (status='2026.09.1' readiness='2026.09.1')
+[OK]   [C] a revert reports the other version (no cached link) ('2026.09.1')
+[OK]   status and readiness agree (status=None readiness=None)
+[OK]   [D] dangling link answers null, not an error (None)
+[OK]   status and readiness agree (status=None readiness=None)
+[OK]   [E] a parent-climbing target answers null (None)
+[OK]   status and readiness agree (status=None readiness=None)
+[OK]   [E] an absolute target outside the module directory answers null (None)
+[OK]   status and readiness agree (status=None readiness=None)
+[OK]   [E] the dot component answers null (None)
+[OK]   status and readiness agree (status=None readiness=None)
+[OK]   [E] a version name that is a file answers null (None)
+[OK]   status and readiness agree (status=None readiness=None)
+[OK]   [F] a non-version directory name answers null (None)
+[OK]   status and readiness agree (status='2026.10.0' readiness='2026.10.0')
+[OK]   [G] a valid install answers again after the refusal cases ('2026.10.0')
+[NOTE] the module link is under <data>/modules/daiorama-dashboard; status/readiness read it per call
+FAILS=0
+dashboard_module_rc=0
+VERDICT=PASS
