@@ -116,14 +116,27 @@ test, not a hope.
 
 ## Where the verifier lives
 
-**Option A (recommended).** The script verifies with the distribution's `minisign` — Debian
+**Option A — decided.** The script verifies with the distribution's `minisign` — Debian
 bookworm 0.11-1 / trixie 0.12, Fedora 0.12, EPEL 10, `brew install minisign` on the client-only
-macOS side — documented as a prerequisite. The binary also grows
-`daiorama release verify --manifest <file> --signature <file>`, which reads local files only
-(no HTTP in the core, by design) and exists for two jobs: the module path (`dashboard install`
-can verify the release manifest a digest came from) and an independent cross-check. Two
-implementations of one crypto check is a feature here: the gate runs both against the same
-bytes and fails if they disagree.
+macOS side — documented as a prerequisite. The binary also grows `release verify`, reading local
+files only (no HTTP in the core, by design), for the module path (`dashboard install` can verify
+the manifest a digest came from) and as an independent cross-check.
+
+**Implementation constraint:** the binary uses a pinned pure-Rust verifier crate
+(`minisign-verify` or equivalent), never a shelled-out `minisign`. A binary that shells out to
+verify its own release is a weaker trust story than one that does not, and the gate's
+dual-implementation cross-check is the reason the second implementation is worth carrying. The
+crate version is exact-pinned like every other dependency; the test signs one fixture and
+requires both verifiers to agree, and each refusal to agree on rc where the crate exposes it.
+
+**Grammar (04):**
+
+    daiorama release verify --manifest <file> --signature <file> [--artifact <path>] [--json]
+
+With `--artifact`, hash the local file and require a matching row by **name + sha256**; an
+unknown target is a refusal. Without it, signature-only. Output: manifest version, signer key id,
+and the matched row when asked. Exit 0/1; no network, no writes. The verb joins 04's list with
+the implementation slice.
 
 **Option B.** Installer-only verification; the core stays signature-free. Cheaper, but
 `dashboard install` keeps trusting caller-supplied digests, and an air-gapped operator has no
@@ -162,8 +175,14 @@ No HTTP client in the core; no auto-update or channel following; no sigstore or 
 log; no CI release lane (still the operator's workflow token); no Homebrew tap formula; no
 automation of key custody or signing.
 
-## Decisions this note asks for
+## Decisions (answered 2026-10-18)
 
-1. Verifier placement — Option A (script + `release verify`) or B (script only).
-2. `release verify` naming/grammar against 04 (the CLI reference) if A.
-3. Signing custody: confirm the private key stays operator-side and releases are signed by hand.
+1. **Verifier placement: Option A.** Script + `release verify`; the binary uses a pinned pure-Rust
+   verifier crate, not a shelled-out `minisign`.
+2. **Grammar:** `daiorama release verify --manifest <file> --signature <file> [--artifact <path>]
+   [--json]`; `--artifact` matches name + sha256 and refuses an unknown target, otherwise
+   signature-only; prints manifest version, signer key id and the matched row; exit 0/1, no
+   network, no writes. Added to 04 when the implementation lands.
+3. **Custody confirmed:** the private key stays operator-side and offline; releases are signed by
+   hand. The repo ships the public key and key id; rotation accepts both public keys while each
+   manifest names its signer.
