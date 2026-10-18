@@ -236,6 +236,15 @@ impl Input {
             .map_err(|err| InputError::Connection(format!("keymap write: {err}")))?;
         // No seals: a client may mmap the keymap writable, and a seal turns that into EPERM.
         self.keyboard.keymap(1, file.as_fd(), text.len() as u32);
+        // A virtual keyboard's keymap is applied asynchronously by the compositor: a key sent in
+        // the same dispatch as the keymap is translated against the not-yet-installed map and
+        // silently dropped. Measured against the real chain (Hyprland 0.56.2, L1): every
+        // short-lived connection lost exactly its first press/release pair, so a one-pair
+        // `key_tap` delivered nothing at all and `type_text` lost its first character. The
+        // settle roundtrip makes the map live before the first key leaves this connection.
+        self.event_queue
+            .roundtrip(&mut State)
+            .map_err(|err| InputError::Connection(format!("wayland roundtrip: {err}")))?;
         Ok(())
     }
 
@@ -282,6 +291,26 @@ impl Input {
             self.pointer.axis(0, Axis::VerticalScroll, dy * LINE);
         }
         self.pointer.frame();
+        self.flush()
+    }
+
+    /// A modifier must be visible to the focused client before the key it modifies: the
+    /// compositor hands `wl_keyboard.modifiers` to clients on its own dispatch, so a key pressed
+    /// in the same turn is translated with the old modifier state. Measured live: `ABCD` and a
+    /// shifted keysym both arrived unshifted (`abc1`, `x`) until this settle was added.
+    fn shift(&mut self, down: bool) -> Result<(), InputError> {
+        let state = if down {
+            KeyState::Pressed
+        } else {
+            KeyState::Released
+        };
+        self.key(SHIFT_L, state)?;
+        // A client translates a key with the mask of the LAST `wl_keyboard.modifiers` event it
+        // received, so the modifier plane has to be stated on the virtual-keyboard protocol
+        // (`modifiers`), not left for the compositor to infer from the key press. Measured live:
+        // without this, `ABCD` and a shifted keysym both arrived unshifted.
+        let mask = if down { 1 } else { 0 };
+        self.keyboard.modifiers(mask, 0, 0, 0);
         self.flush()
     }
 
@@ -337,12 +366,12 @@ pub fn key_tap(target: &Target, name: &str) -> Result<(), InputError> {
     let mut input = Input::connect(target)?;
     input.upload_keymap()?;
     if key.shift {
-        input.key(SHIFT_L, KeyState::Pressed)?;
+        input.shift(true)?;
     }
     input.key(key, KeyState::Pressed)?;
     input.key(key, KeyState::Released)?;
     if key.shift {
-        input.key(SHIFT_L, KeyState::Released)?;
+        input.shift(false)?;
     }
     Ok(())
 }
@@ -361,12 +390,12 @@ pub fn type_text(target: &Target, text: &str) -> Result<(), InputError> {
     input.upload_keymap()?;
     for key in keys {
         if key.shift {
-            input.key(SHIFT_L, KeyState::Pressed)?;
+            input.shift(true)?;
         }
         input.key(key, KeyState::Pressed)?;
         input.key(key, KeyState::Released)?;
         if key.shift {
-            input.key(SHIFT_L, KeyState::Released)?;
+            input.shift(false)?;
         }
     }
     Ok(())
@@ -634,7 +663,16 @@ fn lookup_symbol(name: &str) -> Option<Key> {
                 "less" => '<',
                 "greater" => '>',
                 "question" => '?',
-                _ => return None,
+                other => {
+                    // A one-character keysym name is the character itself: `xkb_keysym_from_name("a")`
+                    // is 0x61, and 05's examples name `a` beside `Return`. Resolve it through the same
+                    // US table so a single letter is a valid key name.
+                    let mut chars = other.chars();
+                    return match (chars.next(), chars.next()) {
+                        (Some(ch), None) => lookup_char(ch),
+                        _ => None,
+                    };
+                }
             };
             Some(lookup_char(ch).expect("shifted table"))
         }
@@ -715,6 +753,10 @@ mod tests {
             })
         );
         assert_eq!(lookup_symbol("Shift_L"), Some(SHIFT_L));
+        // A one-character keysym name is the character itself (05 names `a` beside `Return`).
+        assert_eq!(lookup_symbol("a"), lookup_char('a'));
+        assert_eq!(lookup_symbol("A"), lookup_char('A'));
+        assert_eq!(lookup_symbol("1"), lookup_char('1'));
         assert!(lookup_symbol("NotAKey").is_none());
     }
 
