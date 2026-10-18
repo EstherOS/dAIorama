@@ -46,7 +46,9 @@ Versions are visible: readiness (05), `status` (04). `daiorama version` prints
 core + protocol. Client side displays skew with the pinned mismatch string.
 
 - **Bare host:** `drain [--wait]` → `daemon end --force` (drops whatever
-  remains — drain as much as patience allows first) → install new binary →
+  remains — drain as much as patience allows first) → install new binary
+  (`packaging/release/install.sh --version <new>` from a released build; the
+  manual `install` line in `packaging/README.md` until the first release) →
   `serve`/`daemon start` → `status` confirms versions. Sessions do not survive;
   that is the documented tradeoff (01), stated to the operator at each step.
 - **Compose:** drain → stop/recreate the container on the new digest → start.

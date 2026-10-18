@@ -7,7 +7,16 @@ channel, not a replacement for it.
 
 ## Install the binary
 
-Until the first signed release (09, C2), build from the checkout:
+From a signed release (09, C2's primary channel):
+
+    packaging/release/install.sh --version 0.1.0
+
+It fetches the release manifest and verifies it with `minisign` before it reads any digest,
+installs to `~/.local/bin` (`--prefix` overrides), prints the version/protocol/signer receipt,
+then runs `daiorama doctor` as an advisory preflight (`--client-only` skips it; `--base` names a
+mirror or a local directory). Until the first operator-signed release the trust list ships
+empty, so the script refuses `no trusted release key provisioned` — in that window build from
+the checkout:
 
     cargo build --release
     install -Dm755 target/release/daiorama ~/.local/bin/daiorama

@@ -1103,3 +1103,43 @@ docs-only convention (the bytes are the contract, and a formatter pass would bre
 
 The refusal strings are pinned in 04 and the schema in 09; tests read both documents, so wording
 drift fails the build like every other pinned string.
+
+## P5-C2-INSTALL — the install script, and where its trust comes from
+
+09 names "GitHub Releases + install script" as the primary channel and the manifest pre-read
+pinned the bootstrap order; this is the build. `packaging/release/install.sh` is POSIX shell and
+makes exactly one trust decision: the detached signature must verify against a key embedded in
+the script before any manifest field — version, protocol, rows, digests — is read. The exit code
+of `minisign -V` is the contract; its output is not parsed.
+
+- **Trust anchors are embedded, never fetched.** A list served beside the manifest lets a hostile
+  mirror serve its own key with its own manifest, so the script carries a byte-identical copy of
+  `packaging/release/trusted-keys`, and a build test fails on drift. The list still ships empty:
+  the installer refuses `no trusted release key provisioned` before it fetches anything — the
+  same string, in the same order, as `verify.sh`, so the unprovisioned state has one
+  explanation.
+- **Version identity is inside the signature.** A signature covers bytes, not a file name, so the
+  installer compares the verified manifest's `version` with the requested one and refuses on a
+  mismatch. It never follows a "latest" pointer; an unknown target or name is a refusal, not a
+  fallback.
+- **The digest gates placement, not just download.** The artifact's `sha256sum` is compared to
+  the row after a single exact-name row match (duplicates refused), and the binary is written to
+  a temp file in the prefix and renamed — a failed or tampered download never leaves a partial
+  `daiorama` at the install path.
+- **`--client-only` has one job: skip the manager preflight.** The default install ends by
+  running the installed binary's `doctor` and treats its exit code as advisory — the binary is
+  already installed, and doctor is the thing that names host gaps with exact commands. In
+  client-only mode (the harness-side install, 05) that run is skipped and the scope line is
+  printed. A fatal preflight would turn "host lacks Hyprland" into "install failed" after a
+  successful install; skipping it silently in the default mode would let a manager install
+  report success on a host that cannot run a session.
+
+*Rejected:* fetching `trusted-keys` from the release (a self-certifying mirror); a `latest`
+redirect (09 pins `--version`, and an installer that follows a channel is an auto-updater under
+another name); verifying with the binary being installed (chicken-and-egg, and it would trust an
+unverified binary's claim about itself); a per-release verifier artifact (a second thing to
+trust — the pre-read's Option C).
+
+The refusal strings are pinned in 09 with a reader test. The harness stubs `minisign` for the
+ordering, selection and placement cases; `release_script.rs` and the release-manifest probe carry
+the real-key agreement.

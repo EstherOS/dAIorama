@@ -13,18 +13,22 @@ _One screen, kept current._
   file from the compositor title); the noVNC installer (`packaging/novnc/fetch.sh`) with
   `doctor` visibility; the bare-host systemd unit + install runbook; **both Containerfiles** —
   core (substrate, `CMD []`, Hyprland caps stripped) and desktop (core + Chromium + the launcher,
-  seed entrypoint, `CMD ["daiorama","serve"]`); three compose shapes; the Quadlet unit.
-  Remaining for exit: the signed release manifest (C2; its install-command table half landed —
-  `packaging/install-commands.md`, doctor bound to it), CI/release lanes, the reference-box image
+  seed entrypoint, `CMD ["daiorama","serve"]`); three compose shapes; the Quadlet unit;
+  **the release line (C2)** — signed manifest generator and in-process verifier, the
+  distribution-`minisign` verifier, image digest rows, and `packaging/release/install.sh`
+  (signature-verified fetch; the trust list ships empty until the operator's first key).
+  Remaining for exit: CI/release lanes, the reference-box image
   builds/live legs, and **the browser legs on hardware**
   (pixel oracle at two resolutions + scale 2, compositor-rendered Chromium inside the desktop
   image). The root refusal is closed: `daiorama-browser` adds `--no-sandbox` only at `geteuid()`
   zero, with the container user namespace as the boundary (09).
 - **Repo target:** fork `EstherOS/dAIorama`; upstream PRs post-sign-off.
-- **Last green** (`c494265`): 397 tests, 0 failed — 265 (+6 ignored) unit · 5 browser ·
-  7 config_scope · 8 daemon · 9 dashboard · 3 doctor · 27 fixtures · 7 mcp · 22 mcp_listen ·
-  6 network · 25 packaging · module 6 · 2 · 5; fmt/clippy clean.
-- **Next:** the signed release manifest (C2) — the verifier and release-key inputs pinned before
-  code; the image builds and their live legs are reference-box work (no podman here).
+- **Last green** (this branch): 433 tests, 0 failed — 280 (+6 ignored) unit · 5 browser ·
+  7 config_scope · 8 daemon · 9 dashboard · 3 doctor · 27 fixtures · 12 install_script · 7 mcp ·
+  22 mcp_listen · 6 network · 25 packaging · 6 release_manifest · 3 release_script; module
+  6 · 2 · 5; fmt/clippy clean.
+- **Next:** the A7 compat table + release notes (`daiorama`/protocol/dashboard rows) — the last
+  unblocked P5 documentation; the image builds and their live legs are reference-box work (no
+  podman here).
 - **Open:** L3 llvmpipe CI (waits on the operator's workflow token) · L2 NVIDIA/CDI (operator) ·
   a body trickled byte by byte can hold a connection slot to the deadline.
