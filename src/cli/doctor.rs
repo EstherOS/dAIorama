@@ -19,8 +19,9 @@
 //!
 //! Provisional shapes where the specs pin none (additive, flagged): the section labels, the
 //! `--json` key set, the unknown-version and wayvnc-missing renderings, and the in-binary
-//! install-table rows (fedora/arch carried; the generic row renders the no-package string and
-//! never a command that cannot succeed). Version probing is best-effort — `Hyprland
+//! install-table rows (fedora/arch carried; Debian resolves on its release codename; the
+//! generic row renders the no-package string and never a command that cannot succeed). Version
+//! probing is best-effort — `Hyprland
 //! --version`, falling back to `hyprctl version` (the P1-practiced read), `wayvnc --version`;
 //! each probe is time-bounded and killed on timeout.
 
@@ -63,10 +64,13 @@ enum RuntimeDirFacts {
     Present { path: PathBuf, writable: bool },
 }
 
-/// `/etc/os-release` facts the install rows key on.
+/// `/etc/os-release` facts the install rows key on. `codename` is `VERSION_CODENAME`: Debian's
+/// Hyprland packaging differs between stable and sid, so the id alone cannot resolve a command
+/// that will actually succeed (09's maintained table, F9).
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct OsFacts {
     id: String,
+    codename: Option<String>,
 }
 
 impl OsFacts {
@@ -76,12 +80,16 @@ impl OsFacts {
     }
 
     fn parse(text: &str) -> Self {
-        let id = text
-            .lines()
-            .find_map(|line| line.strip_prefix("ID="))
-            .map(|value| value.trim().trim_matches('"').to_string())
-            .unwrap_or_default();
-        Self { id }
+        let field = |name: &str| {
+            text.lines()
+                .find_map(|line| line.strip_prefix(name))
+                .map(|value| value.trim().trim_matches('"').to_string())
+                .filter(|value| !value.is_empty())
+        };
+        Self {
+            id: field("ID=").unwrap_or_default(),
+            codename: field("VERSION_CODENAME="),
+        }
     }
 }
 
@@ -316,14 +324,24 @@ impl Package {
     }
 }
 
-/// Resolve the install command for the detected system. Fedora's hyprland is orphaned (no
-/// f43+ builds; the f41/f42-era package is out of the supported range) and the maintained
-/// table routes it to a COPR/upstream build — the same no-package rendering the generic row
-/// uses; a command that cannot succeed is never printed (09, audit F9).
+/// Resolve the install command for the detected system from 09's maintained table
+/// (`packaging/install-commands.md`), in-binary subset. A command that cannot succeed is never
+/// printed (09, audit F9):
+///
+/// - Arch and Fedora carry live packages (Fedora's Hyprland is orphaned — no f43+ builds and the
+///   f41/f42-era package is out of the supported range — so it renders the no-package string).
+/// - Debian's Hyprland exists only in sid/testing today; stable carries none and backports is
+///   below the supported range. The release codename decides, not the id.
+/// - The apt family's wayvnc is packaged in every supported release.
 fn resolve_install(package: Package, os: &OsFacts) -> String {
     match (os.id.as_str(), package) {
         ("arch", _) => format!("sudo pacman -S {}", package.name()),
         ("fedora", Package::Wayvnc) => "sudo dnf install wayvnc".to_string(),
+        ("debian", Package::Hyprland) => match os.codename.as_deref() {
+            Some("sid" | "forky") => "sudo apt install hyprland".to_string(),
+            _ => strings::HYPRLAND_NOT_PACKAGED.to_string(),
+        },
+        ("debian" | "ubuntu", Package::Wayvnc) => "sudo apt install wayvnc".to_string(),
         _ => strings::HYPRLAND_NOT_PACKAGED.to_string(),
     }
 }
@@ -526,10 +544,18 @@ mod tests {
 
     fn tool(path: &str, version: Option<&str>) -> Option<ToolFacts> {
         Some(ToolFacts {
-            exec_error: None,
             path: PathBuf::from(path),
             version: version.map(str::to_string),
+            exec_error: None,
         })
+    }
+
+    /// `OsFacts` for the install-row cases: id plus the release codename Debian resolves on.
+    fn os_facts(id: &str, codename: Option<&str>) -> OsFacts {
+        OsFacts {
+            id: id.to_string(),
+            codename: codename.map(str::to_string),
+        }
     }
 
     fn base_facts() -> DoctorFacts {
@@ -546,9 +572,7 @@ mod tests {
                 path: PathBuf::from("/home/agent/.local/share/daiorama/default/novnc"),
                 installed: true,
             },
-            os: OsFacts {
-                id: "arch".to_string(),
-            },
+            os: os_facts("arch", None),
         }
     }
 
@@ -587,15 +611,13 @@ mod tests {
 
     #[test]
     fn install_rows_resolve_per_system() {
-        let arch = OsFacts {
-            id: "arch".to_string(),
-        };
-        let fedora = OsFacts {
-            id: "fedora".to_string(),
-        };
-        let other = OsFacts {
-            id: "ubuntu".to_string(),
-        };
+        let arch = os_facts("arch", None);
+        let fedora = os_facts("fedora", None);
+        let debian_sid = os_facts("debian", Some("sid"));
+        let debian_forky = os_facts("debian", Some("forky"));
+        let debian_stable = os_facts("debian", Some("trixie"));
+        let debian_unknown = os_facts("debian", None);
+        let ubuntu = os_facts("ubuntu", Some("resolute"));
         assert_eq!(
             resolve_install(Package::Hyprland, &arch),
             "sudo pacman -S hyprland"
@@ -612,10 +634,76 @@ mod tests {
             resolve_install(Package::Wayvnc, &fedora),
             "sudo dnf install wayvnc"
         );
+        // Debian resolves on the release, not the id: sid/forky carry 0.56.2.
         assert_eq!(
-            resolve_install(Package::Hyprland, &other),
+            resolve_install(Package::Hyprland, &debian_sid),
+            "sudo apt install hyprland"
+        );
+        assert_eq!(
+            resolve_install(Package::Hyprland, &debian_forky),
+            "sudo apt install hyprland"
+        );
+        // Stable carries none (trixie-backports' 0.55.2 is below 0.56), and an unrecognised
+        // release never gets a command that cannot succeed.
+        assert_eq!(
+            resolve_install(Package::Hyprland, &debian_stable),
             strings::HYPRLAND_NOT_PACKAGED
         );
+        assert_eq!(
+            resolve_install(Package::Hyprland, &debian_unknown),
+            strings::HYPRLAND_NOT_PACKAGED
+        );
+        assert_eq!(
+            resolve_install(Package::Wayvnc, &debian_stable),
+            "sudo apt install wayvnc"
+        );
+        assert_eq!(
+            resolve_install(Package::Wayvnc, &ubuntu),
+            "sudo apt install wayvnc"
+        );
+        // Ubuntu ships nothing in range today, so Hyprland renders the no-package string.
+        assert_eq!(
+            resolve_install(Package::Hyprland, &ubuntu),
+            strings::HYPRLAND_NOT_PACKAGED
+        );
+    }
+
+    /// 09 C2: the maintained table is the source the in-binary rows come from, so every command
+    /// the binary can print must appear in it verbatim — and the table must not lose the
+    /// no-package rendering either. Drift here is a table/binary disagreement, not a wording nit.
+    #[test]
+    fn install_table_carries_every_command_the_binary_prints() {
+        const TABLE: &str = include_str!("../../packaging/install-commands.md");
+        let cases = [
+            os_facts("arch", None),
+            os_facts("fedora", None),
+            os_facts("debian", Some("sid")),
+            os_facts("debian", Some("trixie")),
+            os_facts("ubuntu", Some("resolute")),
+            os_facts("alpine", None),
+        ];
+        for os in cases {
+            for package in [Package::Hyprland, Package::Wayvnc] {
+                let command = resolve_install(package, &os);
+                assert!(
+                    TABLE.contains(&command),
+                    "install-commands.md lost the command doctor prints for {}/{:?} {package:?}: {command}",
+                    os.id,
+                    os.codename
+                );
+            }
+        }
+    }
+
+    /// `VERSION_CODENAME` decides the Debian rows; both quoted and bare values are accepted.
+    #[test]
+    fn os_facts_read_the_release_codename() {
+        let quoted = OsFacts::parse("ID=debian\nVERSION_CODENAME=trixie\n");
+        assert_eq!(quoted, os_facts("debian", Some("trixie")));
+        let bare = OsFacts::parse("ID=arch\n");
+        assert_eq!(bare, os_facts("arch", None));
+        let empty = OsFacts::parse("ID=debian\nVERSION_CODENAME=\n");
+        assert_eq!(empty, os_facts("debian", None));
     }
 
     #[test]
@@ -711,9 +799,7 @@ mod tests {
         let mut facts = base_facts();
         facts.hyprland = None;
         facts.wayvnc = None;
-        facts.os = OsFacts {
-            id: "fedora".to_string(),
-        };
+        facts.os = os_facts("fedora", None);
         let answer = render(&facts);
         assert_eq!(
             answer.human[2],

@@ -969,9 +969,10 @@ Two Containerfiles, one artifact each: `daiorama` (core — compositor stack, th
 capture/view tools, fonts, D-Bus/Xwayland; **no `CMD`**) and `daiorama-desktop` (core + pinned
 Chromium + the session launcher at `/usr/local/bin/daiorama-browser`, `CMD ["daiorama","serve"]`).
 09's no-default-`CMD` rule is scoped to the core image; the desktop image's `CMD` is the
-documented exception. The base is `debian:sid-slim` pinned by digest (trixie carries no
-Hyprland; sid carries 0.56.2, inside 04's range), and the core package set follows what the
-binary actually executes — `wayvnc`, `grim`, `wf-recorder`, Mesa userspace, `xwayland`, `dbus`,
+documented exception. The base is `debian:sid-slim` pinned by digest (trixie's main archive
+carries no Hyprland and backports' 0.55.2 is below range; sid carries 0.56.2, inside 04's
+range), and the core package set follows what the binary actually executes — `wayvnc`, `grim`,
+`wf-recorder`, Mesa userspace, `xwayland`, `dbus`,
 `seatd`, fonts — not the in-binary capture direction C5 originally recorded (see its erratum).
 The bare-host systemd unit and the image `CMD` are two channels, stated as such so neither
 reads as the other's leftover.
@@ -1000,3 +1001,30 @@ implementation swap).
 release-time bump); `doctor` does not yet check `mutter`/`grim`/`wf-recorder`/the browser (a
 diagnostics slice); image size recorded after the first build; the launcher's implementation and
 the browser-side check file name stay runtime-side (06).
+
+## P5-C2-TABLE — the install-command table, and Debian's release split
+
+09 C2's maintained table exists at `packaging/install-commands.md`: distro/release → exact
+command → version, the no-package rendering verbatim, and the date the rows were checked
+(**2026-10-18**, against the distribution package indexes). `doctor` resolves its in-binary rows
+from the same fact set, and the two are bound both ways — the table carries every command the
+binary can print (the doctor unit test reads the table), and `tests/packaging.rs` pins each
+command plus 04's string so wording drift fails the build.
+
+Debian is the row that forced a code change: Hyprland 0.56.2 is in sid/testing (`sid`, `forky`),
+while stable (trixie) carries none in main and 0.55.2 in backports — below 04's 0.56.0–0.56.9
+range. `OsFacts` therefore reads `VERSION_CODENAME`, and the Debian row resolves on the release,
+not on the id; an unrecognised Debian release keeps the no-package string rather than printing
+an `apt` command that cannot succeed (F9). The apt family's wayvnc is packaged in every supported
+release, so it resolves on the id alone.
+
+*Rationale:* a table outside the binary is only real if the binary agrees with it. Doctor
+resolved `not packaged` for every non-Arch/Fedora host, which was false on Debian sid — the
+family this project's own build host runs — and would have been copied into release notes.
+The codename is the smallest fact that separates a package that exists from one that does not.
+
+*Rejected:* printing `apt install hyprland` for every Debian release (fails on trixie main);
+embedding the version range in the table and letting doctor drift from it; an `--install-deps`
+verb (the operator's package manager installs packages — doctor names, it does not act); baking
+the table into the binary (it is re-checked per release; the reader pin is the binding, not a
+copy).

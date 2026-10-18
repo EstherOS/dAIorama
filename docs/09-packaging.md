@@ -20,10 +20,16 @@ agent's own container), and this is its named delivery (C2).
   signed with **minisign** and verified against the embedded release key
   before digests are trusted. Compose snippets and install commands pin by
   **digest**.
-- **Install-command table (maintained)**: distro/release → exact command →
-  version, with explicit "not packaged / out of range" rows (the Fedora
-  ≥ f43 Hyprland case renders "not packaged for this distribution; see the
-  release notes for a COPR/upstream build" — 04); re-checked each release.
+- **Install-command table (maintained)**: `packaging/install-commands.md` —
+  distro/release → exact command → version, with explicit "not packaged / out
+  of range" rows (the Fedora ≥ f43 Hyprland case renders "not packaged for this
+  distribution; see the release notes for a COPR/upstream build" — 04), and the
+  date the rows were checked. Re-checked each release. `doctor` resolves its
+  in-binary rows from this table: it prints no command the table does not carry,
+  and the table carries no command the binary cannot print (the reader pin fails
+  the build on drift). A version outside 04's supported range is an "out of
+  range" row, never an install command — Debian's Hyprland row therefore keys on
+  the release codename (sid/forky carry it; stable does not), not the id alone.
 - **One multiplatform core binary** containing CLI + manager + bridge (bridge
   is a subcommand, also standalone-invokable). Versioned as core semver. The
   protocol version is its own semver; the compat table ships with release notes.
@@ -138,8 +144,9 @@ The desktop image's `CMD` is the **documented exception** to the no-default-CMD 
 rule is scoped to the core image. The systemd unit in `packaging/systemd/` is the bare-host
 channel, the image `CMD` is the container channel — two channels, not alternatives.
 
-The base is `debian:sid-slim`, pinned by digest at build (trixie carries no Hyprland; sid
-carries 0.56.2, inside 04's supported range). The digest is a **required build argument**
+The base is `debian:sid-slim`, pinned by digest at build (trixie's main archive carries no
+Hyprland and trixie-backports' 0.55.2 is below 04's 0.56 range; sid carries 0.56.2, inside it).
+The digest is a **required build argument**
 (`ARG DEBIAN_SID_DIGEST`), never a checked-in default: a default goes stale silently, and the
 release manifest records the digest a build actually used (C2). The core package set follows
 what the binary actually runs: `wayvnc` (`view.wayvnc_command`), `grim` and `wf-recorder`
