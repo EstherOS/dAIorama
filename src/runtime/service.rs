@@ -342,21 +342,25 @@ impl RuntimeService {
             }
         };
 
-        let registry = self.registry();
-        // 07: scopes constrain listing — `own` sees only its own sessions, `all` is
-        // operator-wide. Visibility is read per call (scope files, 08 D4).
-        let visibility = self.scope_definition(scope)?.sessions.visibility;
-        let all: Vec<&SessionRecord> = registry
-            .list()
-            .into_iter()
-            .filter(|record| visibility == Visibility::All || record.scope == scope)
-            .collect();
+        let all: Vec<SessionRecord> = {
+            let registry = self.registry();
+            // 07: scopes constrain listing — `own` sees only its own sessions, `all` is
+            // operator-wide. Visibility is read per call (scope files, 08 D4).
+            let visibility = self.scope_definition(scope)?.sessions.visibility;
+            registry
+                .list()
+                .into_iter()
+                .filter(|record| visibility == Visibility::All || record.scope == scope)
+                .cloned()
+                .collect()
+        };
         let start = start.min(all.len());
         let end = start.saturating_add(limit as usize).min(all.len());
-        let sessions: Vec<Value> = all[start..end]
-            .iter()
-            .map(|record| record.to_json())
-            .collect();
+        let mut page: Vec<SessionRecord> = all[start..end].to_vec();
+        for record in page.iter_mut() {
+            self.absorb_view_death(record);
+        }
+        let sessions: Vec<Value> = page.iter().map(|record| record.to_json()).collect();
         let mut out = json!({ "sessions": sessions });
         if end < all.len() {
             out["next_cursor"] = json!(end.to_string());
@@ -379,8 +383,26 @@ impl RuntimeService {
         // 06 D6's browser-side half: the launcher's renderer line is absorbed on read, so a
         // software browser flips the mark without a new call surface.
         self.absorb_browser_renderer(&id);
-        let updated = self.registry().get(&id).cloned().unwrap_or(record);
+        let mut updated = self.registry().get(&id).cloned().unwrap_or(record);
+        self.absorb_view_death(&mut updated);
         Ok(updated.to_json())
+    }
+
+    /// 06: a view that dies marks the view `down` and leaves the session running. The exit is
+    /// absorbed on read — the same shape as the browser-renderer line above — so neither
+    /// `session_status` nor `list_sessions` can report a dead view as live, while `get_view`
+    /// reaps it through `ViewManager::running` and starts a fresh generation.
+    fn absorb_view_death(&self, record: &mut SessionRecord) {
+        let Some(mut view) = record.view.clone() else {
+            return;
+        };
+        if view.state != ViewState::Running || self.views.running(&record.id).is_some() {
+            return;
+        }
+        view.state = ViewState::Down;
+        let generation = view.generation;
+        record.view = Some(view.clone());
+        self.registry().set_view(&record.id, Some(view), generation);
     }
 
     /// Read `<runtime>/browser-renderer` (launcher contract) and, for a software string, flip the
@@ -3698,6 +3720,110 @@ mod tests {
         .unwrap();
         assert_eq!(second["generation"], 2);
         assert_ne!(second["credential"], first["credential"]);
+        service.views.stop(&id);
+    }
+
+    /// A fake wayvnc that opens its port, answers the banner for a while, then exits — the
+    /// crash a real desktop sees when the compositor hiccups under it.
+    fn fake_wayvnc_dying(dir: &std::path::Path, seconds: &str) -> Option<Vec<String>> {
+        if std::process::Command::new("python3")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("skip: python3 not available for the fake wayvnc");
+            return None;
+        }
+        let script = dir.join("fake-wayvnc-dying.sh");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nPORT=$(sed -n 's/^port=//p' \"$2\")\nexec python3 -c 'import socket,sys,time\ns=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\ns.bind((\"127.0.0.1\", int(sys.argv[1]))); s.listen(4); s.settimeout(0.05)\nend=time.time()+float(sys.argv[2])\nwhile time.time()<end:\n    try:\n        c,_=s.accept(); c.sendall(b\"RFB 003.008\\\\n\"); c.close()\n    except socket.timeout:\n        pass\n' \"$PORT\" {seconds}\n"
+            ),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        Some(vec!["/bin/sh".to_string(), script.display().to_string()])
+    }
+
+    #[test]
+    fn a_dead_view_is_marked_down_and_the_next_get_view_replaces_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let Some(wayvnc) = fake_wayvnc_dying(tmp.path(), "1") else {
+            return;
+        };
+        let mut config = CoreConfig::default();
+        config.view.wayvnc_command = wayvnc;
+        config.view.port_base = crate::runtime::views::allocate_front_port(18140).unwrap();
+        let (service, _spawner) = capture_service(tmp.path(), config);
+        let created = create_ok(&service, None);
+        let id = created["id"].as_str().unwrap().to_string();
+
+        let first = result(
+            &service,
+            methods::GET_VIEW,
+            Some(json!({ "session_id": id })),
+        )
+        .unwrap();
+        assert_eq!(first["generation"], 1);
+        let status = result(
+            &service,
+            methods::SESSION_STATUS,
+            Some(json!({ "session_id": id })),
+        )
+        .unwrap();
+        assert_eq!(status["view"]["state"], "running");
+
+        // wayvnc exits on its own: the view is reaped, the session is untouched.
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            if service.views.running(&id).is_none() {
+                break;
+            }
+        }
+        assert!(
+            service.views.running(&id).is_none(),
+            "an exited wayvnc is reaped, not handed back as a live view"
+        );
+        let status = result(
+            &service,
+            methods::SESSION_STATUS,
+            Some(json!({ "session_id": id })),
+        )
+        .unwrap();
+        assert_eq!(status["state"], "running", "view down is not session dead");
+        assert_eq!(status["view"]["state"], "down");
+        assert_eq!(status["view"]["generation"], 1);
+        let listed = result(&service, methods::LIST_SESSIONS, None).unwrap();
+        let row = listed["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == json!(id))
+            .cloned()
+            .unwrap();
+        assert_eq!(
+            row["view"]["state"], "down",
+            "the list does not report a dead view as live"
+        );
+
+        // The next get_view starts a fresh view on a new generation.
+        let second = result(
+            &service,
+            methods::GET_VIEW,
+            Some(json!({ "session_id": id })),
+        )
+        .unwrap();
+        assert_eq!(second["generation"], 2);
+        assert_ne!(second["credential"], first["credential"]);
+        let status = result(
+            &service,
+            methods::SESSION_STATUS,
+            Some(json!({ "session_id": id })),
+        )
+        .unwrap();
+        assert_eq!(status["view"]["state"], "running");
         service.views.stop(&id);
     }
 

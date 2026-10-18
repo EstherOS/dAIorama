@@ -1,0 +1,48 @@
+83a8db3ce4497c7b11e9003c156e556cbc08e87d637d30455107c562b6fd7ad1  /out/bin/daiorama
+== [A] a real manager and one live Hyprland session ==
+[OK]   the manager answers status
+dbus-daemon[4]: [session uid=0 pid=4 pidfd=5] Activating service name='ca.desrt.dconf' requested by ':1.1' (uid=0 pid=98 comm="Hyprland --i-am-really-stupid" label="unconfined_u:unconfined_r:spc_t:s0")
+dbus-daemon[4]: [session uid=0 pid=4 pidfd=5] Successfully activated service 'ca.desrt.dconf'
+[OK]   session created: 2fce60f8-1376-4651-8d6d-fca8e9eb4730
+[OK]   the session is running
+[OK]   staged 131 view asset files
+
+== [B] four clients ask for the view at once: one wayvnc, one front, one answer ==
+  client 1: generation=1 port=6080
+  client 2: generation=1 port=6080
+  client 3: generation=1 port=6080
+  client 4: generation=1 port=6080
+[OK]   all four concurrent starts answered one generation (1)
+[OK]   all four answered one address
+[OK]   exactly one wayvnc process
+[OK]   something is listening on the view port 6080
+[OK]   the front serves the page with the credential (HTTP 200)
+[OK]   the front refuses a page request without a credential (HTTP 403)
+
+== [C] stop releases the front port and the wayvnc process ==
+[OK]   view --stop exits 0
+[OK]   the front port 6080 is closed after stop
+[OK]   no wayvnc after stop
+[OK]   session detail reports no view after stop
+
+== [D] the next get_view starts a fresh view and moves the generation ==
+  restart: generation=2 port=6080
+[OK]   generation moved 1 -> 2
+[OK]   a new wayvnc is running
+[OK]   the restarted front answers 200 on 6080
+
+== [E] wayvnc dies: the session lives, the view must not be handed back as live ==
+[OK]   session stayed running after the view died (running -> running)
+  session detail after the crash: view=running 2
+  the dead view's front still answers: HTTP 200
+  get_view after the crash: generation=2 port=6080
+[FAIL] a dead view is handed back as live: generation stayed 2 (front HTTP 200), so the operator's reload can never recover without a manual stop
+
+== [F] closing the session takes the view with it ==
+[OK]   no wayvnc after close
+[OK]   no view port left listening
+
+ASSERT_FAILS=1
+VERDICT=FAIL
+SCRIPT_RC=1
+VIEWS-BEFORE-DONE
