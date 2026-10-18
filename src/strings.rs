@@ -41,6 +41,10 @@ pub fn hyprland_missing(resolved_command: &str) -> String {
 pub const HYPRLAND_NOT_PACKAGED: &str =
     "not packaged for this distribution; see the release notes for a COPR/upstream build";
 
+/// 04: the wayvnc no-package rendering — the COPR sentence is Fedora-specific nonsense here;
+/// for every other distribution the image is the supportable route.
+pub const WAYVNC_NOT_PACKAGED: &str = "not packaged for this distribution; use the container image";
+
 /// 04: Hyprland outside the supported version range.
 pub fn hyprland_unsupported(found: &str, min: &str, max: &str) -> String {
     format!("Hyprland {found} is outside the supported range {min}-{max}.")

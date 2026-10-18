@@ -341,7 +341,15 @@ fn resolve_install(package: Package, os: &OsFacts) -> String {
             Some("sid" | "forky") => "sudo apt install hyprland".to_string(),
             _ => strings::HYPRLAND_NOT_PACKAGED.to_string(),
         },
-        ("debian" | "ubuntu", Package::Wayvnc) => "sudo apt install wayvnc".to_string(),
+        ("debian", Package::Wayvnc) => "sudo apt install wayvnc".to_string(),
+        // Ubuntu's archive is not one version: resolute carries 0.9.1, noble 0.7.2 (far older
+        // than the tested 0.10), and 22.04 and older carry no usable package at all.
+        ("ubuntu", Package::Wayvnc) => match os.codename.as_deref() {
+            Some("resolute") => "sudo apt install wayvnc".to_string(),
+            Some("noble") => "sudo apt install wayvnc (0.7.2 on noble — older than the tested view server; the image is the supportable route)".to_string(),
+            _ => strings::WAYVNC_NOT_PACKAGED.to_string(),
+        },
+        (_, Package::Wayvnc) => strings::WAYVNC_NOT_PACKAGED.to_string(),
         _ => strings::HYPRLAND_NOT_PACKAGED.to_string(),
     }
 }
@@ -618,6 +626,8 @@ mod tests {
         let debian_stable = os_facts("debian", Some("trixie"));
         let debian_unknown = os_facts("debian", None);
         let ubuntu = os_facts("ubuntu", Some("resolute"));
+        let ubuntu_noble = os_facts("ubuntu", Some("noble"));
+        let ubuntu_old = os_facts("ubuntu", Some("jammy"));
         assert_eq!(
             resolve_install(Package::Hyprland, &arch),
             "sudo pacman -S hyprland"
@@ -660,6 +670,17 @@ mod tests {
         assert_eq!(
             resolve_install(Package::Wayvnc, &ubuntu),
             "sudo apt install wayvnc"
+        );
+        // noble ships 0.7.2: the command is real, and the divergence from the tested server
+        // is printed with it rather than hidden.
+        assert_eq!(
+            resolve_install(Package::Wayvnc, &ubuntu_noble),
+            "sudo apt install wayvnc (0.7.2 on noble — older than the tested view server; the image is the supportable route)"
+        );
+        // jammy and older have no usable package; the wayvnc fallback is the image, not a COPR.
+        assert_eq!(
+            resolve_install(Package::Wayvnc, &ubuntu_old),
+            strings::WAYVNC_NOT_PACKAGED
         );
         // Ubuntu ships nothing in range today, so Hyprland renders the no-package string.
         assert_eq!(
