@@ -25,6 +25,11 @@ Then the first-run sequence (10, D1):
 `doctor` names the exact package for anything missing (Hyprland, wayvnc, a
 browser). It does not install them.
 
+The per-distribution commands behind those names live in
+[`install-commands.md`](install-commands.md) — the maintained table 09 (C2) names: a version for
+every row, explicit "not packaged / out of range" rows, and the date the rows were checked.
+`doctor`'s in-binary rows come from it, and the build fails if the two disagree.
+
 ## Manager service (systemd user)
 
     install -Dm644 packaging/systemd/daiorama@.service ~/.config/systemd/user/daiorama@.service

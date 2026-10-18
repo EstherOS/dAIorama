@@ -7,6 +7,9 @@
 const UNIT: &str = include_str!("../packaging/systemd/daiorama@.service");
 const README: &str = include_str!("../packaging/README.md");
 const STRINGS: &str = include_str!("../src/strings.rs");
+/// 04's no-package rendering for a missing Hyprland; 09's table carries it verbatim.
+const NO_PACKAGE: &str =
+    "not packaged for this distribution; see the release notes for a COPR/upstream build";
 const NOVNC_FETCH: &str = include_str!("../packaging/novnc/fetch.sh");
 const NOVNC_NOTE: &str = include_str!("../p5/novnc/README.md");
 const SPEC_06: &str = include_str!("../docs/06-sessions-views.md");
@@ -14,6 +17,7 @@ const SPEC_09: &str = include_str!("../docs/09-packaging.md");
 const SPEC_10: &str = include_str!("../docs/10-operations.md");
 const IMAGE_NOTE: &str = include_str!("../p5/image/README.md");
 const ENTRYPOINT: &str = include_str!("../packaging/container/entrypoint.sh");
+const INSTALL_COMMANDS: &str = include_str!("../packaging/install-commands.md");
 const CORE_IMAGE: &str = include_str!("../packaging/container/Containerfile.core");
 const DESKTOP_IMAGE: &str = include_str!("../packaging/container/Containerfile.desktop");
 const IMAGE_VERIFY: &str = include_str!("../packaging/container/verify-image.sh");
@@ -551,4 +555,84 @@ fn the_desktop_containerfile_builds_on_core_and_installs_the_launcher() {
     );
     assert!(README.contains("Build the desktop image"), "{README}");
     assert!(SPEC_09.contains("Containerfile.desktop"), "{SPEC_09}");
+}
+
+#[test]
+fn install_table_is_the_maintained_c2_artifact() {
+    // 09 C2: the table is distro/release -> exact command -> version, explicitly
+    // "not packaged / out of range" where no supported package exists, and it is
+    // re-checked per release (the date is part of the artifact, not prose).
+    assert!(
+        INSTALL_COMMANDS.contains("Checked **2026-10-18**"),
+        "the table lost its checked date"
+    );
+    assert!(
+        INSTALL_COMMANDS.contains("0.56.0–0.56.9"),
+        "the range moved"
+    );
+    assert!(
+        INSTALL_COMMANDS.contains("Re-check each release"),
+        "the re-check rule is not stated"
+    );
+    // Every command doctor's in-binary rows can print appears here verbatim.
+    for command in [
+        "sudo pacman -S hyprland",
+        "sudo pacman -S wayvnc",
+        "sudo dnf install wayvnc",
+        "sudo apt install hyprland",
+        "sudo apt install wayvnc",
+    ] {
+        assert!(
+            INSTALL_COMMANDS.contains(command),
+            "table lost a command doctor prints: {command}"
+        );
+    }
+    // The no-package rendering 04 pins is carried verbatim (the string lives in strings.rs).
+    assert!(
+        STRINGS.contains(NO_PACKAGE),
+        "the pinned no-package string moved"
+    );
+    assert!(
+        INSTALL_COMMANDS.contains(NO_PACKAGE),
+        "the table does not carry the no-package rendering"
+    );
+}
+
+#[test]
+fn install_table_rows_name_a_version_or_a_missing_marker() {
+    // A row without a version and without a no-package/out-of-range marker is an
+    // unpinned instruction; every row says which kind it is.
+    let mut rows = 0;
+    for line in INSTALL_COMMANDS.lines() {
+        let line = line.trim();
+        if !line.starts_with("| ") || line.contains("---") || line.contains("| command |") {
+            continue;
+        }
+        let cells: Vec<&str> = line.trim_matches('|').split('|').map(str::trim).collect();
+        assert!(cells.len() >= 3, "table row is missing a version: {line}");
+        let version = cells[2];
+        let pinned = version.chars().next().is_some_and(|c| c.is_ascii_digit())
+            || version.contains("no-package")
+            || version.contains("out of range")
+            || version.contains("not packaged")
+            || version.contains("none")
+            || version.contains("packaged")
+            || version.contains("unknown");
+        assert!(
+            !version.is_empty() && pinned,
+            "row names neither a version nor a missing marker: {line}"
+        );
+        rows += 1;
+    }
+    assert!(rows >= 8, "the table lost rows ({rows} found)");
+}
+
+#[test]
+fn spec_09_and_the_runbook_name_the_table() {
+    // 09 pins the path; the runbook points the operator at it.
+    assert!(
+        SPEC_09.contains("packaging/install-commands.md"),
+        "{SPEC_09}"
+    );
+    assert!(README.contains("install-commands.md"), "{README}");
 }
