@@ -1089,6 +1089,14 @@ contract gaps; each fix is a rule, not a preference.
   refuses what the verifier refuses (channel, kind, target, empty artifact list), so the two
   halves cannot disagree about what a valid manifest is.
 
+- **Image rows are not file rows.** An image row is identified by its platform and the
+  registry's immutable manifest digest, so `release manifest` takes `--image
+  <platform>:<digest>` and refuses a tag; it cannot hash a 1.3 GB tar and call that the manifest
+  digest. The row name is the pinned slug `daiorama-<version>-image-<platform>` (with `/` written
+  as `-`), and `size` is `0` because a digest carries no byte count. The verifier requires that
+  exact name and accepts size 0 only for `kind: image`; file-backed rows still require a positive
+  size. A registry-qualified tag is never a row name — `valid_artifact_name` keeps rejecting `/`.
+
 *Rejected:* trusting the caller-supplied file size (no bound); validating only the row named by
 `--artifact` (a signed manifest's other rows would still ship unchecked); leaving the layout as a
 docs-only convention (the bytes are the contract, and a formatter pass would break them).
