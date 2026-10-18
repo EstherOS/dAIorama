@@ -42,8 +42,9 @@ same script with `DAIO=<binary>`; the only difference is the binary.
 The measured gap — `key_down Shift_L` → `key_tap x` → `key_up Shift_L` delivering `x` — is fixed
 by manager-side modifier state rather than a device that outlives the call: `key_down`/`key_up`
 record the held modifiers per session, and the next tap/text assembles them inside its own
-connection (05). `probe-chord.sh` now expects `CHORD=works`; the live run that proves it belongs
-to the reference-box evidence, not this bench.
+connection (05). `probe-chord.sh` now expects `CHORD=works`; it was measured on the merged tip
+`09c6683` in the L1 image (`p2/hardening/evidence/input-surface-09c6683.log` — `CHORD=works`,
+`SHIFTED_TAP=works`), together with `probe-up-symmetry.sh` for the refusal arm.
 
 ## Running it
 
@@ -56,7 +57,8 @@ cp target/debug/daiorama /out/daiorama-input
 dbus-run-session -- bash p5/input/live/run-input-live.sh     # the leg, FAILS=<n>
 dbus-run-session -- bash p5/input/live/probe-firstkey.sh     # defect 1, either binary
 dbus-run-session -- bash p5/input/live/probe-shift.sh        # defect 2, either binary
-dbus-run-session -- bash p5/input/live/probe-chord.sh        # the open finding
+dbus-run-session -- bash p5/input/live/probe-chord.sh        # the chord across calls
+dbus-run-session -- bash p5/input/live/probe-up-symmetry.sh  # modifier refusal symmetry
 ```
 
 `probe-input-live.py <binary> <scope> <tool> <json-args>` is the MCP client: it spawns

@@ -1,0 +1,131 @@
+-rwxr-xr-x. 1 root root 71946168 Oct 18 14:39 /out/daiorama-input-09c6683
+
+################################################################
+## [1] input live leg (pointer, keyboard bytes, scale 2)
+################################################################
+
+== environment ==
+daiorama 0.1.0
+protocol 0.1.0 (min 0.1.0)
+Python 3.14.8
+Python 3.14.8
+[OK]   python3 for the stdio client
+
+== instance: config setup (core config + operator scope + secrets) ==
+wrote /root/.config/daiorama/default/config.ron
+wrote /root/.config/daiorama/default/scopes/operator.ron
+wrote /root/.local/share/daiorama/default/scope-tokens/operator (scope secret, mode 0600)
+next: 'daiorama doctor' for the environment check, then 'daiorama new'
+[NOTE] scope dir: /root/.config/daiorama/default/scopes
+[OK]   config setup wrote a scope file
+config valid: /root/.config/daiorama/default/config.ron
+scope "act" valid (0 tool grants, 3 category grants)
+scope "operator" valid (0 tool grants, 0 category grants)
+set limits.mode = off; takes effect at next manager start
+[OK]   rate limits off in the starter config
+
+== manager: serve ==
+[OK]   manager running (pid 86)
+state: running
+mode: background
+pid: 86
+socket: /tmp/xdg/daiorama/default/manager.sock
+binary: 0.1.0
+min_supported: 0.1.0
+protocol: 0.1.0
+sessions: 0 running, 0 dead
+drain: inactive
+instance_id: 90988198-3353-4149-ad51-6a8a3fa85d4c
+
+== session 1: 1280x720 @ scale 1 ==
+dbus-daemon[5]: [session uid=0 pid=5 pidfd=5] Activating service name='ca.desrt.dconf' requested by ':1.1' (uid=0 pid=156 comm="Hyprland --i-am-really-stupid" label="unconfined_u:unconfined_r:spc_t:s0")
+dbus-daemon[5]: [session uid=0 pid=5 pidfd=5] Successfully activated service 'ca.desrt.dconf'
+[NOTE] session id: ebf54685-f958-413f-afef-ecbb4879cb3f
+[OK]   session 1 running
+[NOTE] rt=/tmp/dr-ebf54685 sig=efb50993780079460b0cbed1363e2166a2de1d9f_1792334471_583598885 wayland=wayland-1
+[OK]   session 1 compositor socket and instance
+[NOTE] cursorpos baseline: 480, 270
+[OK]   hyprctl answers cursorpos
+[NOTE] pointer_move 300,200 (scale 1): cursorpos 480, 270 -> 300, 200 (asked 300,200)
+[OK]   pointer_move 300,200 (scale 1): compositor cursor at 300, 200
+[NOTE] pointer_move 900,600 (scale 1): cursorpos 300, 200 -> 900, 600 (asked 900,600)
+[OK]   pointer_move 900,600 (scale 1): compositor cursor at 900, 600
+[NOTE] pointer_move 1,1 (corner): cursorpos 900, 600 -> 1, 1 (asked 1,1)
+[OK]   pointer_move 1,1 (corner): compositor cursor at 1, 1
+
+== keyboard: type_text + key_tap + one-character names into a real terminal ==
+[OK]   foot window mapped in the session
+[OK]   type_text Hello, 42! (first character and every shifted one): client received  H e l l o , 4 2 !
+[OK]   key_tap Return (a one-pair call reaches the client): client received  H e l l o , 4 2 ! \n
+[OK]   key_tap a (one-character keysym name): client received  H e l l o , 4 2 ! \n a
+[OK]   key_tap X (shifted keysym name arrives shifted): client received  H e l l o , 4 2 ! \n a X
+
+== pointer button + scroll answer ok (no client target to observe) ==
+[OK]   pointer_click answered ok
+[OK]   pointer_scroll answered ok
+[OK]   pointer_button_down answered ok (drag primitive half)
+[OK]   pointer_button_up answered ok (drag primitive half)
+
+== session 2: 1280x720 @ scale 2 -- screenshot pixels vs logical space ==
+[NOTE] session id: fa24f633-ac72-4ee2-b4d8-0fbf483f0fb6
+[OK]   session 2 running
+[NOTE] rt=/tmp/dr-fa24f633 sig=efb50993780079460b0cbed1363e2166a2de1d9f_1792334478_2042650081
+[NOTE] scale 2: cursorpos 480, 270 -> 150, 100 (asked 300,200 screenshot pixels = 150,100 logical)
+[OK]   scale 2 conversion: compositor cursor at 150, 100
+
+== teardown ==
+view: none
+renderer: verified
+instance_id: 90988198-3353-4149-ad51-6a8a3fa85d4c
+[NOTE] session runtime dirs left: 0
+
+FAILS=0
+PHASE_RC=0
+
+################################################################
+## [2] cross-call chord (P5-INPUT-CHORD, #130)
+################################################################
+dbus-daemon[623]: [session uid=0 pid=623 pidfd=5] Activating service name='ca.desrt.dconf' requested by ':1.1' (uid=0 pid=726 comm="Hyprland --i-am-really-stupid" label="unconfined_u:unconfined_r:spc_t:s0")
+dbus-daemon[623]: [session uid=0 pid=623 pidfd=5] Successfully activated service 'ca.desrt.dconf'
+== chord across calls: key_down Shift_L / key_tap x / key_up Shift_L ==
+client bytes: X
+CHORD=works (shift survived the calls)
+
+== control: shift inside one call (key_tap of a shifted keysym name) ==
+client bytes: XX
+SHIFTED_TAP=works
+RUN-DONE
+PHASE_RC=0
+
+################################################################
+## [3] modifier refusal symmetry (P5-INPUT-UP-SYMMETRY, #131)
+################################################################
+dbus-daemon[896]: [session uid=0 pid=896 pidfd=5] Activating service name='ca.desrt.dconf' requested by ':1.1' (uid=0 pid=999 comm="Hyprland --i-am-really-stupid" label="unconfined_u:unconfined_r:spc_t:s0")
+dbus-daemon[896]: [session uid=0 pid=896 pidfd=5] Successfully activated service 'ca.desrt.dconf'
+session: 9c9a1d5d-6349-4391-95ed-79b3d87adcc4
+
+== key_up of a non-modifier is refused by name ==
+tools/call: {"id": 2, "jsonrpc": "2.0", "result": {"content": [{"text": "key_up releases held modifiers only; \"x\" is not a modifier \u2014 use key_tap", "type": "text"}], "isError": true, "structuredContent": {"code": "bad_request", "hint": "check the request against 'daiorama <command> --help'", "message": "key_up releases held modifiers only; \"x\" is not a modifier \u2014 use key_tap"}}}
+RESULT error {"content": [{"text": "key_up releases held modifiers only; \"x\" is not a modifier \u2014 use key_tap", "type": "text"}], "isError": true, "structuredContent": {"code": "bad_request", "hint": "check the request against 'daiorama <command> --help'", "message": "key_up releases held modifiers only; \
+[OK]   key_up x refused, names the key and the verb
+
+== key_down of a non-modifier is refused by name (the symmetric arm) ==
+tools/call: {"id": 2, "jsonrpc": "2.0", "result": {"content": [{"text": "key_down holds modifiers only; \"x\" is not a modifier \u2014 use key_tap", "type": "text"}], "isError": true, "structuredContent": {"code": "bad_request", "hint": "check the request against 'daiorama <command> --help'", "message": "key_down holds modifiers only; \"x\" is not a modifier \u2014 use key_tap"}}}
+RESULT error {"content": [{"text": "key_down holds modifiers only; \"x\" is not a modifier \u2014 use key_tap", "type": "text"}], "isError": true, "structuredContent": {"code": "bad_request", "hint": "check the request against 'daiorama <command> --help'", "message": "key_down holds modifiers only; \"x\" is not 
+[OK]   key_down x refused, names the key and the verb
+
+== release of an unheld modifier is a no-op, not an error ==
+tools/call: {"id": 2, "jsonrpc": "2.0", "result": {"content": [], "structuredContent": {}}}
+RESULT ok
+[OK]   key_up Shift_L on an unheld modifier answers ok
+
+== hold and release a real modifier ==
+[OK]   key_down Shift_L answers ok
+[OK]   key_up Shift_L answers ok
+
+FAILS=0
+PHASE_RC=0
+
+SURFACE_FAILS=0
+SCRIPT_RC=0
+INPUT-SURFACE-DONE

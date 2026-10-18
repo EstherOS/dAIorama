@@ -1,0 +1,66 @@
+===================================================================
+## changed-surface pass — spec/v1 @ 09c6683   (2026-10-18)
+===================================================================
+Tip: 09c6683 ("p5(input): refuse a non-modifier in key_up, symmetric with
+key_down"). The last full battery was at ff153cb (merged as f69e3c9); the three
+commits since touch the act half and nothing else, so this pass is gates plus the
+one leg that owns that surface — run on the merged tip, not on a branch head.
+
+Delta since f69e3c9 (3 commits, 143+19- in src/runtime/input.rs and 114+13- in
+src/runtime/service.rs, plus the new live leg under p5/input/live/):
+
+  - 33b575a — the act half fixed against a real compositor: a settle roundtrip
+    after the virtual keyboard's keymap upload (the first key of every call was
+    being discarded), the wl_keyboard `modifiers` request for Shift (a delay
+    never fixed it), and one-character keysym names resolved through the US
+    table. New leg p5/input/live/ with pre-fix red preserved.
+  - 8478901 — cross-call chords: key_down/key_up record held modifiers per
+    session and the next tap/text assembles them inside its own connection, so
+    `key_down Shift_L` -> `key_tap x` -> `key_up Shift_L` delivers X.
+  - 09c6683 — key_up refuses a non-modifier by name, symmetric with key_down;
+    releasing an unheld modifier stays a no-op.
+
+Environment: two disposable containers. `dai-mtip-09c6683` (rust:slim) for the
+gates, cold `CARGO_TARGET_DIR=/tmp/t`, rustc 1.99.0 (b940084d7) / cargo 1.99.0
+(5f94df478); `dai-input-09c6683` (the L1 desktop image, privileged, /dev/dri
+renderD128) for the live leg, tree mounted read-only, binary built from this tip.
+
+Gate set: fmt, fmt --check, clippy --workspace --all-targets --locked -D warnings,
+build --workspace --bins --locked, test --workspace --locked.
+
+  GATE_FAILS=0 — 17 suites, 450 passed / 0 failed / 6 ignored
+  sequence: 289 · 5 · 7 · 8 · 9 · 3 · 27 · 19 · 7 · 22 · 6 · 26 · 6 · 3 · 6 · 2 · 5
+  (the 289 suite carries the two new input tests — 287 at ff153cb)
+  raw: gate-09c6683.log
+
+Live leg (three phases, one dbus session each, raw: input-surface-09c6683.log):
+
+  [1] the standing input leg — 21 assertions, 0 failures
+      pointer: 300,200 · 900,600 · 1,1 all read back by `hyprctl cursorpos` in the
+      session's own instance; keyboard: `type_text "Hello, 42!"` arrives byte-exact
+      through a raw tty, `key_tap Return` delivers the newline shell substitution
+      would hide, `key_tap a` (one-character name) and `key_tap X` (shifted) both
+      land; four button/scroll calls answer ok; scale-2 session: 300,200 screenshot
+      pixels read back as 150,100 logical.
+  [2] cross-call chord — CHORD=works, SHIFTED_TAP=works
+      one call each for key_down Shift_L / key_tap x / key_up Shift_L; the client
+      receives X, and the in-call control tap of `X` appends a second one.
+  [3] modifier refusal symmetry — 5 assertions, 0 failures
+      key_up "x" -> bad_request `key_up releases held modifiers only; "x" is not a
+      modifier — use key_tap`; key_down "x" -> the symmetric `holds modifiers
+      only`; key_up Shift_L on an unheld modifier answers ok (idempotent release);
+      hold then release of a real modifier both answer ok.
+
+  SURFACE_FAILS=0 — 28 observed facts (21 + 2 + 5), 0 failures.
+
+Note on the first run: input-surface-09c6683-firstrun.log is preserved. Its phase 3
+read FAILS=2, and both bytes are in the log: the refusals are present and correct,
+but the new probe's `case` patterns matched literal quotes while the JSON frame
+carries them escaped (`\"x\"`), so its own assertions missed. The patterns were
+fixed to match `bad_request` + the verb phrase + `not a modifier`; no product
+behaviour changed. Kept as the harness-bug record, the same way the no-curl
+installer run is kept.
+
+Reproduction: `p2/hardening/gate-09c6683.sh` in rust:slim; the live leg is
+`p2/hardening/run-input-surface-09c6683.sh` in the L1 image with the tip's binary at
+/out (the script header names the container requirements).
