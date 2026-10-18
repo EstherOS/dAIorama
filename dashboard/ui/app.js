@@ -7,7 +7,7 @@ const state = {
   sessions: [],
   session: null,
   cursor: null,
-  historyKeys: new Set(),
+  lastRecord: null,
   historyLoading: false,
   historyEnd: false,
   timer: null,
@@ -52,7 +52,7 @@ function viewState(session) {
   if (session.view) {
     return { text: "up", className: "good", title: "view front is running" };
   }
-  return { text: "down", className: "warn", title: "running; no view started (view down ≠ session dead)" };
+  return { text: "down", className: "warn", title: "running session; no view started" };
 }
 
 function stateClass(value) {
@@ -187,7 +187,7 @@ function renderDetail(session) {
   body.appendChild(h("div", {}, h("strong", {}, "view "), h("span", { class: view.className, title: view.title }, view.text),
     h("span", { class: "muted" }, session.state === "dead" || session.state === "closed"
       ? ` (${session.state} — no view can start)`
-      : view.text === "down" ? " (view down ≠ session dead)" : "")));
+      : view.text === "down" ? " (view down — session still running)" : "")));
   body.appendChild(h("div", {}, h("strong", {}, "backend "), short(session.backend),
     " · ", h("strong", {}, "scope "), short(session.scope),
     " · ", h("strong", {}, "origin "), short(session.origin)));
@@ -203,7 +203,7 @@ function resetHistory() {
   clear(el("history"));
   el("history-note").textContent = "";
   state.cursor = null;
-  state.historyKeys.clear();
+  state.lastRecord = null;
   state.historyEnd = false;
 }
 
@@ -217,9 +217,12 @@ async function loadHistory() {
   try {
     const page = await getJSON(`/api/history?${query}`);
     for (const record of page.records ?? []) {
-      const key = `${record.at}|${record.event}|${record.session_id ?? ""}`;
-      if (state.historyKeys.has(key)) continue;
-      state.historyKeys.add(key);
+      // The cursor defines page boundaries; the only guard needed is against a literal repeat
+      // of the immediately previous record (never a coarse timestamp key, which would drop
+      // distinct same-second events).
+      const serialized = JSON.stringify(record);
+      if (serialized === state.lastRecord) continue;
+      state.lastRecord = serialized;
       el("history").appendChild(h("li", {},
         h("span", { class: "badge" }, record.event),
         " ",
@@ -231,7 +234,7 @@ async function loadHistory() {
     state.cursor = page.next_cursor ?? null;
     state.historyEnd = !state.cursor;
     el("history-note").textContent = state.historyEnd
-      ? (state.historyKeys.size ? "end of history" : "no history for this session")
+      ? (el("history").childElementCount ? "end of history" : "no history for this session")
       : "";
   } catch (error) {
     el("history-note").textContent = String(error);
