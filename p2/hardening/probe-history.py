@@ -96,9 +96,10 @@ def error_of(reply):
     return reply.get("error") or {}
 
 
-def is_not_implemented(reply):
-    err = error_of(reply)
-    return err.get("code") == "internal" and err.get("message") == "not implemented yet"
+def reached_dispatch(reply):
+    """The tool ran and answered for the (absent) session. The nine control tools are
+    implemented since the input slice; `not implemented yet` is no longer produced."""
+    return error_of(reply).get("code") == "session_not_found"
 
 
 TOOLS = [
@@ -111,9 +112,22 @@ TOOLS = [
 ]
 
 
+TOOL_PARAMS = {
+    "pointer_move": {"x": 1, "y": 1},
+    "pointer_scroll": {"dx": 1, "dy": 1},
+    "pointer_click": {"button": "left"},
+    "pointer_button_down": {"button": "left"},
+    "pointer_button_up": {"button": "left"},
+    "key_tap": {"key": "a"},
+    "key_down": {"key": "a"},
+    "key_up": {"key": "a"},
+}
+
+
 def control(f, method, session_id):
-    """A control-class call: `dispatch()` records `tool.call` before the tool answers."""
-    return call(f, method, {"session_id": session_id, "x": 1, "y": 1})
+    """A control-class call: `dispatch()` records `tool.call` before the tool answers, and
+    the tool params are the pinned per-tool shapes (05), not one generic pair."""
+    return call(f, method, {"session_id": session_id, **TOOL_PARAMS[method]})
 
 
 def history(f, **params):
@@ -150,7 +164,7 @@ try:
     # -------------------------------------------------------------------
     for tool in TOOLS:
         reply = control(f, tool, "s-hist-1")
-        if not is_not_implemented(reply):
+        if not reached_dispatch(reply):
             fail(f"[B0] control call {tool} reached dispatch", json.dumps(reply))
     b = history(f, session_id="s-hist-1")
     records = records_of(b)
@@ -313,7 +327,7 @@ try:
                     + "\n"
                 )
     reply = control(f, "pointer_move", "s-rot")
-    check("[H0] the rotating call still passes", is_not_implemented(reply), json.dumps(reply))
+    check("[H0] the rotating call still passes", reached_dispatch(reply), json.dumps(reply))
     segments = sorted(name for name in os.listdir(rot_dir) if name.startswith("seg-"))
     total = sum(os.path.getsize(os.path.join(rot_dir, name)) for name in segments)
     check(

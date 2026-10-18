@@ -123,9 +123,9 @@ def error_of(reply):
 
 
 def control(f, session_id):
-    """A control-class call. This build answers `internal / not implemented yet` for the
-    pointer tools (the input surface lands later), which is the expected pass-through: the
-    point is that the frame reached dispatch and spent a token."""
+    """A control-class call. The pointer tools are implemented (input slice); with a session
+    id that does not exist the answer is `session_not_found` after dispatch -- the point is
+    that the frame reached dispatch and spent a token."""
     return call(f, "pointer_move", {"session_id": session_id, "x": 1, "y": 1})
 
 
@@ -133,9 +133,10 @@ def is_rate_limited(reply):
     return error_of(reply).get("code") == "rate_limited"
 
 
-def is_not_implemented(reply):
-    err = error_of(reply)
-    return err.get("code") == "internal" and err.get("message") == "not implemented yet"
+def reached_dispatch(reply):
+    """Past the bucket gate and into dispatch: the tool ran and answered for the (absent)
+    session. `not implemented yet` was the old pass-through and is no longer produced."""
+    return error_of(reply).get("code") == "session_not_found"
 
 
 def retry_hint_ms(reply):
@@ -158,8 +159,8 @@ try:
     a1 = control(f, "sess-a")
     a2 = control(f, "sess-a")
     a3 = control(f, "sess-a")
-    check("[A1] first control call passes the gate", is_not_implemented(a1), json.dumps(a1))
-    check("[A2] second control call passes (burst 2)", is_not_implemented(a2), json.dumps(a2))
+    check("[A1] first control call passes the gate", reached_dispatch(a1), json.dumps(a1))
+    check("[A2] second control call passes (burst 2)", reached_dispatch(a2), json.dumps(a2))
     check("[A3] third control call is rate_limited", is_rate_limited(a3), json.dumps(a3))
     hint = retry_hint_ms(a3)
     check(
@@ -190,7 +191,7 @@ try:
     c1 = control(f, "sess-b")
     check(
         "[C1] a different session has its own burst",
-        is_not_implemented(c1),
+        reached_dispatch(c1),
         json.dumps(c1),
     )
 
@@ -199,7 +200,7 @@ try:
     # -----------------------------------------------------------------------
     time.sleep(1.2)
     d1 = control(f, "sess-a")
-    check("[D1] a refilled bucket passes again", is_not_implemented(d1), json.dumps(d1))
+    check("[D1] a refilled bucket passes again", reached_dispatch(d1), json.dumps(d1))
 finally:
     s.close()
 
@@ -213,7 +214,7 @@ try:
     start = time.monotonic()
     e2 = control(f, "sess-p")
     elapsed = time.monotonic() - start
-    check("[E1] paced call passes after its wait", is_not_implemented(e2), json.dumps(e2))
+    check("[E1] paced call passes after its wait", reached_dispatch(e2), json.dumps(e2))
     check(
         "[E2] the scope file was re-read per call (pace took effect, no restart)",
         e1 is not None and 0.30 <= elapsed <= 2.0,
@@ -232,7 +233,7 @@ try:
     start = time.monotonic()
     f2 = control(f, "sess-w")
     elapsed = time.monotonic() - start
-    check("[F1] first call passes", is_not_implemented(f1), json.dumps(f1))
+    check("[F1] first call passes", reached_dispatch(f1), json.dumps(f1))
     check("[F2] a wait past max_wait_ms refuses", is_rate_limited(f2), json.dumps(f2))
     check(
         "[F3] the refused wait did not park the caller",
@@ -274,8 +275,8 @@ for t in threads:
 total = time.monotonic() - started
 
 refused = [r for r in results if r[1] is not None and is_rate_limited(r[1])]
-passed = [r for r in results if r[1] is not None and is_not_implemented(r[1])]
-other = [r for r in results if r[1] is not None and not is_rate_limited(r[1]) and not is_not_implemented(r[1])]
+passed = [r for r in results if r[1] is not None and reached_dispatch(r[1])]
+other = [r for r in results if r[1] is not None and not is_rate_limited(r[1]) and not reached_dispatch(r[1])]
 elapsed_max = max((r[2] for r in results if r[2] is not None), default=0.0)
 
 check(
