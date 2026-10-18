@@ -87,6 +87,10 @@ pub struct RuntimeService {
     capture_inflight: Mutex<std::collections::HashSet<String>>,
     /// Append-only session history (06 B8).
     history: Arc<crate::history::History>,
+    /// P5-INPUT-CHORD: modifiers held across calls. A virtual-keyboard device cannot outlive
+    /// the call that created it, so a chord (`key_down` → `key_tap` → `key_up`) is assembled
+    /// inside the tap's connection from this state. Session-scoped; removed at close.
+    input_modifiers: Mutex<std::collections::HashMap<String, Vec<String>>>,
 }
 
 impl RuntimeService {
@@ -111,6 +115,7 @@ impl RuntimeService {
             rate: crate::runtime::rate::RateLimiter::default(),
             capture_inflight: Mutex::new(std::collections::HashSet::new()),
             history,
+            input_modifiers: Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -457,6 +462,10 @@ impl RuntimeService {
         // shared retention sweep removes it with the session's history, not before.
         // A view never outlives its session (06 B2: explicit kill-on-session-close).
         self.views.stop(&id);
+        self.input_modifiers
+            .lock()
+            .expect("input modifiers")
+            .remove(&id);
         let (scope_of, origin_of) = {
             let registry = self.registry();
             match registry.get(&id) {
@@ -850,7 +859,7 @@ impl RuntimeService {
         scope: &str,
         params: Option<&Value>,
         allowed: &[&str],
-    ) -> Result<(crate::runtime::input::Target, Map<String, Value>), ErrorEnvelope> {
+    ) -> Result<(String, crate::runtime::input::Target, Map<String, Value>), ErrorEnvelope> {
         let (_id, record) = self.capture_target(scope, params, allowed)?;
         let id = record
             .get("id")
@@ -869,11 +878,11 @@ impl RuntimeService {
         let target =
             crate::runtime::input::target(&env, resolution, scale).map_err(|err| err.envelope())?;
         let map = params_object(params)?;
-        Ok((target, map))
+        Ok((id, target, map))
     }
 
     fn pointer_move(&self, scope: &str, params: Option<&Value>) -> Result<Value, ErrorEnvelope> {
-        let (target, map) = self.input_target(scope, params, &["session_id", "x", "y"])?;
+        let (_id, target, map) = self.input_target(scope, params, &["session_id", "x", "y"])?;
         let x = number_field(&map, "x")?;
         let y = number_field(&map, "y")?;
         let width = target.width as f64 * target.scale;
@@ -893,7 +902,7 @@ impl RuntimeService {
         params: Option<&Value>,
         down: bool,
     ) -> Result<Value, ErrorEnvelope> {
-        let (target, map) = self.input_target(scope, params, &["session_id", "button"])?;
+        let (_id, target, map) = self.input_target(scope, params, &["session_id", "button"])?;
         let button = button_field(&map)?;
         crate::runtime::input::pointer_button(&target, button, down)
             .map_err(|err| err.envelope())?;
@@ -901,14 +910,14 @@ impl RuntimeService {
     }
 
     fn pointer_click(&self, scope: &str, params: Option<&Value>) -> Result<Value, ErrorEnvelope> {
-        let (target, map) = self.input_target(scope, params, &["session_id", "button"])?;
+        let (_id, target, map) = self.input_target(scope, params, &["session_id", "button"])?;
         let button = button_field(&map)?;
         crate::runtime::input::pointer_click(&target, button).map_err(|err| err.envelope())?;
         Ok(json!({}))
     }
 
     fn pointer_scroll(&self, scope: &str, params: Option<&Value>) -> Result<Value, ErrorEnvelope> {
-        let (target, map) = self.input_target(scope, params, &["session_id", "dx", "dy"])?;
+        let (_id, target, map) = self.input_target(scope, params, &["session_id", "dx", "dy"])?;
         let dx = number_field(&map, "dx")?;
         let dy = number_field(&map, "dy")?;
         if !dx.is_finite() || !dy.is_finite() {
@@ -926,24 +935,50 @@ impl RuntimeService {
         params: Option<&Value>,
         action: KeyAction,
     ) -> Result<Value, ErrorEnvelope> {
-        let (target, map) = self.input_target(scope, params, &["session_id", "key"])?;
+        let (id, target, map) = self.input_target(scope, params, &["session_id", "key"])?;
         let key = string_field(&map, "key")?
             .ok_or_else(|| ErrorEnvelope::bad_request("key is required"))?;
         match action {
-            KeyAction::Tap => crate::runtime::input::key_tap(&target, &key),
+            KeyAction::Tap => {
+                let held = self
+                    .input_modifiers
+                    .lock()
+                    .expect("input modifiers")
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or_default();
+                crate::runtime::input::key_tap_with(&target, &key, &held)
+                    .map_err(|err| err.envelope())?;
+            }
             KeyAction::Down => {
-                crate::runtime::input::key(&target, &key, crate::runtime::input::KeyState::Pressed)
+                // 05 B8: chords are modifier key_down/key_up around a tap. The modifier is
+                // state for the next call, not a press on a device that dies with this one.
+                if !crate::runtime::input::is_modifier(&key) {
+                    return Err(ErrorEnvelope::bad_request(format!(
+                        "key_down holds modifiers only; {key:?} is not a modifier — use key_tap"
+                    )));
+                }
+                let mut held = self.input_modifiers.lock().expect("input modifiers");
+                let entry = held.entry(id.clone()).or_default();
+                if !entry.contains(&key) {
+                    entry.push(key);
+                }
             }
             KeyAction::Up => {
-                crate::runtime::input::key(&target, &key, crate::runtime::input::KeyState::Released)
+                let mut held = self.input_modifiers.lock().expect("input modifiers");
+                if let Some(entry) = held.get_mut(&id) {
+                    entry.retain(|name| name != &key);
+                    if entry.is_empty() {
+                        held.remove(&id);
+                    }
+                }
             }
         }
-        .map_err(|err| err.envelope())?;
         Ok(json!({}))
     }
 
     fn type_text(&self, scope: &str, params: Option<&Value>) -> Result<Value, ErrorEnvelope> {
-        let (target, map) = self.input_target(scope, params, &["session_id", "text"])?;
+        let (id, target, map) = self.input_target(scope, params, &["session_id", "text"])?;
         let text = string_field(&map, "text")?
             .ok_or_else(|| ErrorEnvelope::bad_request("text is required"))?;
         if text.chars().count() > 1024 {
@@ -951,7 +986,15 @@ impl RuntimeService {
                 "text is limited to 1024 characters per call",
             ));
         }
-        crate::runtime::input::type_text(&target, &text).map_err(|err| err.envelope())?;
+        let held = self
+            .input_modifiers
+            .lock()
+            .expect("input modifiers")
+            .get(&id)
+            .cloned()
+            .unwrap_or_default();
+        crate::runtime::input::type_text_with(&target, &text, &held)
+            .map_err(|err| err.envelope())?;
         Ok(json!({}))
     }
 
@@ -4359,5 +4402,49 @@ mod tests {
         assert_eq!(error.code, crate::ipc::ErrorCode::SessionNotFound);
         assert!(service.history.recorded_scope("invented-session").is_none());
         assert!(!tmp.path().join("history/invented-session").exists());
+    }
+
+    /// P5-INPUT-CHORD: key_down/up are modifier state for the next tap, not a device press; a
+    /// normal key is refused rather than silently held nowhere.
+    #[test]
+    fn chord_modifiers_are_state_across_calls() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (service, _spawner) = capture_service(tmp.path(), CoreConfig::default());
+        let created = create_ok(&service, None);
+        let id = created["id"].as_str().unwrap().to_string();
+        let call = |method: &str, params: Value| result(&service, method, Some(params));
+
+        call("key_down", json!({ "session_id": id, "key": "Shift_L" })).unwrap();
+        call("key_down", json!({ "session_id": id, "key": "Control_L" })).unwrap();
+        {
+            let held = service.input_modifiers.lock().unwrap();
+            assert_eq!(
+                held.get(&id).map(Vec::as_slice),
+                Some(["Shift_L".to_string(), "Control_L".to_string()].as_slice())
+            );
+        }
+
+        let err = call("key_down", json!({ "session_id": id, "key": "x" })).unwrap_err();
+        assert_eq!(err.code, ErrorCode::BadRequest);
+        assert!(err.message.contains("not a modifier"), "{}", err.message);
+
+        call("key_up", json!({ "session_id": id, "key": "Shift_L" })).unwrap();
+        {
+            let held = service.input_modifiers.lock().unwrap();
+            assert_eq!(
+                held.get(&id).map(Vec::as_slice),
+                Some(["Control_L".to_string()].as_slice())
+            );
+        }
+        call("key_up", json!({ "session_id": id, "key": "Control_L" })).unwrap();
+        assert!(service.input_modifiers.lock().unwrap().get(&id).is_none());
+
+        // A duplicate down is idempotent; the chord assembles each modifier once.
+        call("key_down", json!({ "session_id": id, "key": "Alt_L" })).unwrap();
+        call("key_down", json!({ "session_id": id, "key": "Alt_L" })).unwrap();
+        {
+            let held = service.input_modifiers.lock().unwrap();
+            assert_eq!(held.get(&id).map(Vec::len), Some(1));
+        }
     }
 }

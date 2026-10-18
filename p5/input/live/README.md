@@ -37,14 +37,13 @@ same script with `DAIO=<binary>`; the only difference is the binary.
    answered `bad_request: unknown key "a"`. Fixed by resolving a one-character name through the
    same US table.
 
-## Open finding (measured, not fixed here)
+## Chord follow-up (P5-INPUT-CHORD)
 
-**A chord across separate calls cannot work.** `key_down Shift_L` → `key_tap x` →
-`key_up Shift_L` delivers `x`, not `X`: each call opens and drops its own Wayland device, so the
-modifier press dies with the connection that made it (`CHORD=broken` in the evidence log). The
-capability exists inside a single call (`key_tap X` arrives shifted), but 05's chord primitive
-is written as three calls. Fixing it needs a per-session input connection that outlives a call —
-a lifecycle change, not a one-line patch — so it is recorded here rather than smuggled in.
+The measured gap — `key_down Shift_L` → `key_tap x` → `key_up Shift_L` delivering `x` — is fixed
+by manager-side modifier state rather than a device that outlives the call: `key_down`/`key_up`
+record the held modifiers per session, and the next tap/text assembles them inside its own
+connection (05). `probe-chord.sh` now expects `CHORD=works`; the live run that proves it belongs
+to the reference-box evidence, not this bench.
 
 ## Running it
 

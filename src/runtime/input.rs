@@ -362,21 +362,94 @@ pub fn key(target: &Target, name: &str, state: KeyState) -> Result<(), InputErro
 }
 
 pub fn key_tap(target: &Target, name: &str) -> Result<(), InputError> {
+    key_tap_with(target, name, &[])
+}
+
+/// The xkb modifier bit a keysym name owns, when it is a modifier. This is the same bit layout
+/// `wl_keyboard.modifiers` uses (Shift=1, Lock=2, Control=4, Mod1=8, Mod4=64).
+fn modifier_bit(key: Key) -> Option<u32> {
+    match key.code {
+        42 | 54 => Some(1),    // Shift_L / Shift_R
+        29 | 97 => Some(4),    // Control_L / Control_R
+        56 => Some(8),         // Alt_L (Alt_R is AltGr/Mod5, not a held chord modifier)
+        125 | 126 => Some(64), // Super_L / Super_R
+        _ => None,
+    }
+}
+
+pub fn modifier_bit_for(name: &str) -> Option<u32> {
+    lookup_symbol(name).and_then(modifier_bit)
+}
+
+pub fn is_modifier(name: &str) -> bool {
+    modifier_bit_for(name).is_some()
+}
+
+impl Input {
+    /// Presses the held modifier keys and states the mask on the virtual-keyboard protocol.
+    /// Returns the mask so a caller can re-state it after releasing a per-character Shift.
+    fn press_modifiers(&mut self, held: &[String]) -> Result<u32, InputError> {
+        let mut mask = 0;
+        for name in held {
+            let key =
+                lookup_symbol(name).ok_or_else(|| InputError::UnknownKey(name.to_string()))?;
+            let bit = modifier_bit(key).ok_or_else(|| InputError::UnknownKey(name.to_string()))?;
+            self.key(key, KeyState::Pressed)?;
+            mask |= bit;
+        }
+        if mask != 0 {
+            self.keyboard.modifiers(mask, 0, 0, 0);
+            self.flush()?;
+        }
+        Ok(mask)
+    }
+
+    fn release_modifiers(&mut self, held: &[String]) -> Result<(), InputError> {
+        for name in held.iter().rev() {
+            if let Some(key) = lookup_symbol(name) {
+                self.key(key, KeyState::Released)?;
+            }
+        }
+        self.keyboard.modifiers(0, 0, 0, 0);
+        self.flush()
+    }
+
+    fn chord_key(&mut self, key: Key, base_mask: u32) -> Result<(), InputError> {
+        // A held Shift already supplies the level; adding a second Shift press/release inside
+        // the chord would be redundant and would clear the modifier mask between characters.
+        let extra_shift = key.shift && (base_mask & 1) == 0;
+        if extra_shift {
+            self.key(SHIFT_L, KeyState::Pressed)?;
+            self.keyboard.modifiers(base_mask | 1, 0, 0, 0);
+            self.flush()?;
+        }
+        self.key(key, KeyState::Pressed)?;
+        self.key(key, KeyState::Released)?;
+        if extra_shift {
+            self.key(SHIFT_L, KeyState::Released)?;
+            self.keyboard.modifiers(base_mask, 0, 0, 0);
+            self.flush()?;
+        }
+        Ok(())
+    }
+}
+
+/// `key_tap` with modifiers held from earlier `key_down` calls: a chord is assembled inside one
+/// connection, because a virtual-keyboard device (and its modifier state) dies with the call.
+pub fn key_tap_with(target: &Target, name: &str, held: &[String]) -> Result<(), InputError> {
     let key = lookup_symbol(name).ok_or_else(|| InputError::UnknownKey(name.to_string()))?;
     let mut input = Input::connect(target)?;
     input.upload_keymap()?;
-    if key.shift {
-        input.shift(true)?;
-    }
-    input.key(key, KeyState::Pressed)?;
-    input.key(key, KeyState::Released)?;
-    if key.shift {
-        input.shift(false)?;
-    }
-    Ok(())
+    let mask = input.press_modifiers(held)?;
+    input.chord_key(key, mask)?;
+    input.release_modifiers(held)
 }
 
 pub fn type_text(target: &Target, text: &str) -> Result<(), InputError> {
+    type_text_with(target, text, &[])
+}
+
+pub fn type_text_with(target: &Target, text: &str, held: &[String]) -> Result<(), InputError> {
     let mut keys = Vec::new();
     for (offset, ch) in text.char_indices() {
         let key = match ch {
@@ -388,17 +461,11 @@ pub fn type_text(target: &Target, text: &str) -> Result<(), InputError> {
     }
     let mut input = Input::connect(target)?;
     input.upload_keymap()?;
+    let mask = input.press_modifiers(held)?;
     for key in keys {
-        if key.shift {
-            input.shift(true)?;
-        }
-        input.key(key, KeyState::Pressed)?;
-        input.key(key, KeyState::Released)?;
-        if key.shift {
-            input.shift(false)?;
-        }
+        input.chord_key(key, mask)?;
     }
-    Ok(())
+    input.release_modifiers(held)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -817,5 +884,20 @@ mod tests {
             Ok(()) => println!("LIVE_OK {op}"),
             Err(err) => panic!("LIVE_FAIL {op}: {err:?}"),
         }
+    }
+
+    #[test]
+    fn modifier_keys_map_to_the_wl_modifier_bits() {
+        assert_eq!(modifier_bit_for("Shift_L"), Some(1));
+        assert_eq!(modifier_bit_for("Shift_R"), Some(1));
+        assert_eq!(modifier_bit_for("Caps_Lock"), None);
+        assert_eq!(modifier_bit_for("Control_L"), Some(4));
+        assert_eq!(modifier_bit_for("Control_R"), Some(4));
+        assert_eq!(modifier_bit_for("Alt_L"), Some(8));
+        assert_eq!(modifier_bit_for("Super_L"), Some(64));
+        assert_eq!(modifier_bit_for("a"), None);
+        assert_eq!(modifier_bit_for("Return"), None);
+        assert!(is_modifier("Shift_L"));
+        assert!(!is_modifier("NotAKey"));
     }
 }
