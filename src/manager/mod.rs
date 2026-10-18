@@ -2439,13 +2439,23 @@ mod tests {
         let listener = Listener::bind(&socket).await.unwrap();
         let serving = tokio::spawn(listener.serve(handler, Arc::clone(&store)));
 
+        // The real binary sits next to the test executable in `target/<profile>/`.
+        // `cargo test --bin daiorama` builds only the unit-test harness, so the binary can be
+        // absent there; that is not a code failure — skip with one line (the workspace gate
+        // builds it and exercises this leg) instead of a red that says nothing about the code.
         let bin = std::env::current_exe()
-            .unwrap()
+            .expect("test executable path")
             .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
+            .and_then(|deps| deps.parent())
+            .expect("test executable lives in target/<profile>/deps")
             .join("daiorama");
+        if !bin.is_file() {
+            eprintln!(
+                "media_endpoint_relays_a_test_minted_id: skipped — {} is not built (run `cargo test --all-targets`)",
+                bin.display()
+            );
+            return;
+        }
         let mut child = Command::new(bin)
             .arg("mcp")
             .arg("--listen")

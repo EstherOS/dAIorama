@@ -36,14 +36,31 @@ agent's own container), and this is its named delivery (C2).
 
 `daiorama dashboard install`:
 
-- Downloads the release asset for this target triple, **version-matched to the
-  core binary by default**; `--version <v>` or `--from <path|url>` (offline)
-  override.
-- Verifies checksum from the manifest.
-- Installs to `<data>/modules/daiorama-dashboard/<version>/`; activation is an
-  atomic symlink swap; the previous version stays installed — reverting is
-  re-activating it explicitly (`--version <old>`), deterministic, no mystery
-  rollback state.
+- **Offline in v1:** the verb takes a local release asset and its digest —
+  `--artifact <path.tar.gz> --sha256 <hex>`. The release tooling (and the install
+  script) downloads; the manager installs only bytes it can verify. There is no
+  HTTP client in the core by design, and a download the checksum does not cover
+  is not an install.
+- Asset: `daiorama-dashboard-<version>-<target-triple>.tar.gz`, checksummed by
+  the same signed manifest as core (C2); the version is read from the asset name
+  unless `--version` names the install directory explicitly.
+- **The checksum gate runs first.** The artifact is hashed before any path under
+  `modules/` is created, so a mismatch installs nothing and leaves the module
+  tree exactly as it was.
+- **Stage, then one rename:** the archive unpacks into
+  `<data>/modules/daiorama-dashboard/.stage-<pid>/`; members must be relative
+  regular files or directories (no links, no escapes), and the module binary
+  must be at the archive root. The staged tree is renamed to `<version>/`.
+- Activation is one atomic symlink swap: `.active.tmp-<pid>` → `<version>` is
+  renamed over `active`, so the link never names a missing directory (D1's read
+  rule; the target is a single slug component).
+- An existing version directory refuses unless `--force`, and `--force` replaces
+  a real directory only: a symlinked (or otherwise non-directory) version path is
+  never replaced — a link the operator pointed elsewhere is not an install to
+  overwrite.
+- The previous version stays installed — reverting is re-activating it
+  explicitly (`dashboard install --version <old>`, no artifact), deterministic,
+  no mystery rollback state.
 - **Container case stated:** runtime downloads evaporate on container recreate.
   The module belongs on the persisted `/data` mount (08); the alternative —
   an image variant that bundles it — is documented alongside. Compose snippets

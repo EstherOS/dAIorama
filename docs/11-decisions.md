@@ -188,12 +188,21 @@ N-manager token story).
 
 ### C1 — dashboard install · adopted · home: 09
 Full mechanism: per-triple asset, version-matched by default, checksum from
-manifest, atomic symlink activation, deterministic revert, `--from` offline
-path, container case (persisted `/data` volume or image variant, documented
-both).
+manifest, atomic symlink activation, deterministic revert, container case
+(persisted `/data` volume or image variant, documented both).
 *Rejected:* feature flag (feature flags don't shrink prebuilt downloads — the
 stated rationale was wrong); runtime download without a container path
 (evaporates on recreate).
+
+**Amendment (P5 implementation, 2026-10-18):** v1 installs **offline** —
+`--artifact <path.tar.gz> --sha256 <hex>` — instead of fetching the asset itself.
+The core has no HTTP client by design, and "the manager downloads" would add one
+plus a trust path the checksum does not cover. Release tooling and the install
+script fetch; the manager only installs bytes it hashed, and it hashes them
+before it creates anything under `modules/`. `--version` names the install
+directory (read from the asset name when omitted); `--version <old>` with no
+artifact is the revert. `--from <path|url>` is withdrawn with the downloader:
+`--artifact` is the path, and there is no URL form to confuse it with.
 
 ### C2 — Release manifest · adopted · home: 09
 Signed manifest (artifacts × triples × checksums); one multiplatform core

@@ -57,7 +57,7 @@ creation/usage options in place (D1). Read commands accept `--json`.
 **Diagnostics and packaging:**
 - `daiorama doctor` — host-runnable environment check: GPU family + exact next step, Hyprland/wayvnc presence and versions, Wayland, cgroups v2 delegation, the view asset tree, package-manager-specific install commands. In-container it verifies the actual renderer and fails loud rather than diagnosing blindly (09).
 - `daiorama dashboard serve` — serve the dashboard (module must be installed).
-- `daiorama dashboard install [--version <v>] [--from <path|url>]` — install the dashboard module (mechanism: 09).
+- `daiorama dashboard install --artifact <path.tar.gz> --sha256 <hex> [--version <v>] [--force]` — install the dashboard module from a local release asset (mechanism: 09). `--version <v>` alone re-activates an already-installed version (the documented revert); `--force` is required to replace an existing version directory, and never replaces a symlink.
 - `daiorama dashboard connect <address>` / `dashboard connections list|remove <name>` — dashboard-side manager connections (D3; flows in 10).
 - `daiorama dashboard token set|remove <connection>` — store/remove per-manager tokens in the dashboard config (0600).
 - `daiorama version` — core version + protocol version + `min_supported` (skew display, C3).
@@ -136,6 +136,20 @@ these; wording changes are spec changes.
 - `protocol mismatch: this client speaks {cv} (min {cm}); manager speaks {mv} (min {mm}).`
 - `scope required: set DAIORAMA_SCOPE.` (stdio bridge started without a scope)
 - `module not installed; run 'daiorama dashboard install'.`
+- `artifact checksum mismatch: expected {expected}, got {actual}` — `dashboard install` hashes `--artifact` before anything is unpacked; a mismatch installs nothing (09).
+- `invalid --sha256 "{raw}"; expected 64 hex characters`
+- `artifact too large: {bytes} bytes (limit {limit} MiB)` — the installer hashes the artifact in memory, so the file is bounded before it is read (09).
+- `invalid module version "{raw}"` — a version that is not a directory name (`[A-Za-z0-9._-]{1,64}`, the rule D1 reads).
+- `cannot read a module version from "{name}"; pass --version` — the asset name is not `daiorama-dashboard-<version>-<target-triple>.tar.gz`.
+- `module {version} is already installed at {path}; pass --force to replace it`
+- `refusing to replace {path}: it is not a directory` — a symlinked version path (or any non-directory) is never replaced, `--force` included.
+- `module {version} is not installed at {path}` — `--version <old>` named nothing to re-activate.
+- `artifact entry refused: {name}` — an artifact member that is absolute, escapes the staging directory, or is not a regular file or directory.
+- `artifact does not contain 'daiorama-dashboard'` — the asset has no module binary at its root.
+- `dashboard install is local-instance only; it cannot target a remote manager`
+- `dashboard install needs --artifact <tar.gz> and --sha256 <hex>, or --version <installed> to re-activate one`
+- `--artifact requires --sha256 <hex>: the artifact is verified before it is unpacked`
+- `--sha256 applies only with --artifact`
 - `view unavailable for {session}: {reason}.` — wayvnc unusable, the view-port range exhausted, or the front bind refused.
 - `no session specified; create one first (tool: create_session).` — MCP-side form of the missing-ID error.
 
