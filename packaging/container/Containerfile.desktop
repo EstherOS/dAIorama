@@ -25,6 +25,9 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY dashboard ./dashboard
+# release.rs embeds this trust list with include_str!; the image build needs the file,
+# not just the crate sources (09 C2).
+COPY packaging/release/trusted-keys ./packaging/release/trusted-keys
 RUN cargo build --release --locked --bin daiorama-browser
 
 # The pinned noVNC tree, fetched once with the installer's own hash check and carried read-only;

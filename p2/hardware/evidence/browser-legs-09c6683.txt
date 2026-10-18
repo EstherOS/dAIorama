@@ -1,0 +1,55 @@
+# Browser / desktop-image evidence — 09c6683
+
+Built from `spec/v1 @ 09c6683` on the podman socket with the pinned sid digest
+(`sha256:1f11c32b03195c1b28c55e4579755659edae5c76dd76a69b4e4fb34c58fa8744`):
+
+- core: the core image (`evid`) — `599e26453c2926d85dded7a05d5577b25b8d40b8bbf1ec79f9c8922d2a0547ed` (first build failed: the core
+  Containerfile did not carry `packaging/release/trusted-keys`, which `release.rs` embeds;
+  fixed in this PR and the rebuild succeeded)
+- desktop: the desktop image (`evid`) — `2f5da5bb6773bce9080b490ad0fbde8410d675b1b6904ed36a2999d67dac3ad3`
+
+The desktop image contains `daiorama-browser`, Chromium 155, Hyprland and hyprctl. A real session
+(`daiorama new --resolution 1280x720 --scale 1`) was started under `dbus-run-session`; the
+launcher ran with the session's `XDG_RUNTIME_DIR`/`WAYLAND_DISPLAY` and
+`XDG_SESSION_TYPE=wayland`.
+
+Result: all four browser legs green, plus a compositor-rendered window:
+
+- real Chromium through the launcher wrote `renderer=ANGLE (Mesa, NV117, OpenGL ES 3.2)` to
+  `<runtime>/browser-renderer`, mode 0600; the probe page was gone; the compositor reported one
+  `daiorama-renderer:` window.
+- SIGTERM to the launcher left no Chromium processes (`chromium_processes_after_term=0`). The
+  launcher exited 0 because Chromium handles SIGTERM as a clean shutdown; the contract says
+  “browser status”, and the no-orphan half is the observable.
+- a browser that never sets the title: no renderer file, exactly one
+  `no renderer title within 2s` warning, launcher exit 7 (the stub's status).
+- the rendered window title is `daiorama-renderer: ANGLE (Mesa, NV117, OpenGL ES 3.2)`, i.e. a
+  real compositor-rendered Chromium session inside the desktop image.
+
+Raw run (container paths only, no agent/environment identifiers):
+
+```
+dbus-daemon[9]: [session uid=0 pid=9 pidfd=5] Activating service name='ca.desrt.dconf' requested by ':1.1' (uid=0 pid=93 comm="Hyprland --i-am-really-stupid" label="unconfined_u:unconfined_r:spc_t:s0")
+dbus-daemon[9]: [session uid=0 pid=9 pidfd=5] Successfully activated service 'ca.desrt.dconf'
+== leg 1: real Chromium through the launcher ==
+renderer_file=yes
+renderer_mode=600
+renderer_line=renderer=ANGLE (Mesa, NV117, OpenGL ES 3.2)
+probe_page=gone
+renderer_titles=1
+chromium_processes_before_term=8
+launcher_alive_after_term=no
+launcher_rc=0
+chromium_processes_after_term=0
+0
+== leg 2: no-title browser ==
+no_title_launcher_rc=7
+no_title_renderer_file=absent
+no_title_warning_lines=1
+== leg 3: rendered window ==
+daiorama-renderer: ANGLE (Mesa, NV117, OpenGL ES 3.2)
+BROWSER_LEGS_DONE
+SCRIPT_RC=0
+RUN-DONE
+```
+

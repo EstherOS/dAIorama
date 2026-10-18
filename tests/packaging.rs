@@ -526,6 +526,16 @@ fn the_core_image_pins_an_empty_command_and_strips_hyprland_caps() {
 }
 
 #[test]
+fn image_builds_stage_the_embedded_release_trust_list() {
+    // `release.rs` embeds `packaging/release/trusted-keys` with include_str!, so both build
+    // stages that compile the root crate must carry the file into the build context. Without
+    // this the image build fails at `couldn't read src/../packaging/release/trusted-keys`.
+    let copy = "COPY packaging/release/trusted-keys ./packaging/release/trusted-keys";
+    assert!(CORE_IMAGE.contains(copy), "core image omits the trust list");
+    assert!(DESKTOP_IMAGE.contains(copy), "desktop launcher stage omits the trust list");
+}
+
+#[test]
 fn the_desktop_containerfile_builds_on_core_and_installs_the_launcher() {
     // 09: the desktop artifact is core + pinned Chromium + the launcher, and is the one image
     // with a default command. CORE_IMAGE is required, never defaulted.
