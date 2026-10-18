@@ -502,3 +502,145 @@ fn a_non_linux_host_is_refused() {
         stderr(&output)
     );
 }
+
+#[test]
+fn a_row_target_that_differs_from_the_requested_target_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    install_script(dir.path(), TEST_KEY);
+    let bin = stub_minisign(dir.path(), 0);
+    let prefix = dir.path().join("prefix");
+
+    // Name says x86_64, target says aarch64: a re-signed manifest trying to hand the wrong
+    // architecture to an x86_64 install.
+    let row = "{\"name\":\"daiorama-0.1.0-x86_64-unknown-linux-gnu\",\"target\":\"aarch64-unknown-linux-gnu\",\"kind\":\"core\",\"sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"size\":1}";
+    let manifest_text = format!(
+        "{{\"format\":1,\"version\":\"0.1.0\",\"protocol\":\"0.1.0\",\"channel\":\"stable\",\"released_at\":\"2026-10-18T00:00:00Z\",\"artifacts\":[{row}],\"assets\":[],\"facts\":{{\"client_only\":false,\"manager_platforms\":[\"linux\"],\"components\":[\"core\"]}}}}"
+    );
+    let release = release(dir.path(), "0.1.0", &manifest_text, None);
+    let output = run(
+        dir.path(),
+        &[
+            "--version",
+            "0.1.0",
+            "--target",
+            "x86_64-unknown-linux-gnu",
+            "--prefix",
+            prefix.to_str().unwrap(),
+            "--base",
+            release.to_str().unwrap(),
+        ],
+        Some(&bin),
+    );
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(
+        stderr(&output)
+            .contains("targets \"aarch64-unknown-linux-gnu\", not \"x86_64-unknown-linux-gnu\""),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn a_release_file_over_one_mib_is_refused_before_verification() {
+    let dir = tempfile::tempdir().unwrap();
+    install_script(dir.path(), TEST_KEY);
+    let bin = stub_minisign(dir.path(), 0);
+    let prefix = dir.path().join("prefix");
+
+    let big = "x".repeat(1048577);
+    let release = release(dir.path(), "0.1.0", &big, None);
+    let output = run(
+        dir.path(),
+        &[
+            "--version",
+            "0.1.0",
+            "--prefix",
+            prefix.to_str().unwrap(),
+            "--base",
+            release.to_str().unwrap(),
+        ],
+        Some(&bin),
+    );
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(
+        stderr(&output).contains("larger than 1 MiB"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn an_invalid_version_or_target_never_reaches_a_path_or_url() {
+    let dir = tempfile::tempdir().unwrap();
+    install_script(dir.path(), TEST_KEY);
+    let bin = stub_minisign(dir.path(), 0);
+    let prefix = dir.path().join("prefix");
+    let release = release(
+        dir.path(),
+        "0.1.0",
+        &manifest("0.1.0", "x86_64-unknown-linux-gnu", &"0".repeat(64), 1),
+        None,
+    );
+    let version = run(
+        dir.path(),
+        &[
+            "--version",
+            "../../etc",
+            "--prefix",
+            prefix.to_str().unwrap(),
+        ],
+        Some(&bin),
+    );
+    assert_eq!(version.status.code(), Some(1), "{version:?}");
+    assert!(
+        stderr(&version).contains("invalid version"),
+        "{}",
+        stderr(&version)
+    );
+    let target = run(
+        dir.path(),
+        &[
+            "--version",
+            "0.1.0",
+            "--target",
+            "../../evil",
+            "--prefix",
+            prefix.to_str().unwrap(),
+            "--base",
+            release.to_str().unwrap(),
+        ],
+        Some(&bin),
+    );
+    assert_eq!(target.status.code(), Some(1), "{target:?}");
+    assert!(
+        stderr(&target).contains("unsupported target"),
+        "{}",
+        stderr(&target)
+    );
+}
+
+#[test]
+fn an_unset_home_without_prefix_is_a_named_refusal() {
+    let dir = tempfile::tempdir().unwrap();
+    install_script(dir.path(), TEST_KEY);
+    let bin = stub_minisign(dir.path(), 0);
+    let script = dir.path().join("install.sh");
+    let repo = dir.path().join("../release");
+    let _ = repo;
+    let output = Command::new("sh")
+        .arg(&script)
+        .args(["--version", "0.1.0", "--base", "/nonexistent"])
+        .env_remove("HOME")
+        .env(
+            "PATH",
+            format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
+        )
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(
+        stderr(&output).contains("HOME is not set; pass --prefix"),
+        "{}",
+        stderr(&output)
+    );
+}

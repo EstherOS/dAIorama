@@ -16,7 +16,8 @@ usage() {
 
 version=
 target=
-prefix=${HOME:-}/.local/bin
+prefix=
+prefix_given=0
 client_only=0
 base=
 
@@ -35,6 +36,7 @@ while [ "$#" -gt 0 ]; do
         --prefix)
             [ "$#" -ge 2 ] || usage
             prefix=${2%/}
+            prefix_given=1
             shift 2
             ;;
         --base)
@@ -57,9 +59,15 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -n "$version" ] || usage
-case $prefix in
-    "") echo "HOME is not set; pass --prefix" >&2; exit 1 ;;
-esac
+# The version is a path/URL component: only semver shapes may reach them.
+if ! printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'; then
+    echo "invalid version \"$version\"; expected semver (e.g. 0.1.0)" >&2
+    exit 1
+fi
+if [ "$prefix_given" -eq 0 ]; then
+    [ -n "${HOME:-}" ] || { echo "HOME is not set; pass --prefix" >&2; exit 1; }
+    prefix=$HOME/.local/bin
+fi
 
 # The binary set is Linux; macOS uses the Homebrew tap (client-only) and never this script.
 case $(uname -s) in
@@ -80,6 +88,15 @@ if [ -z "$target" ]; then
             ;;
     esac
 fi
+# The four triples the release lane builds; anything else is a typo or an unsupported host,
+# and it flows into the artifact name and URL, so it is validated before either is built.
+case $target in
+    x86_64-unknown-linux-gnu|aarch64-unknown-linux-gnu|x86_64-unknown-linux-musl|aarch64-unknown-linux-musl) ;;
+    *)
+        echo "unsupported target \"$target\"; expected a pinned Rust triple" >&2
+        exit 1
+        ;;
+esac
 
 if [ -z "$base" ]; then
     base="https://github.com/ygypt/dAIorama/releases/download/v$version"
@@ -130,7 +147,7 @@ fetch() { # fetch <name> <dest>
                 echo "curl is required for a remote release base" >&2
                 exit 1
             fi
-            if ! curl -fsSL "$base/$1" -o "$2"; then
+            if ! curl -fsSL --max-filesize 1048576 "$base/$1" -o "$2"; then
                 echo "cannot fetch $base/$1" >&2
                 exit 1
             fi
@@ -142,6 +159,13 @@ fetch() { # fetch <name> <dest>
             fi
             ;;
     esac
+    # The verifiers bound manifest and signature at 1 MiB; an installer that reads a release
+    # file unbounded can be made to fill the disk before the signature is checked.
+    size=$(wc -c <"$2" | tr -d ' ')
+    if [ "$size" -gt 1048576 ]; then
+        echo "release file $1 is larger than 1 MiB" >&2
+        exit 1
+    fi
 }
 
 manifest=$work/daiorama-release-$version.json
@@ -220,6 +244,13 @@ fi
 
 expected=$(printf '%s\n' "$rows" | sed -n 's/.*"sha256":"\([0-9a-f]\{64\}\)".*/\1/p')
 kind=$(printf '%s\n' "$rows" | sed -n 's/.*"kind":"\([^"]*\)".*/\1/p')
+# The name alone is not the contract: the signed row's target must be the one asked for,
+# or a re-signed manifest could hand an aarch64 binary to an x86_64 install.
+row_target=$(printf '%s\n' "$rows" | sed -n 's/.*"target":"\([^"]*\)".*/\1/p')
+if [ "$row_target" != "$target" ]; then
+    echo "release manifest row $name targets \"$row_target\", not \"$target\"" >&2
+    exit 1
+fi
 if [ -z "$expected" ] || [ "$kind" != core ]; then
     echo "release manifest row $name is not a core artifact" >&2
     exit 1
