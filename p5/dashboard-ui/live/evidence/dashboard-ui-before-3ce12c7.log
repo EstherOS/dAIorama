@@ -1,0 +1,70 @@
+== [A] the dashboard scope is created before the first network bind ==
+/tmp/dr-ui-run/config/daiorama/default/scopes/dashboard.ron
+[OK]   config scope create dashboard
+
+== [B] a real manager on manager.bind, with one live session ==
+[OK]   the TCP bind minted the instance token and the dashboard scope secret
+[OK]   the manager answers status
+dbus-daemon[3]: [session uid=0 pid=3 pidfd=5] Activating service name='ca.desrt.dconf' requested by ':1.1' (uid=0 pid=95 comm="Hyprland --i-am-really-stupid" label="unconfined_u:unconfined_r:spc_t:s0")
+dbus-daemon[3]: [session uid=0 pid=3 pidfd=5] Successfully activated service 'ca.desrt.dconf'
+[OK]   session created: b82c8bc3-1c33-437a-a20c-5055a14cedbb
+[OK]   the session is running
+
+== [C] the module is installed from a real artifact and points at the manager ==
+artifact=daiorama-dashboard-0.1.0-x86_64-unknown-linux-gnu.tar.gz sha256=6f763a763501af2a3146bf588ce8ff634fa15d40d727bdb589b871657819bc84
+[OK]   dashboard install
+connection 127.0.0.1:8756 added (tokens: 'token set 127.0.0.1:8756', 'scope-token set 127.0.0.1:8756')
+token updated for 127.0.0.1:8756 (0600)
+scope_token updated for 127.0.0.1:8756 (0600)
+[OK]   scope-token set
+127.0.0.1:8756	127.0.0.1:8756	instance-token:set	scope-secret:set
+
+== [C2] the view asset tree the front serves (the installer's job in production) ==
+[OK]   staged 131 asset files at <data>/novnc
+[OK]   the front's entry point vnc.html is present
+
+== [D] the installed module serves its own UI on loopback ==
+[OK]   GET / answered 1556 bytes
+[OK]   GET /app.js answered 11007 bytes
+GET /api/managers: {"managers":[{"address":"127.0.0.1:8756","name":"127.0.0.1:8756","ok":true,"readiness":{"drain":{"active":false,"remaining":0},"instance_id":"3ae01c36-c489-4223-a51a-8725b4565554","mode":"background","pid":24,"sessions":{"dead":0,"running":1},"socket":"/tmp/dr-ui-run/run/daiorama/default/manager.sock","state":"running","versions":{"binary":"0.1.0","dashboard_module":"0.1.0","min_supported":"0.1.0","protocol":"0.1.0"}}}]}
+GET /api/sessions: {"sessions":[{"backend":"headless","id":"b82c8bc3-1c33-437a-a20c-5055a14cedbb","idle_since":"2026-10-18T17:11:40Z","instance_id":"3ae01c36-c489-4223-a51a-8725b4565554","label":"ui-leg","origin":"shell","renderer":"verified","resolution":"1280x720","scale":1.0,"scope":"operator","state":"running","view":null}]}
+
+== [E] the page runs in Chromium and the DOM is asserted ==
+chromium=/usr/bin/chromium
+[OK]   Chromium CDP is up
+[OK]   the installed page loads and its DOM is built (True)
+[OK]   managers render: one configured manager, reachable ('1/1 managers reachable')
+[OK]   the manager row carries the address and a live readiness ('127.0.0.1:8756127.0.0.1:8756running · v0.1.0 · 1 running')
+[OK]   the live session appears in the table (rows=1)
+[OK]   the row names the session id (['b82c8bc3-1c33-437a-a20c-5055a14cedbb', 'ui-leg', 'running', 'down', 'operator', '1280x720 @ 1', '2026-10-18T17:11:40Z'])
+[OK]   the row shows the label (['b82c8bc3-1c33-437a-a20c-5055a14cedbb', 'ui-leg', 'running', 'down', 'operator', '1280x720 @ 1', '2026-10-18T17:11:40Z'])
+[OK]   the row shows a running state (['b82c8bc3-1c33-437a-a20c-5055a14cedbb', 'ui-leg', 'running', 'down', 'operator', '1280x720 @ 1', '2026-10-18T17:11:40Z'])
+[OK]   the row shows the geometry (['b82c8bc3-1c33-437a-a20c-5055a14cedbb', 'ui-leg', 'running', 'down', 'operator', '1280x720 @ 1', '2026-10-18T17:11:40Z'])
+[OK]   a running session with no view reads `down` (['b82c8bc3-1c33-437a-a20c-5055a14cedbb', 'ui-leg', 'running', 'down', 'operator', '1280x720 @ 1', '2026-10-18T17:11:40Z'])
+[OK]   clicking the row opens the detail pane ('b82c8bc3-1c33-437a-a20c-5055a14cedbb')
+[OK]   the history pane loads the session's records (records=1)
+[OK]   history settles on an end-of-list state ('end of history')
+[OK]   Open view is enabled for a running session (disabled=False)
+OPENED=http://127.0.0.1:6080/?credential=<redacted>&credential=<redacted>
+[OK]   Open view answers in the page (a view or the pinned refusal) ('generation 1 · opened')
+[OK]   the opened target is the view's own loopback address (http://127.0.0.1:6080/?credential=<redacted>&credential=<redacted>)
+[FAIL] the opened target carries the credential exactly once :: credential= x2
+[OK]   the page raised no uncaught exception
+[OK]   the page logged no console error
+[OK]   the page carries no manager token (token header absent)
+UI_FAILS=1
+VERDICT=FAIL
+[FAIL] probe-ui.py exit 1
+
+== [E2] the URL the click opened actually serves the view front ==
+view_front_http=200 bytes=17810
+[OK]   the opened address serves the real noVNC page
+
+== [F] the page stayed a page: no crash, no reload loop ==
+[OK]   the module still answers after the browser run
+chrome_severe_lines=0
+
+UI_FAILS=1
+VERDICT=FAIL
+SCRIPT_RC=1
+UI-LIVE-DONE
