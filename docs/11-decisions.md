@@ -1163,3 +1163,18 @@ bounded. Bounded at both ends rather than one:
 
 *Rejected:* a cap on the map alone (leaves unbounded directories), and refusing all control calls
 for unknown ids (would make "unknown session" indistinguishable from a malformed call).
+
+## P5-INPUT-CHORD — modifier state, not a device that outlives the call
+
+The live leg showed 05's chord sentence was false of the binary: each call opens its own
+virtual-keyboard device, so `key_down Shift_L` → `key_tap x` → `key_up Shift_L` delivered `x`.
+A held key cannot survive the connection that created it.
+
+Chosen: `key_down`/`key_up` hold **modifier state in the manager, per session**, and the next
+`key_tap`/`type_text` assembles the chord inside its own connection (press modifiers → state the
+`wl_keyboard.modifiers` mask → tap/text → release). This is exactly the sentence 05 wrote —
+chords are modifier down/up around a tap — and it costs one map entry, cleared at close.
+
+*Rejected:* a per-session Wayland connection held open between calls (a device lifecycle,
+socket ownership and reaping problem for a documented modifier-only primitive); and changing the
+spec to drop chords (05 already promised them, and the workaround is local).

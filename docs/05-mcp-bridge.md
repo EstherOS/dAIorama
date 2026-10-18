@@ -192,7 +192,12 @@ pointer position), `pointer_button_down {button}`, `pointer_button_up {button}`
 (the drag primitive: down → move → up), `pointer_scroll {dx, dy}` (wheel
 lines; positive x scrolls right, positive y scrolls down), `key_tap {key}`,
 `key_down {key}`, `key_up {key}` (xkb keysym names; chords are modifier
-key_down/key_up around the tap), `type_text {text}`.
+key_down/key_up around the tap), `type_text {text}`. A virtual-keyboard device lives for
+one call, so `key_down`/`key_up` hold **manager-side modifier state** per session (Shift,
+Control, Alt_L, Super) rather than a device press; the next `key_tap`/`type_text`
+assembles the held modifiers into its own connection and `key_up` clears them. A
+non-modifier key in `key_down` is `bad_request` — tap it instead. Holding a normal key
+across calls is not part of v1.
 
 **Input implementation (P5, in-binary virtual input):** all nine answer `{}` on success. The
 manager speaks the session compositor's `zwlr_virtual_pointer_v1` /
