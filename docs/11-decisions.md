@@ -1047,7 +1047,9 @@ shape the trust story:
   to agree on the same bytes and on refusals.
 - **The generator never signs.** `daiorama release manifest` renders the unsigned bytes with one
   artifact/asset object per line so a POSIX installer can read a row without `jq`; signing is an
-  operator step, offline and by hand. Private key material never exists in the repo or on an
+  operator step, offline and by hand. Release automation runs `packaging/release/verify.sh`
+  (distribution `minisign`, same trust file) as the independent second check; both implementations
+  verify the same signed bytes and must agree on success and refusal. Private key material never exists in the repo or on an
   agent's box. `verify --artifact` matches by name + sha256 and refuses an unknown name, so a
   digest cannot be paired with the wrong artifact.
 
