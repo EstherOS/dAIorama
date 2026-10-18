@@ -32,6 +32,7 @@ agent's own container), and this is its named delivery (C2).
   … [--artifact …]` checks the signature and, when asked, a local file's name +
   sha256 before any digest is trusted. Both are cold verbs: local files only, no
   network, no writes except the generator's `--out`.
+- **Second verifier (release automation):** `packaging/release/verify.sh <manifest> <signature> [artifact]` uses the distribution `minisign` and the same trust list, and is the independent check release automation runs beside the binary. It reads the list from the file tree, refuses an empty list with the same string, distinguishes an untrusted key id from a bad signature, and matches artifacts by basename + sha256. Exit 0 verified, 1 refusal, 2 usage.
 - **Install-command table (maintained)**: `packaging/install-commands.md` —
   distro/release → exact command → version, with explicit "not packaged / out
   of range" rows (the Fedora ≥ f43 Hyprland case renders "not packaged for this
