@@ -15,12 +15,12 @@ _One screen, kept current._
   core (substrate, `CMD []`, Hyprland caps stripped) and desktop (core + Chromium + the launcher,
   seed entrypoint, `CMD ["daiorama","serve"]`); three compose shapes; the Quadlet unit.
   Remaining for exit: the signed release manifest + maintained install-command table (09 C2),
-  CI/release lanes, the reference-box image builds/live legs, and **the desktop image's browser
-  launch** — the image runs as uid 0 and Chromium refuses to start as root without
-  `--no-sandbox`, so a non-root `USER` (a decision not yet pinned) has to land before the
-  browser route works at all.
+  CI/release lanes, the reference-box image builds/live legs, and **the browser legs on hardware**
+  (pixel oracle at two resolutions + scale 2, compositor-rendered Chromium inside the desktop
+  image). The root refusal is closed: `daiorama-browser` adds `--no-sandbox` only at `geteuid()`
+  zero, with the container user namespace as the boundary (09).
 - **Repo target:** fork `EstherOS/dAIorama`; upstream PRs post-sign-off.
-- **Last green** (`5e27aa8`): 390 tests, 0 failed — 262 (+6 ignored) unit · 4 browser ·
+- **Last green** (`27beea6`): 391 tests, 0 failed — 262 (+6 ignored) unit · 5 browser ·
   7 config_scope · 8 daemon · 9 dashboard · 3 doctor · 27 fixtures · 7 mcp · 22 mcp_listen ·
   6 network · 22 packaging · module 6 · 2 · 5; fmt/clippy clean.
 - **Next:** the release manifest + install-command table (09 C2) — the last unstarted P5
