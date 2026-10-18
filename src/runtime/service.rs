@@ -965,6 +965,13 @@ impl RuntimeService {
                 }
             }
             KeyAction::Up => {
+                // Symmetric with `key_down`: only a held modifier can be released, so a normal
+                // key here is a typo in the chord, not a silent no-op.
+                if !crate::runtime::input::is_modifier(&key) {
+                    return Err(ErrorEnvelope::bad_request(format!(
+                        "key_up releases held modifiers only; {key:?} is not a modifier — use key_tap"
+                    )));
+                }
                 let mut held = self.input_modifiers.lock().expect("input modifiers");
                 if let Some(entry) = held.get_mut(&id) {
                     entry.retain(|name| name != &key);
@@ -4427,6 +4434,13 @@ mod tests {
         let err = call("key_down", json!({ "session_id": id, "key": "x" })).unwrap_err();
         assert_eq!(err.code, ErrorCode::BadRequest);
         assert!(err.message.contains("not a modifier"), "{}", err.message);
+        let err = call("key_up", json!({ "session_id": id, "key": "x" })).unwrap_err();
+        assert_eq!(err.code, ErrorCode::BadRequest);
+        assert!(
+            err.message.contains("releases held modifiers only"),
+            "{}",
+            err.message
+        );
 
         call("key_up", json!({ "session_id": id, "key": "Shift_L" })).unwrap();
         {

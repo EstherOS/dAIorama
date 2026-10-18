@@ -196,7 +196,7 @@ key_down/key_up around the tap), `type_text {text}`. A virtual-keyboard device l
 one call, so `key_down`/`key_up` hold **manager-side modifier state** per session (Shift,
 Control, Alt_L, Super) rather than a device press; the next `key_tap`/`type_text`
 assembles the held modifiers into its own connection and `key_up` clears them. A
-non-modifier key in `key_down` is `bad_request` — tap it instead. Holding a normal key
+non-modifier key in `key_down` or `key_up` is `bad_request` — tap it instead. Holding a normal key
 across calls is not part of v1.
 
 **Input implementation (P5, in-binary virtual input):** all nine answer `{}` on success. The
