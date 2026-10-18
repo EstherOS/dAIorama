@@ -575,6 +575,19 @@ impl Registry {
         }
     }
 
+    /// The browser-side half of D6 (06): a live session whose browser reports a software
+    /// renderer moves to `software`, one-way. Returns whether the mark changed, so the caller
+    /// records `renderer.software` exactly once.
+    pub fn mark_software(&mut self, id: &str) -> bool {
+        match self.sessions.get_mut(id) {
+            Some(record) if record.renderer != RendererMark::Software => {
+                record.renderer = RendererMark::Software;
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Health failure or crash: mark dead, no auto-restart (06 §Crash policy).
     pub fn mark_dead(&mut self, id: &str) -> Result<(), ErrorEnvelope> {
         match self.sessions.get_mut(id) {

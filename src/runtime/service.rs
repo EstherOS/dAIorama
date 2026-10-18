@@ -361,14 +361,69 @@ impl RuntimeService {
 
     fn session_status(&self, scope: &str, params: Option<&Value>) -> Result<Value, ErrorEnvelope> {
         let id = required_session_id(params)?;
-        let registry = self.registry();
-        let record = registry.call_gate(&id)?;
-        if !self.visible(scope, record)? {
-            // 07: scopes constrain control; a session outside visibility does not exist for
-            // this caller — existence is not leaked.
-            return Err(ErrorEnvelope::session_not_found());
+        let record = {
+            let registry = self.registry();
+            let record = registry.call_gate(&id)?;
+            if !self.visible(scope, record)? {
+                // 07: scopes constrain control; a session outside visibility does not exist for
+                // this caller — existence is not leaked.
+                return Err(ErrorEnvelope::session_not_found());
+            }
+            record.clone()
+        };
+        // 06 D6's browser-side half: the launcher's renderer line is absorbed on read, so a
+        // software browser flips the mark without a new call surface.
+        self.absorb_browser_renderer(&id);
+        let updated = self.registry().get(&id).cloned().unwrap_or(record);
+        Ok(updated.to_json())
+    }
+
+    /// Read `<runtime>/browser-renderer` (launcher contract) and, for a software string, flip the
+    /// session's mark once and record it. Missing, oversized, malformed or hardware lines are
+    /// no-ops — an absent file is never read as "verified".
+    fn absorb_browser_renderer(&self, id: &str) {
+        let Some(env) = self.spawner.capture_env(id) else {
+            return;
+        };
+        let path = env.rt_dir.join("browser-renderer");
+        let Ok(meta) = std::fs::metadata(&path) else {
+            return;
+        };
+        if !meta.is_file() || meta.len() > 4096 {
+            return;
         }
-        Ok(record.to_json())
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        let Some(renderer) = text
+            .lines()
+            .next()
+            .and_then(|line| line.strip_prefix("renderer="))
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return;
+        };
+        if !is_software_renderer(renderer) {
+            return;
+        }
+        let (scope, origin) = {
+            let registry = self.registry();
+            let Some(record) = registry.get(id) else {
+                return;
+            };
+            (record.scope.clone(), record.origin)
+        };
+        if self.registry().mark_software(id) {
+            self.record(
+                "renderer.software",
+                id,
+                &scope,
+                origin,
+                None,
+                Some(json!({ "renderer": renderer })),
+            );
+        }
     }
 
     fn close_session(&self, scope: &str, params: Option<&Value>) -> Result<Value, ErrorEnvelope> {
@@ -1344,6 +1399,22 @@ enum KeyAction {
     Tap,
     Down,
     Up,
+}
+
+/// The software-renderer families: Mesa's CPU rasterizers and explicit software strings.
+/// A browser reporting any of these is the case D6 exists to catch; everything else is left
+/// alone (the compositor gate already made its decision).
+fn is_software_renderer(renderer: &str) -> bool {
+    let lower = renderer.to_ascii_lowercase();
+    [
+        "llvmpipe",
+        "softpipe",
+        "swrast",
+        "software rasterizer",
+        "software renderer",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
 }
 
 fn button_field(map: &Map<String, Value>) -> Result<crate::runtime::input::Button, ErrorEnvelope> {
@@ -3140,6 +3211,85 @@ mod tests {
             None,
         );
         (service, spawner)
+    }
+
+    /// 06 D6 browser half: the launcher's renderer line flips the mark once, hardware lines are
+    /// ignored, and the history record carries the string but never repeats.
+    #[test]
+    fn browser_renderer_file_flips_the_mark_once_and_records_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (service, _spawner) = capture_service(tmp.path(), CoreConfig::default());
+        let created = create_ok(&service, None);
+        let id = created["id"].as_str().unwrap().to_string();
+
+        // No file → untouched.
+        let status = result(
+            &service,
+            methods::SESSION_STATUS,
+            Some(json!({"session_id": id})),
+        )
+        .unwrap();
+        assert_eq!(status["renderer"], "unverified");
+
+        std::fs::write(
+            tmp.path().join("browser-renderer"),
+            "renderer=llvmpipe (LLVM 17.0.6, 256 bits)\n",
+        )
+        .unwrap();
+        let status = result(
+            &service,
+            methods::SESSION_STATUS,
+            Some(json!({"session_id": id})),
+        )
+        .unwrap();
+        assert_eq!(status["renderer"], "software");
+
+        // One-way: a later hardware line neither upgrades nor re-records.
+        std::fs::write(
+            tmp.path().join("browser-renderer"),
+            "renderer=ANGLE (Mesa, NV117, OpenGL ES 3.2)\n",
+        )
+        .unwrap();
+        let status = result(
+            &service,
+            methods::SESSION_STATUS,
+            Some(json!({"session_id": id})),
+        )
+        .unwrap();
+        assert_eq!(status["renderer"], "software");
+
+        let page = service.history.read_session(&id, 50, None).unwrap();
+        let recorded: Vec<_> = page
+            .records
+            .iter()
+            .filter(|record| record.event == "renderer.software")
+            .collect();
+        assert_eq!(recorded.len(), 1, "exactly one renderer.software record");
+        assert!(
+            recorded[0]
+                .detail
+                .as_ref()
+                .and_then(|detail| detail.get("renderer"))
+                .and_then(Value::as_str)
+                .unwrap()
+                .contains("llvmpipe")
+        );
+
+        // A hardware-only session stays unverified (no false positive from the parser).
+        let second = create_ok(&service, None);
+        let second_id = second["id"].as_str().unwrap().to_string();
+        std::fs::write(
+            tmp.path().join("browser-renderer"),
+            "renderer=ANGLE (Mesa, NV117, OpenGL ES 3.2)\n",
+        )
+        .unwrap();
+        let status = result(
+            &service,
+            methods::SESSION_STATUS,
+            Some(json!({"session_id": second_id})),
+        )
+        .unwrap();
+        assert_eq!(status["renderer"], "unverified");
     }
 
     /// 05 §Input: the nine control tools are live; their pinned surface is validated before any

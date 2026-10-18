@@ -27,10 +27,14 @@ explicit warning and the session is marked `renderer: unverified`. The
 compositor-side check is primary; the browser-side re-check has an executor:
 browser launches go through the session launcher (shipped in the desktop image at
 `/usr/local/bin/daiorama-browser`; 09 — the documented launch route), which
-captures the browser's own rendered-GL renderer string from its logging channel
-into a manager-readable file in the session runtime dir; the manager reads it,
-and a software result marks the session `renderer: software` and raises the
-unmissable warning.
+captures the browser's own rendered-GL renderer string from the **compositor-reported
+window title** of a probe page (measured; Chromium's stderr carries no unmasked
+renderer at any verbosity — `p5/browser/evidence/channel-probe.txt`) into a
+manager-readable file in the session runtime dir; the manager reads it on session
+detail, and a software result flips the mark one-way to `renderer: software` and
+appends a `renderer.software` history record carrying the string. The title must
+survive long enough to observe: the probe holds it for 2 s before navigating, and
+the launcher's acceptance leg measures that window rather than assuming it.
 Where the browser bypasses the launcher (a bare-host browser that was never
 routed through it), the session stays `renderer: unverified` — it is never
 silently marked verified. Quiet degradation into a fingerprinted session is
