@@ -122,6 +122,11 @@ Two artifacts, one Containerfile each (pre-read and rationale: `p5/image/README.
 | `daiorama` (core) | compositor stack (Hyprland + the `mutter` parent), the binary, capture/view tools, fonts/locale, D-Bus/Xwayland | none |
 | `daiorama-desktop` | core + pinned Chromium + the session launcher | `["daiorama","serve"]` |
 
+Both Containerfiles live in `packaging/container/`: `Containerfile.core` (no default command) and
+`Containerfile.desktop` (`ARG CORE_IMAGE` required, launcher-only build stage, pinned Chromium,
+`CMD ["daiorama","serve"]`). The desktop build consumes a core image reference; the release
+manifest records the core digest it was built on.
+
 The desktop image's `CMD` is the **documented exception** to the no-default-CMD rule above; the
 rule is scoped to the core image. The systemd unit in `packaging/systemd/` is the bare-host
 channel, the image `CMD` is the container channel — two channels, not alternatives.
