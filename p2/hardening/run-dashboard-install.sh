@@ -136,26 +136,29 @@ refuse "wrong 64-hex digest refuses" "artifact checksum mismatch" "ABSENT" \
     dashboard install --artifact "$GOOD" --sha256 "$(printf '0%.0s' $(seq 64))"
 refuse "129 MiB artifact refuses on size, before hashing" "artifact too large" "ABSENT" \
     dashboard install --artifact "$ROOT/art/huge.tar.gz" --sha256 "$HUGE_SHA"
-refuse "a non-tar artifact refuses" "cannot read artifact" "" \
+# Post-#95 a refused first install removes both tree levels it created, so the expected
+# after-state is ABSENT — the empty modules/daiorama-dashboard/ this leg used to tolerate
+# was the old nit, and the in-tree contract test pins ABSENT.
+refuse "a non-tar artifact refuses" "cannot read artifact" "ABSENT" \
     dashboard install --artifact "$ROOT/art/plain.txt" --sha256 "$PLAIN_SHA" --version 0.1.0
-refuse "a directory is not an artifact" "is not a regular file" "" \
+refuse "a directory is not an artifact" "is not a regular file" "ABSENT" \
     dashboard install --artifact "$ROOT/pkg/good" --sha256 "$GOOD_SHA"
 
 echo "== [C] hostile and incomplete members are refused, and nothing escapes =="
-refuse "'../escape' member refuses" "artifact entry refused" "" \
+refuse "'../escape' member refuses" "artifact entry refused" "ABSENT" \
     dashboard install --artifact "$ROOT/art/dotdot.tar.gz" --sha256 "$SHA_dotdot" --version 0.1.0
 [ -e "$ROOT/escape" ] && bad "no file escaped the staging dir" "$ROOT/escape exists" || ok "no file escaped the staging dir"
 [ -e "$ROOT/data/daiorama/escape" ] && bad "no file landed under the data root" "escape exists" || ok "no file landed under the data root"
-refuse "an absolute member refuses" "artifact entry refused" "" \
+refuse "an absolute member refuses" "artifact entry refused" "ABSENT" \
     dashboard install --artifact "$ROOT/art/absolute.tar.gz" --sha256 "$SHA_absolute" --version 0.1.0
 [ -e /tmp/di-abs-escape ] && bad "the absolute member was not written" "/tmp/di-abs-escape exists" || ok "the absolute member was not written"
-refuse "a symlink member refuses" "artifact entry refused" "" \
+refuse "a symlink member refuses" "artifact entry refused" "ABSENT" \
     dashboard install --artifact "$ROOT/art/symlink.tar.gz" --sha256 "$SHA_symlink" --version 0.1.0
-refuse "a hardlink member refuses" "artifact entry refused" "" \
+refuse "a hardlink member refuses" "artifact entry refused" "ABSENT" \
     dashboard install --artifact "$ROOT/art/hardlink.tar.gz" --sha256 "$SHA_hardlink" --version 0.1.0
-refuse "an artifact without the module binary refuses" "artifact does not contain" "" \
+refuse "an artifact without the module binary refuses" "artifact does not contain" "ABSENT" \
     dashboard install --artifact "$ROOT/art/nobinary.tar.gz" --sha256 "$SHA_nobinary" --version 0.1.0
-chk "refusals left no staged or version directory behind" "$(snap)" ""
+chk "refusals left no staged or version directory behind" "$(snap)" "ABSENT"
 
 echo "== [D] a real install =="
 OUT=$("$BIN" dashboard install --artifact "$GOOD" --sha256 "$GOOD_SHA" 2>&1)
